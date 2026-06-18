@@ -811,3 +811,130 @@ versionName "1.7.1"
 ```bash
 git remote set-url origin https://github.com/LuzzyMeow/RP-Hub-LuzzyAPP.git
 ```
+
+---
+
+## 十、第四轮改动（2026-06-18：TRPG 模式接入 + 本地 API 代理）
+
+### 10.1 `index.html` 侧边栏添加 TRPG 按钮
+**位置**：约第 250-261 行（万相广场按钮之后）
+**目的**：在侧边栏导航中添加 TRPG 入口，点击切换到 TRPG 视图
+```html
+<button @click="currentView = 'trpg'; closeMobileMenu()"
+    title="TRPG"
+    :class="['sidebar-nav-button flex items-center rounded-xl transition-all duration-200 font-medium',
+        currentView === 'trpg' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
+        isSidebarCollapsed ? 'w-12 h-12 mx-auto justify-center p-0' : 'w-full px-3 py-2.5']">
+    <svg class="w-5 h-5" ...play-circle icon...></svg>
+    <span v-show="!isSidebarCollapsed" class="whitespace-nowrap overflow-hidden">TRPG</span>
+</button>
+```
+
+### 10.2 `index.html` 添加 TRPG iframe 区域
+**位置**：约第 1596-1630 行（万相广场 iframe 区域之后）
+**目的**：复制万相广场模式，iframe 嵌入 `aisandboxgame.com`，支持加载状态和返回按钮
+```html
+<div v-if="currentView === 'trpg'" class="h-full overflow-hidden flex flex-col bg-gray-50 relative">
+    <!-- 移动端返回按钮 -->
+    <!-- 加载中动画 -->
+    <!-- iframe 嵌入 aisandboxgame.com -->
+    <iframe :src="trpgUrl" @load="onTrpgLoad" class="absolute inset-0 w-full h-full border-0"
+        allow="clipboard-write"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>
+</div>
+```
+
+### 10.3 `assets/js/app.js` 添加 TRPG 状态管理
+**位置**：约第 1599-1606 行（onSquareLoad 之后）
+**目的**：管理 TRPG iframe 的 URL 和加载状态
+```javascript
+// TRPG State
+const isTrpgLoading = ref(true);
+const trpgUrl = ref('https://aisandboxgame.com/');
+
+const onTrpgLoad = () => {
+    isTrpgLoading.value = false;
+    console.log('%c[TRPG] AI Sandbox Game Iframe Loaded', 'color: #8b5cf6; font-weight: bold;');
+};
+```
+
+### 10.4 `assets/js/app.js` watch 添加 TRPG 视图刷新
+**位置**：约第 1618-1620 行（watch currentView 内）
+**目的**：切换到 TRPG 视图时刷新 iframe（加时间戳避免缓存）
+```javascript
+} else if (newView === 'trpg') {
+    isTrpgLoading.value = true;
+    trpgUrl.value = `https://aisandboxgame.com/?t=${Date.now()}`;
+}
+```
+
+### 10.5 `assets/js/app.js` 导出 TRPG 变量
+**位置**：约第 10749 行（return 语句中）
+```javascript
+isTrpgLoading, trpgUrl, onTrpgLoad, // TRPG exports
+```
+
+### 10.6 `MainActivity.java` 添加 NanoHTTPD 本地 API 代理服务器
+**位置**：整个文件重写
+**目的**：TRPG iframe 内的 API 请求受 CORS 限制，需要本地代理服务器转发
+
+**核心架构**：
+- 使用 NanoHTTPD 在 `localhost:18527` 启动微型 HTTP 代理
+- 接收 iframe 内的 API 请求，转发到实际 API 服务器
+- 添加 CORS 响应头，绕过浏览器跨域限制
+- 支持 SSE 流式响应透传（`text/event-stream`）
+- 支持 OPTIONS 预检请求自动响应
+
+**URL 映射规则**：
+| 用户配置的 API 地址 | 代理转发目标 |
+|---|---|
+| `http://localhost:18527/v3` | `https://ark.cn-beijing.volces.com/api/coding/v3`（默认，火山方舟） |
+| `http://localhost:18527/v1?_target=https://api.deepseek.com` | `https://api.deepseek.com/v1`（自定义目标） |
+
+**为什么不用 shouldInterceptRequest？**
+- Android WebView 的 `shouldInterceptRequest` 无法获取 POST 请求体
+- CapacitorHttp 通过 JS Bridge 传递请求体，但只对主页面有效，iframe 内无法使用
+- 本地代理服务器是最可靠的方案，支持所有 HTTP 方法、请求体和流式响应
+
+**关键代码**：
+```java
+private class ApiProxyServer extends NanoHTTPD {
+    private static final String DEFAULT_TARGET_BASE = "https://ark.cn-beijing.volces.com/api/coding";
+
+    @Override
+    public Response serve(IHTTPSession session) {
+        // OPTIONS 预检请求 → 直接返回 CORS 头
+        // 其他请求 → 解析请求体 → 转发到目标 API → 添加 CORS 头返回
+        // SSE 流式响应 → 使用 Chunked 编码透传
+    }
+}
+```
+
+### 10.7 `android/app/build.gradle` 添加 NanoHTTPD 依赖
+**位置**：dependencies 块
+```groovy
+implementation 'org.nanohttpd:nanohttpd:2.3.1'
+```
+
+### 10.8 `android/app/src/main/AndroidManifest.xml` 添加 cleartext 支持
+**改动**：`<application>` 标签添加 `android:usesCleartextTraffic="true"`
+**原因**：本地代理使用 HTTP（`localhost:18527`），Android 9+ 默认禁止明文 HTTP 流量
+
+### 10.9 TRPG 使用说明
+1. 在 APP 侧边栏点击 **TRPG** 按钮
+2. 等待 `aisandboxgame.com` 加载完成
+3. 在 TRPG 网页内配置 API：
+   - **API 地址**：`http://localhost:18527/v3`（火山方舟 coding plan）
+   - **API Key**：你的火山方舟 API Key
+   - **模型名**：如 `ark-code-latest`
+4. 开始 TRPG 游戏体验
+
+**其他 API 提供商**：
+- DeepSeek：API 地址填 `http://localhost:18527/v1?_target=https://api.deepseek.com`
+- OpenAI：API 地址填 `http://localhost:18527/v1?_target=https://api.openai.com`
+- 其他 OpenAI 兼容 API：API 地址填 `http://localhost:18527/v1?_target=<你的API地址>`
+
+---
+
+**最后更新**：2026-06-18
+**维护者**：LuzzyMeow

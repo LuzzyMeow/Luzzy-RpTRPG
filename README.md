@@ -47,6 +47,13 @@
 - **角色卡和 UI 模板直接导入到 app，无需用户手动从文件系统选择**
 - 只下载一次，不浪费下载次数
 
+### 5. TRPG 模式（AI 沙盒游戏）
+- 侧边栏新增 TRPG 入口，iframe 嵌入 [AI Sandbox Game](https://aisandboxgame.com/)
+- 内置 NanoHTTPD 本地 API 代理服务器（`localhost:18527`），解决 iframe 内 CORS 限制
+- 支持火山方舟、DeepSeek、OpenAI 等多种 API 提供商
+- 支持 SSE 流式响应透传
+- 使用方法：在 TRPG 网页内配置 API 地址为 `http://localhost:18527/v3`（火山方舟）即可
+
 ---
 
 ## 快速开始
