@@ -1596,6 +1596,15 @@ createApp({
             console.log('%c[Square] Character Square Iframe Loaded', 'color: #3b82f6; font-weight: bold;');
         };
 
+        // TRPG State
+        const isTrpgLoading = ref(true);
+        const trpgUrl = ref('https://aisandboxgame.com/');
+
+        const onTrpgLoad = () => {
+            isTrpgLoading.value = false;
+            console.log('%c[TRPG] AI Sandbox Game Iframe Loaded', 'color: #8b5cf6; font-weight: bold;');
+        };
+
         // Watch view change to refresh generator/plaza
         watch(currentView, (newView) => {
             if (newView === 'generator') {
@@ -1606,6 +1615,9 @@ createApp({
                 isSquareLoading.value = true;
                 // Add timestamp to force refresh
                 squareUrl.value = `https://rphforum.zeabur.app/?t=${Date.now()}`;
+            } else if (newView === 'trpg') {
+                isTrpgLoading.value = true;
+                trpgUrl.value = `https://aisandboxgame.com/?t=${Date.now()}`;
             } else if (newView === 'presets') {
                 nextTick(() => {
                     const el = document.getElementById('presets-list');
@@ -10734,6 +10746,7 @@ image###生成的提示词###
             lastUserMessageIndex, // Expose to template
             isGeneratorLoading, generatorUrl, onGeneratorLoad, syncSettingsToGenerator, // Generator exports
             isSquareLoading, squareUrl, onSquareLoad, // Square exports
+            isTrpgLoading, trpgUrl, onTrpgLoad, // TRPG exports
             editorTab, characterDisplayLimit, displayedCharacters, loadMoreCharacters,
             isAutoImageGenEnabled,
             apiStatus, apiLatency, imageGenStatus, imageGenLatency, checkAllStatuses, // Status Exports
