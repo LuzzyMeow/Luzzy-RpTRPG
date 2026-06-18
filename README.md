@@ -232,4 +232,5 @@ cd android && .\gradlew.bat assembleDebug
 ## 致谢
 
 - **原作者**：[STA1N156](https://github.com/STA1N156) —— 感谢开源 RP-Hub 项目
+- **AI Sandbox Game**：[hayowei/aisandboxgame](https://github.com/hayowei/aisandboxgame) —— TRPG 模式来源，感谢开源 AI 沙盒游戏项目
 - **技术栈**：Vue 3、Tailwind CSS、Capacitor 8、Microsoft OpenJDK 21
