@@ -49,16 +49,21 @@
 
 ### 核心特性
 
+- 💎 **液态玻璃设计系统**：CSS 变量驱动的 glassmorphism（backdrop-filter blur + saturate + 半透明背景 + 边框高光 + 内阴影），亮色/暗色双主题，全页面统一玻璃质感
 - 🎨 **全新 React 19 前端**：@lobehub/ui + antd 6 组件库，AlibabaPuHuiTi-3 字体，Material You 设计风格
+- 📱 **5-Tab 底部导航**：聊天 / 角色 / TRPG / 工具 / 我的，TRPG 模式独立菜单入口
 - 🤖 **Android 原生应用**：Capacitor 8 打包，内置 `CapacitorHttp` 绕过 CORS 限制
 - 🌋 **火山方舟 API 兼容**：支持 `/v3` 版本后缀，`https://ark.cn-beijing.volces.com/api/coding/v3` 可直接使用
 - 🔀 **多供应商架构**：设置密钥即启用，模型名格式 `<providerId>_<model_name>` 自动路由
 - 🌊 **流式输出**：原生平台通过 XMLHttpRequest + 本地代理实现真流式输出
-- 🎲 **TRPG 模式**：iframe 嵌入 AI Sandbox Game，走 LUZZY API 配置，内置 NanoHTTPD 本地代理解决 CORS
+- 🎲 **TRPG 独立模式**：5-Tab 一级入口，iframe 嵌入 AI Sandbox Game，走 LUZZY API 配置，内置 NanoHTTPD 本地代理解决 CORS
 - 🧠 **记忆系统**：向量检索 + 全局记忆（MEMORY.md）+ 记忆召回工具，per-tool 全局记忆开关
 - 🔌 **MCP HTTP 工具导入**：JSON 导入 MCP 远程工具服务器，AI 通过 `<tool_mcp_*>` 标签调用
 - 📚 **SKILL 工具系统**：三种方式导入 SKILL 提示词包（GitHub / ZIP / 手动新建）
 - 🧠 **API 请求体高级设置**：深度思考开关 + 自定义 JSON 合并，兼容 DeepSeek 和火山方舟
+- 🎭 **角色描述抽屉**：antd Drawer 玻璃面板展示角色简介/性格特征/场景设定/开场白/标签/创作者
+- 📊 **上下文长度指示器**：实时估算 token 数 + 楼层数显示，便于掌握上下文使用情况
+- ⏱️ **生成耗时显示**：助手消息下方显示生成耗时（秒），便于性能调优
 
 ---
 
@@ -66,25 +71,33 @@
 
 | # | 功能 | 说明 |
 |:---:|------|------|
-| 1 | 🤖 **Android 原生应用** | Capacitor 8 打包，内置 `CapacitorHttp` 绕过 CORS 限制 |
-| 2 | 🎨 **全新 React 19 前端** | @lobehub/ui + antd 6 组件库，AlibabaPuHuiTi-3 字体，Material You 设计风格 |
-| 3 | 🌋 **火山方舟 API 兼容** | 支持 `/v3` 版本后缀，`https://ark.cn-beijing.volces.com/api/coding/v3` 可直接使用 |
-| 4 | ⌨️ **模型名自由输入** | 模型选择弹窗新增手动输入框，可手填任意模型名 |
-| 5 | 🎲 **TRPG 模式** | iframe 嵌入 AI Sandbox Game，走 LUZZY API 配置，内置 NanoHTTPD 本地代理解决 CORS |
-| 6 | 🧠 **API 请求体高级设置** | 深度思考开关 + 自定义 JSON 合并，兼容 DeepSeek 和火山方舟，TRPG 模式下同样生效 |
-| 7 | 🔌 **MCP HTTP 工具导入** | JSON 导入 MCP 远程工具服务器，AI 通过 `<tool_mcp_*>` 标签调用 |
-| 8 | 📚 **SKILL 工具系统** | 三种方式导入 SKILL 提示词包（GitHub / ZIP / 手动新建），AI 通过 `<tool_skill_*>` 标签调用 |
-| 9 | 🧠 **记忆召回工具** | 内置记忆召回工具，支持 per-tool 全局记忆开关，自动召回相关记忆注入上下文 |
-| 10 | 💾 **全局记忆（MEMORY.md）** | 全局记忆二级选项，支持 MEMORY.md 持久化存储和注入 |
-| 11 | 🔍 **向量记忆分片查看** | 向量记忆检索结果分片查看，支持查看每个分片的详细内容 |
-| 12 | 📁 **SKILL 文件管理器树形化** | SKILL 文件管理器改为树形结构，支持文件夹展开/折叠 |
-| 13 | 🌐 **GitHub 镜像站加速** | SKILL GitHub 导入支持国内镜像站（gh-proxy.com、github.moeyy.xyz、ghfast.top） |
-| 14 | 🎭 **Luzzy 内置预设** | 内置 Luzzy 预设 + 第二/第三人称预设 |
-| 15 | 🔀 **多供应商架构** | 设置密钥即启用，模型名格式 `<providerId>_<model_name>`；嵌入模型可使用独立供应商 |
-| 16 | 🌊 **流式输出** | 原生平台通过 XMLHttpRequest + 本地代理实现真流式输出 |
-| 17 | 🔧 **世界书工具调用** | 思考链 `<cot>` 内的工具调用标签可正确执行，思考卡片显示工具调用 |
-| 18 | 🛡️ **ErrorBoundary** | 全局错误边界，渲染异常时显示降级 UI + 重试按钮 |
-| 19 | ⚡ **页面懒加载** | React.lazy + Suspense 按需加载页面，优化首屏性能 |
+| 1 | 💎 **液态玻璃设计系统** | CSS 变量驱动 glassmorphism（blur + saturate + 半透明 + 边框高光 + 内阴影），亮色/暗色双主题 |
+| 2 | 📱 **5-Tab 底部导航** | 聊天 / 角色 / TRPG / 工具 / 我的，TRPG 模式独立菜单入口 |
+| 3 | 🤖 **Android 原生应用** | Capacitor 8 打包，内置 `CapacitorHttp` 绕过 CORS 限制 |
+| 4 | 🎨 **全新 React 19 前端** | @lobehub/ui + antd 6 组件库，AlibabaPuHuiTi-3 字体，Material You 设计风格 |
+| 5 | 🌋 **火山方舟 API 兼容** | 支持 `/v3` 版本后缀，`https://ark.cn-beijing.volces.com/api/coding/v3` 可直接使用 |
+| 6 | ⌨️ **模型名自由输入** | 模型选择弹窗新增手动输入框，可手填任意模型名 |
+| 7 | 🎲 **TRPG 独立模式** | 5-Tab 一级入口，iframe 嵌入 AI Sandbox Game，走 LUZZY API 配置，内置 NanoHTTPD 本地代理解决 CORS |
+| 8 | 🧠 **API 请求体高级设置** | 深度思考开关 + 自定义 JSON 合并，兼容 DeepSeek 和火山方舟，TRPG 模式下同样生效 |
+| 9 | 🔌 **MCP HTTP 工具导入** | JSON 导入 MCP 远程工具服务器，AI 通过 `<tool_mcp_*>` 标签调用 |
+| 10 | 📚 **SKILL 工具系统** | 三种方式导入 SKILL 提示词包（GitHub / ZIP / 手动新建），AI 通过 `<tool_skill_*>` 标签调用 |
+| 11 | 🧠 **记忆召回工具** | 内置记忆召回工具，支持 per-tool 全局记忆开关，自动召回相关记忆注入上下文 |
+| 12 | 💾 **全局记忆（MEMORY.md）** | 全局记忆二级选项，支持 MEMORY.md 持久化存储和注入 |
+| 13 | 🔍 **向量记忆分片查看** | 向量记忆检索结果分片查看，支持查看每个分片的详细内容 |
+| 14 | 📁 **SKILL 文件管理器树形化** | SKILL 文件管理器改为树形结构，支持文件夹展开/折叠 |
+| 15 | 🌐 **GitHub 镜像站加速** | SKILL GitHub 导入支持国内镜像站（gh-proxy.com、github.moeyy.xyz、ghfast.top） |
+| 16 | 🎭 **Luzzy 内置预设** | 内置 Luzzy 预设 + 第二/第三人称预设 |
+| 17 | 🔀 **多供应商架构** | 设置密钥即启用，模型名格式 `<providerId>_<model_name>`；嵌入模型可使用独立供应商 |
+| 18 | 🌊 **流式输出** | 原生平台通过 XMLHttpRequest + 本地代理实现真流式输出 |
+| 19 | 🔧 **世界书工具调用** | 思考链 `<cot>` 内的工具调用标签可正确执行，思考卡片显示工具调用 |
+| 20 | 🛡️ **ErrorBoundary** | 全局错误边界，渲染异常时显示降级 UI + 重试按钮 |
+| 21 | ⚡ **页面懒加载** | React.lazy + Suspense 按需加载页面，优化首屏性能 |
+| 22 | 🎭 **角色描述抽屉** | antd Drawer 玻璃面板展示角色简介/性格特征/场景设定/开场白/标签/创作者 |
+| 23 | 📊 **上下文长度指示器** | 实时估算 token 数 + 楼层数显示，便于掌握上下文使用情况 |
+| 24 | ⏱️ **生成耗时显示** | 助手消息下方显示生成耗时（秒），便于性能调优 |
+| 25 | 🧩 **记忆召回展示** | 玻璃卡片 + Tag 标签显示轮次和相似度百分比，可视化记忆召回过程 |
+| 26 | 🔧 **工具调用状态卡片** | 玻璃卡片 + 状态标签系统（等待/接收/排队/执行/续写/完成/失败），查询/原因/错误/结果折叠展示 |
+| 27 | 🎴 **角色背景层** | 当前角色头像作为模糊背景（blur + saturate + opacity），增强沉浸感 |
 
 ---
 
@@ -126,10 +139,11 @@ SKILL 和 MCP 工具可设置启用范围：
 
 ## 🎲 TRPG 模式（AI 沙盒游戏）
 
-侧边栏新增 TRPG 入口，iframe 嵌入 [AI Sandbox Game](https://aisandboxgame.com/)。
+底部导航栏独立 TRPG 入口（5-Tab 一级菜单），iframe 嵌入 [AI Sandbox Game](https://aisandboxgame.com/)。
 
 ### 核心特性
 
+- **独立菜单入口**：5-Tab 底部导航一级入口（聊天 / 角色 / TRPG / 工具 / 我的），无需进入「更多」页面
 - **iframe 缓存**：使用 `v-show` 控制，切换到其他功能再切回 TRPG，网页状态保持不变
 - **走 LUZZY API 配置**：自动使用 LUZZY 主设置的 API 配置发起请求，无需在 TRPG 网页内单独配置真实 API
 - **模型名自由设置**：TRPG 网页内的模型商名称、API、APIKey 仅作占位符，真正生效的是模型名
@@ -147,6 +161,41 @@ SKILL 和 MCP 工具可设置启用范围：
    - API Key 随便填（占位符，实际使用 LUZZY 的 Key）
    - 模型名自由设置（如 `DeepSeek-V4-Pro`，无需在 LUZZY 预先配置）
 5. 开始 TRPG 游戏体验
+
+---
+
+## 💎 液态玻璃设计系统
+
+全页面统一采用液态玻璃（Liquid Glass / Glassmorphism）设计语言，CSS 变量驱动，亮色/暗色双主题。
+
+### 设计要素
+
+| 要素 | 实现 |
+|------|------|
+| **背景模糊** | `backdrop-filter: blur(20px) saturate(180%)` |
+| **半透明背景** | `rgba(255, 255, 255, 0.55)` 亮色 / `rgba(30, 30, 40, 0.55)` 暗色 |
+| **边框高光** | `1px solid rgba(255, 255, 255, 0.18)` 顶部高光 |
+| **内阴影** | `inset 0 1px 0 rgba(255, 255, 255, 0.25)` |
+| **外阴影** | `0 8px 32px rgba(0, 0, 0, 0.08)` 柔和投影 |
+
+### 玻璃强度分级
+
+| 等级 | 用途 | 模糊半径 | 透明度 |
+|:---:|------|:---:|:---:|
+| **高强度** | 角色选择栏、输入区、角色描述抽屉、角色选择弹窗项 | 24px | 0.65 |
+| **标准** | 助手消息气泡、卡片容器 | 16px | 0.55 |
+| **轻量** | 思考链卡片、工具调用卡片、记忆召回卡片 | 12px | 0.45 |
+
+### 应用范围
+
+- **消息气泡**：助手用标准玻璃，用户用主色实色
+- **角色选择栏**：高强度玻璃 + 上下文指示器
+- **输入区**：高强度玻璃 + 玻璃按钮
+- **思考链卡片**：轻量玻璃 + antd Collapse 折叠
+- **工具调用卡片**：轻量玻璃 + 左边框状态色（running/completed/error）
+- **记忆召回卡片**：轻量玻璃 + tertiary 左边框 + Tag 标签
+- **角色描述抽屉**：高强度玻璃 + antd Drawer
+- **角色背景层**：当前角色头像作为模糊背景（blur + saturate + opacity）
 
 ---
 
@@ -379,7 +428,7 @@ LUZZY/
 ├── frontend/                    # React 19 前端工程
 │   ├── src/
 │   │   ├── components/layout/   # 布局组件（AppHeader/BottomTabBar/MobileLayout）
-│   │   ├── pages/               # 页面（Chat/Settings/Characters/Tools/More）
+│   │   ├── pages/               # 页面（Chat/Characters/Trpg/Tools/Mine）
 │   │   ├── services/            # 服务层（10个模块）
 │   │   ├── store/               # Zustand Store（3个）
 │   │   ├── styles/              # 全局样式 + Alibaba 字体

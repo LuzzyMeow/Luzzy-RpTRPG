@@ -103,11 +103,14 @@ export interface ApiSettings {
 /** 主题模式 */
 export type ThemeMode = 'light' | 'dark';
 
+/** 底部 Tab 图标名称（与 BottomTabBar 的 TabIcon switch 一一对应） */
+export type TabIconName = 'chat' | 'characters' | 'trpg' | 'tools' | 'mine';
+
 /** 底部 Tab 项 */
 export interface TabItem {
   key: string;
   label: string;
-  icon: string;
+  icon: TabIconName;
   path: string;
 }
 
@@ -290,3 +293,69 @@ export interface WorldInfoInjection {
   position: number;
   depth: number;
 }
+
+/** 会话/对话 */
+export interface Conversation {
+  id: string;
+  title: string;
+  characterId?: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+  pinned?: boolean;
+}
+
+/** TRPG 代理配置 */
+export interface TrpgProxyConfig {
+  apiUrl: string;
+  apiKey: string;
+  modelName: string;
+  enableThinking: boolean;
+  customRequestBody: string;
+}
+
+/** SKILL 文件节点（树形结构） */
+export interface SkillFileNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  content?: string;
+  children?: SkillFileNode[];
+}
+
+/** SKILL 导入来源 */
+export type SkillImportSource = 'github' | 'zip' | 'manual';
+
+/** GitHub 镜像站 */
+export interface GithubMirror {
+  name: string;
+  url: string;
+}
+
+/** 角色卡导出格式 */
+export type CharacterExportFormat = 'png' | 'json' | 'chat';
+
+/** 上下文查看器条目 */
+export interface ContextViewerItem {
+  role: MessageRole;
+  content: string;
+  source: 'system' | 'character' | 'history' | 'worldinfo' | 'memory' | 'preset' | 'tool';
+  tokenEstimate?: number;
+}
+
+/** 模型信息 */
+export interface ModelInfo {
+  id: string;
+  name: string;
+  providerId: string;
+  providerName: string;
+  capabilities?: string[];
+  contextLength?: number;
+  favorite?: boolean;
+}
+
+/** 模型选择模式 */
+export type ModelSelectionMode = 'quality' | 'balanced' | 'fast';
+
+/** API 状态 */
+export type ApiStatus = 'unknown' | 'checking' | 'connected' | 'error';

@@ -12,9 +12,12 @@ const useStyles = createStyles(({ css }) => ({
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: var(--luzzy-surface);
+    background: var(--luzzy-glass-bg-strong);
+    backdrop-filter: blur(var(--luzzy-glass-blur-strong)) saturate(200%);
+    -webkit-backdrop-filter: blur(var(--luzzy-glass-blur-strong)) saturate(200%);
     color: var(--luzzy-on-surface);
-    border-bottom: 1px solid var(--luzzy-outline-variant);
+    border-bottom: var(--luzzy-glass-border-width) solid var(--luzzy-glass-border-color);
+    box-shadow: var(--luzzy-glass-shadow);
     position: relative;
     z-index: 10;
   `,
@@ -22,7 +25,10 @@ const useStyles = createStyles(({ css }) => ({
     font-size: 20px;
     font-weight: 700;
     letter-spacing: 1px;
-    color: var(--luzzy-primary);
+    background: linear-gradient(135deg, var(--luzzy-primary), var(--luzzy-tertiary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
     user-select: none;
   `,
   title: css`
@@ -43,10 +49,15 @@ const useStyles = createStyles(({ css }) => ({
     align-items: center;
     justify-content: center;
     color: var(--luzzy-on-surface);
-    transition: background var(--luzzy-transition);
+    background: var(--luzzy-glass-bg-subtle);
+    backdrop-filter: blur(var(--luzzy-glass-blur-subtle));
+    -webkit-backdrop-filter: blur(var(--luzzy-glass-blur-subtle));
+    border: var(--luzzy-glass-border-width) solid var(--luzzy-glass-border-color);
+    transition: all var(--luzzy-transition-glass);
 
     &:active {
-      background: var(--luzzy-surface-container-high);
+      transform: scale(0.92);
+      background: var(--luzzy-glass-bg);
     }
   `,
 }));
@@ -54,9 +65,9 @@ const useStyles = createStyles(({ css }) => ({
 const PAGE_TITLES: Record<string, string> = {
   '/chat': '聊天',
   '/characters': '角色',
+  '/trpg': 'TRPG',
   '/tools': '工具',
-  '/settings': '设置',
-  '/more': '更多',
+  '/mine': '我的',
 };
 
 export function AppHeader() {
@@ -65,7 +76,11 @@ export function AppHeader() {
   const theme = useSettingsStore((s) => s.theme);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
 
-  const title = PAGE_TITLES[location.pathname] ?? 'LUZZY';
+  // 优先精确匹配，再回退到首段路径匹配（兼容未来可能的嵌套路由）
+  const title =
+    PAGE_TITLES[location.pathname] ??
+    PAGE_TITLES['/' + (location.pathname.split('/')[1] ?? '')] ??
+    'LUZZY';
 
   return (
     <header className={styles.header}>
