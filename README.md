@@ -63,12 +63,12 @@
 
 | # | 功能 | 说明 |
 |:---:|------|------|
-| 1 | 🤖 **Android APK 构建** | Capacitor 8 打包，内置 `CapacitorHttp` 绕过 CORS 限制，原生环境自动降级流式传输 |
+| 1 | 🤖 **Android APK 构建** | Capacitor 8 打包，内置 `CapacitorHttp` 绕过 CORS 限制 |
 | 2 | 🌋 **火山方舟 API 兼容** | 支持 `/v3` 版本后缀，`https://ark.cn-beijing.volces.com/api/coding/v3` 可直接使用，无需外部 proxy |
-| 3 | ⌨️ **模型名自由输入** | 模型选择弹窗新增手动输入框，可手填任意模型名（如 `ark-code-latest`），同时适用于主模型和嵌入模型 |
+| 3 | ⌨️ **模型名自由输入** | 模型选择弹窗新增手动输入框，可手填任意模型名（如 `ark_deepseek-v4-pro`），同时适用于主模型和嵌入模型 |
 | 4 | 🏪 **万相广场自动导入** | 原生层捕获下载请求，角色卡和 UI 模板**直接导入到 app**，无需手动从文件系统选择 |
 | 5 | 🎲 **TRPG 模式** | iframe 嵌入 AI Sandbox Game，走 RP-Hub API 配置，内置 NanoHTTPD 本地代理解决 CORS |
-| 6 | 🧠 **API 请求体高级设置** | 深度思考开关 + 思考强度五档 + 自定义 JSON 合并，兼容 DeepSeek 和火山方舟 |
+| 6 | 🧠 **API 请求体高级设置** | 深度思考开关 + 自定义 JSON 合并，兼容 DeepSeek 和火山方舟，TRPG 模式下同样生效 |
 | 7 | 🔌 **MCP HTTP 工具导入** | JSON 导入 MCP 远程工具服务器，AI 通过 `<tool_mcp_*>` 标签调用 |
 | 8 | 📚 **SKILL 工具系统** | 三种方式导入 SKILL 提示词包（GitHub / ZIP / 手动新建），AI 通过 `<tool_skill_*>` 标签调用 |
 | 9 | 🧠 **记忆召回工具** | 内置记忆召回工具，支持 per-tool 全局记忆开关，自动召回相关记忆注入上下文 |
@@ -77,6 +77,9 @@
 | 12 | 📁 **SKILL 文件管理器树形化** | SKILL 文件管理器改为树形结构，支持文件夹展开/折叠 |
 | 13 | 🌐 **GitHub 镜像站加速** | SKILL GitHub 导入支持国内镜像站（gh-proxy.com、github.moeyy.xyz、ghfast.top） |
 | 14 | 🎭 **Luzzy 内置预设** | 新增 Luzzy 内置预设（NSFW 提示词，注入位置 system），删除旧内置预设 |
+| 15 | 🔀 **多供应商架构** | 设置密钥即启用，不再强制切换单一供应商；模型名格式 `<providerId>_<model_name>`；嵌入模型可使用独立供应商 |
+| 16 | 🌊 **流式输出** | 原生平台通过 XMLHttpRequest + 本地代理实现真流式输出，浏览器走 fetch + ReadableStream |
+| 17 | 🔧 **世界书工具调用修复** | 思考链 `<cot>` 内的工具调用标签可正确执行，思考卡片显示工具调用 |
 
 ---
 
@@ -156,14 +159,60 @@ SKILL 和 MCP 工具可设置启用范围：
 | 功能 | 说明 |
 |------|------|
 | **深度思考快捷开关** | 一键注入 `thinking.type: "enabled"`，兼容 DeepSeek thinking_mode 和火山方舟深度思考 |
-| **思考强度下拉框** | `minimal` / `low` / `medium` / `high` / `max` 五档（空字符串 = 不注入） |
-| **自定义请求体 JSON** | 最高优先级合并到请求体，实时校验 JSON 有效性 |
+| **自定义请求体 JSON** | 最高优先级合并到请求体，实时校验 JSON 有效性。可注入 `reasoning_effort`、`max_completion_tokens` 等字段 |
 
-**合并优先级**：基础字段 < 深度思考开关 < 思考强度 < 自定义 JSON
+**合并优先级**：基础字段 < 深度思考开关 < 自定义 JSON
 
 **字段保护**：`model` 和 `messages` 核心字段受保护，自定义 JSON 不可覆盖
 
-**作用域限定**：高级设置**仅作用于 RP-Hub 主聊天 chat/completions 请求**；不作用于 UI 模板分析、向量嵌入、模型列表、TRPG iframe 内 aisandboxgame 自身发起的请求。
+**作用域**：高级设置作用于 RP-Hub 主聊天 chat/completions 请求。**TRPG 模式下同样生效**——本地代理服务器会解析请求体并注入高级设置字段。
+
+**自定义 JSON 示例**：
+```json
+{"reasoning_effort":"medium","max_completion_tokens":8192}
+```
+
+---
+
+## 🔀 多供应商架构
+
+支持同时配置多个 API 供应商，设置密钥即算启用，不再强制切换单一供应商。
+
+### 模型名格式
+
+所有模型名采用 `<providerId>_<model_name>` 格式，用下划线分隔供应商 ID 和模型名：
+- `ark_deepseek-v4-pro`（ark 供应商的 deepseek-v4-pro 模型）
+- `openai_gpt-4o`（openai 供应商的 gpt-4o 模型）
+
+系统根据模型名前缀自动路由到对应供应商的 API URL 和 Key。
+
+### 自定义供应商
+
+- 新增自定义供应商时填写**供应商 ID**（仅英文字母，如 `ark`、`myapi`）
+- 供应商 ID 用于模型名前缀，不可修改（编辑模式下禁用）
+- 删除供应商时自动清理所有模型名中该供应商的前缀
+
+### 嵌入模型独立供应商
+
+记忆系统的嵌入模型可使用与聊天模型不同的供应商：
+- 在「记忆引擎设置」中选择嵌入模型供应商
+- 嵌入模型的 API URL 和 Key 从该供应商获取
+- 支持场景：嵌入模型用供应商 A，聊天模型用供应商 B
+
+---
+
+## 🌊 流式输出
+
+支持在聊天和 TRPG 模式下流式输出 AI 响应。
+
+### 实现方案
+
+| 平台 | 方案 | 说明 |
+|------|------|------|
+| **浏览器** | fetch + ReadableStream | 标准 Web API，直接读取流式响应 |
+| **Android 原生** | XMLHttpRequest + 本地代理 | 绕过 CapacitorHttp patch，通过 `localhost:18527` 代理实现真流式 |
+
+**技术细节**：CapacitorHttp 会 patch 全局 `fetch`，导致 `response.body.getReader()` 在 Android 上一次性返回完整数据。XMLHttpRequest 不被 patch，其 `onprogress` 事件可逐步接收数据，`responseText` 增量更新，因此可用于真流式输出。
 
 ---
 
@@ -318,29 +367,29 @@ npm run sync && cd android && .\gradlew.bat assembleDebug
 |------|------|------|
 | 运行方式 | 浏览器打开 HTML | 浏览器 + Android APK |
 | 火山方舟 API | 需外部 proxy | APK 内直接可用 |
-| 模型选择 | 仅下拉列表 | 下拉 + 手动输入 |
+| 模型选择 | 仅下拉列表 | 下拉 + 手动输入 + `<providerId>_<model_name>` 格式 |
 | 万相广场下载 | 下载到文件系统 | 直接导入到 app |
 | TRPG 模式 | 无 | 内置 + 走 RP-Hub 配置 + 本地代理 |
-| 深度思考支持 | 无 | 快捷开关 + 思考强度 + 自定义 JSON |
+| 深度思考支持 | 无 | 快捷开关 + 自定义 JSON（TRPG 模式同样生效） |
 | MCP 工具 | 无 | JSON 导入 + 标签调用 |
 | SKILL 工具 | 无 | GitHub / ZIP / 手动新建三种导入 |
 | 角色卡工具过滤 | 无 | SKILL 和 MCP 工具按角色卡启用 |
-| 流式传输 | 支持 | APK 内自动降级为整段返回 |
+| 流式传输 | 支持 | 浏览器 + Android 原生均支持真流式 |
+| 多供应商 | 仅单一供应商 | 多供应商 + 嵌入模型独立供应商 |
 | 记忆召回工具 | 无 | 内置记忆召回 + per-tool 全局记忆开关 |
 | 全局记忆 | 无 | MEMORY.md 持久化 + 自动注入 |
 | 向量记忆分片查看 | 无 | 分片展示 + 详细内容查看 |
 | SKILL 文件管理器 | 平铺 | 树形结构 + 展开/折叠 |
 | GitHub 镜像站 | 无 | 国内镜像站加速 |
 | 内置预设 | 旧预设 | Luzzy 预设 + 第二/第三人称 |
+| 世界书工具调用 | 仅主内容扫描 | 主内容 + 思考链 `<cot>` 内扫描 |
 
 ---
 
 ## ⚠️ 已知限制
 
-- APK 内聊天为整段返回，无逐字打字效果（CapacitorHttp 限制）
 - 万相广场未审核/管理员卡片使用 blob URL 下载，可能无法自动导入
 - TRPG 模式说明弹窗首次进入会弹出，可勾选「本次不再提示」（App 重启后恢复）
-- 高级设置（深度思考）仅作用于 RP-Hub 主聊天，TRPG iframe 内 aisandboxgame 请求不生效
 - MCP 和 SKILL 工具仅对 RP-Hub 主聊天生效，TRPG 模式不生效
 - 当前仅提供 debug APK，release 版需配置签名密钥
 

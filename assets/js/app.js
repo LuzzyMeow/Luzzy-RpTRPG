@@ -534,8 +534,9 @@ createApp({
             apiKey: DEFAULT_API_CONFIG.apiKey,
             apiProviderId: DEFAULT_API_PROVIDER_ID,
             apiProviderKeys: {},
-            customApiUrl: '',
-            customApiUrl2: '',
+            customApiUrl: '',         // 向后兼容（旧固定槽位1）
+            customApiUrl2: '',        // 向后兼容（旧固定槽位2）
+            customApiProviders: [],   // 动态自定义供应商列表 [{id, name, apiUrl, icon, isBuiltin:false}]
             model: DEFAULT_API_CONFIG.qualityModel,
             contextSize: MAX_CONTEXT_SIZE,
             temperature: 1.0,
@@ -576,62 +577,142 @@ createApp({
 
         const showApiProviderSelector = ref(false);
         const selectedApiProviderId = ref(DEFAULT_API_PROVIDER_ID);
-        const customApiProviderOption = {
-            id: 'custom',
-            name: '自定义',
-            apiUrl: '',
-            icon: ''
-        };
-        const customApiProviderOption2 = {
-            id: 'custom2',
-            name: '自定义2',
-            apiUrl: '',
-            icon: ''
-        };
-        const customApiProviderOptions = [customApiProviderOption, customApiProviderOption2];
-        const isCustomApiProviderId = (id) => customApiProviderOptions.some(provider => provider.id === id);
-        const getCustomApiUrlKey = (id) => id === 'custom2' ? 'customApiUrl2' : 'customApiUrl';
+        // 动态自定义供应商列表（从 settings.customApiProviders 派生，供模板 v-for 使用）
+        const customApiProviderOptions = computed(() => settings.customApiProviders || []);
+        const isCustomApiProviderId = (id) => (settings.customApiProviders || []).some(provider => provider.id === id);
+        const getCustomApiUrlKey = (id) => id === 'custom2' ? 'customApiUrl2' : 'customApiUrl'; // 向后兼容
         const normalizeApiProviderUrl = (url) => String(url || '').replace(/\/+$/, '').toLowerCase();
+        // 统一获取所有供应商（内置 + 自定义）
+        const getAllApiProviders = () => [...apiProviderOptions, ...(settings.customApiProviders || [])];
+        const getProviderById = (id) => getAllApiProviders().find(p => p.id === id);
         const getApiProviderById = (id) => apiProviderOptions.find(provider => provider.id === id);
         const getApiProviderByUrl = (url) => {
             const currentUrl = normalizeApiProviderUrl(url);
             return apiProviderOptions.find(provider => normalizeApiProviderUrl(provider.apiUrl) === currentUrl);
         };
+
+        // === 自定义供应商管理 ===
+        const showCustomProviderEditor = ref(false);
+        const editingProvider = reactive({ id: '', name: '', apiUrl: '', isEdit: false });
+        const openCustomProviderEditor = (existingProvider = null) => {
+            if (existingProvider) {
+                editingProvider.id = existingProvider.id;
+                editingProvider.name = existingProvider.name || existingProvider.id;
+                editingProvider.apiUrl = existingProvider.apiUrl || '';
+                editingProvider.isEdit = true;
+            } else {
+                editingProvider.id = '';
+                editingProvider.name = '';
+                editingProvider.apiUrl = '';
+                editingProvider.isEdit = false;
+            }
+            showCustomProviderEditor.value = true;
+        };
+        const filterProviderIdInput = () => {
+            editingProvider.id = editingProvider.id.replace(/[^a-zA-Z]/g, '');
+        };
+        const saveCustomProvider = () => {
+            const id = editingProvider.id.trim();
+            const name = editingProvider.name.trim();
+            const apiUrl = editingProvider.apiUrl.trim();
+            if (!id) { showToast('请填写供应商 ID', 'warning'); return; }
+            if (!/^[a-zA-Z]+$/.test(id)) { showToast('供应商 ID 只能包含英文字母', 'error'); return; }
+            if (!apiUrl) { showToast('请填写 API 地址', 'warning'); return; }
+            if (editingProvider.isEdit) {
+                // 编辑模式下 ID 不可修改（修改 ID 需级联更新 apiProviderKeys/apiProviderId/模型前缀等关联引用）
+                // 若用户修改了 ID，提示并使用原始 ID
+                const existingProvider = (settings.customApiProviders || []).find(p => p.id === editingProvider.id);
+                if (existingProvider) {
+                    existingProvider.name = name || id;
+                    existingProvider.apiUrl = apiUrl;
+                    if (settings.apiProviderId === id) settings.apiUrl = apiUrl;
+                } else {
+                    showToast('编辑失败：找不到该供应商', 'error');
+                    return;
+                }
+            } else {
+                if (getAllApiProviders().some(p => p.id === id)) { showToast('供应商 ID 已存在', 'error'); return; }
+                if (!Array.isArray(settings.customApiProviders)) settings.customApiProviders = [];
+                settings.customApiProviders.push({ id, name: name || id, apiUrl, icon: '', isBuiltin: false });
+                if (!settings.apiProviderKeys[id]) settings.apiProviderKeys[id] = '';
+            }
+            showCustomProviderEditor.value = false;
+            showToast(editingProvider.isEdit ? '供应商已更新' : '供应商已添加', 'success');
+        };
+        const removeCustomApiProvider = (id) => {
+            if (!Array.isArray(settings.customApiProviders)) return;
+            const idx = settings.customApiProviders.findIndex(p => p.id === id && !p.isBuiltin);
+            if (idx === -1) return;
+            settings.customApiProviders.splice(idx, 1);
+            if (settings.apiProviderKeys && settings.apiProviderKeys[id]) delete settings.apiProviderKeys[id];
+            if (settings.apiProviderId === id) {
+                const fallback = apiProviderOptions[0];
+                selectApiProvider(fallback);
+            }
+            if (memorySettings.embeddingApiProviderId === id) {
+                memorySettings.embeddingApiProviderId = '';
+            }
+            // 级联清理：移除模型名中已失效的供应商前缀，避免发送带前缀的错误模型名
+            const stripPrefix = (modelName) => {
+                if (!modelName) return modelName;
+                const { providerId, modelName: actual } = parseModelName(modelName);
+                if (providerId === id) return actual;
+                return modelName;
+            };
+            settings.model = stripPrefix(settings.model);
+            if (typeof settings.qualityModel !== 'undefined') settings.qualityModel = stripPrefix(settings.qualityModel);
+            if (typeof settings.balancedModel !== 'undefined') settings.balancedModel = stripPrefix(settings.balancedModel);
+            if (typeof settings.fastModel !== 'undefined') settings.fastModel = stripPrefix(settings.fastModel);
+            if (memorySettings.embeddingModel) memorySettings.embeddingModel = stripPrefix(memorySettings.embeddingModel);
+            showToast('供应商已删除', 'info');
+        };
+
         const syncCurrentApiKeyToProvider = () => {
-            const providerId = settings.apiProviderId || selectedApiProvider.value.id || DEFAULT_API_PROVIDER_ID;
+            const providerId = settings.apiProviderId || selectedApiProvider.value?.id || DEFAULT_API_PROVIDER_ID;
             if (!settings.apiProviderKeys || typeof settings.apiProviderKeys !== 'object' || Array.isArray(settings.apiProviderKeys)) {
                 settings.apiProviderKeys = {};
             }
             settings.apiProviderKeys[providerId] = settings.apiKey || '';
+            // 自定义供应商：同步 URL 回供应商对象
             if (isCustomApiProviderId(providerId)) {
-                settings[getCustomApiUrlKey(providerId)] = settings.apiUrl || '';
+                const provider = (settings.customApiProviders || []).find(p => p.id === providerId);
+                if (provider) provider.apiUrl = settings.apiUrl || '';
             }
         };
         const normalizeApiProviderSettings = () => {
             if (!settings.apiProviderKeys || typeof settings.apiProviderKeys !== 'object' || Array.isArray(settings.apiProviderKeys)) {
                 settings.apiProviderKeys = {};
             }
-            [...apiProviderOptions, ...customApiProviderOptions].forEach(provider => {
+            if (!Array.isArray(settings.customApiProviders)) {
+                settings.customApiProviders = [];
+            }
+
+            // 向后兼容：迁移旧固定槽位 custom/custom2 到动态数组
+            const existingCustomIds = new Set(settings.customApiProviders.map(p => p.id));
+            if (settings.customApiUrl && !existingCustomIds.has('custom')) {
+                settings.customApiProviders.push({ id: 'custom', name: '自定义', apiUrl: settings.customApiUrl, icon: '', isBuiltin: false });
+            }
+            if (settings.customApiUrl2 && !existingCustomIds.has('custom2')) {
+                settings.customApiProviders.push({ id: 'custom2', name: '自定义2', apiUrl: settings.customApiUrl2, icon: '', isBuiltin: false });
+            }
+            // 迁移完成后清除旧字段，防止删除迁移来的供应商后刷新页面"复活"
+            settings.customApiUrl = '';
+            settings.customApiUrl2 = '';
+
+            // 确保所有供应商都有 key 初始化
+            getAllApiProviders().forEach(provider => {
                 if (typeof settings.apiProviderKeys[provider.id] !== 'string') {
                     settings.apiProviderKeys[provider.id] = '';
                 }
             });
 
-            let provider = getApiProviderById(settings.apiProviderId);
-            if (!provider && !isCustomApiProviderId(settings.apiProviderId)) {
-                provider = getApiProviderByUrl(settings.apiUrl);
-                settings.apiProviderId = provider?.id || DEFAULT_API_PROVIDER_ID;
-            }
-            if (isCustomApiProviderId(settings.apiProviderId)) {
-                const urlKey = getCustomApiUrlKey(settings.apiProviderId);
-                settings[urlKey] = settings[urlKey] || settings.apiUrl || '';
-                settings.apiUrl = settings[urlKey];
-            } else {
-                provider = getApiProviderById(settings.apiProviderId) || getApiProviderById(DEFAULT_API_PROVIDER_ID);
+            // 解析当前选中供应商
+            let provider = getProviderById(settings.apiProviderId);
+            if (!provider) {
+                provider = getApiProviderByUrl(settings.apiUrl) || apiProviderOptions[0];
                 settings.apiProviderId = provider.id;
-                settings.apiUrl = provider.apiUrl;
             }
-
+            settings.apiUrl = provider.apiUrl || '';
             selectedApiProviderId.value = settings.apiProviderId;
             if (settings.apiKey && !settings.apiProviderKeys[settings.apiProviderId]) {
                 settings.apiProviderKeys[settings.apiProviderId] = settings.apiKey;
@@ -639,22 +720,16 @@ createApp({
             settings.apiKey = settings.apiProviderKeys[settings.apiProviderId] || '';
         };
         const selectedApiProvider = computed(() => {
-            const customProvider = customApiProviderOptions.find(provider => (
-                provider.id === settings.apiProviderId || provider.id === selectedApiProviderId.value
-            ));
-            if (customProvider) return customProvider;
-            const selectedProvider = getApiProviderById(settings.apiProviderId) || getApiProviderById(selectedApiProviderId.value);
-            if (selectedProvider) return selectedProvider;
-            return getApiProviderByUrl(settings.apiUrl) || customApiProviderOption;
+            const provider = getProviderById(settings.apiProviderId) || getProviderById(selectedApiProviderId.value);
+            if (provider) return provider;
+            return getApiProviderByUrl(settings.apiUrl) || apiProviderOptions[0];
         });
-        const isCustomApiProvider = computed(() => isCustomApiProviderId(selectedApiProvider.value.id));
+        const isCustomApiProvider = computed(() => isCustomApiProviderId(selectedApiProvider.value?.id));
         const selectApiProvider = (provider) => {
             syncCurrentApiKeyToProvider();
             selectedApiProviderId.value = provider.id;
             settings.apiProviderId = provider.id;
-            settings.apiUrl = isCustomApiProviderId(provider.id)
-                ? settings[getCustomApiUrlKey(provider.id)] || ''
-                : provider.apiUrl;
+            settings.apiUrl = provider.apiUrl || '';
             settings.apiKey = settings.apiProviderKeys[provider.id] || '';
             showApiProviderSelector.value = false;
         };
@@ -672,6 +747,9 @@ createApp({
 
         watch(() => settings.apiUrl, (newUrl) => {
             if (isCustomApiProviderId(settings.apiProviderId)) {
+                const provider = (settings.customApiProviders || []).find(p => p.id === settings.apiProviderId);
+                if (provider) provider.apiUrl = newUrl || '';
+                // 向后兼容：同步到旧字段
                 settings[getCustomApiUrlKey(settings.apiProviderId)] = newUrl || '';
             }
         });
@@ -1096,6 +1174,7 @@ createApp({
         const memorySettings = reactive({
             enabled: false,
             embeddingModel: '',
+            embeddingApiProviderId: '',  // 空=跟随聊天供应商，非空=指定嵌入供应商
             vectorTopK: MEMORY_VECTOR_DEFAULT_TOP_K,
             defaultDepth: 3,
             autoExtract: true,
@@ -1799,11 +1878,27 @@ createApp({
             }
         };
 
+        /**
+         * 推送高级设置到 Android 原生层（TRPG 代理注入使用）
+         * 在 settings.enableThinking 或 settings.customRequestBody 变化时自动调用
+         */
+        const pushAdvancedSettingsToNative = () => {
+            if (window.AndroidProxy && typeof window.AndroidProxy.setAdvancedSettings === 'function') {
+                window.AndroidProxy.setAdvancedSettings(
+                    settings.enableThinking ? 'true' : 'false',
+                    settings.customRequestBody || ''
+                );
+                console.log('[TRPG] Advanced settings pushed to native proxy');
+            }
+        };
+
         // watch settings 变化时推送配置到原生层
         watch(() => settings.apiUrl, () => { pushApiConfigToNative(); });
         watch(() => settings.apiKey, () => { pushApiConfigToNative(); });
+        watch(() => settings.enableThinking, () => { pushAdvancedSettingsToNative(); });
+        watch(() => settings.customRequestBody, () => { pushAdvancedSettingsToNative(); });
         // 初始化时推送一次配置（延迟执行，确保 WebView 已就绪）
-        nextTick(() => { pushApiConfigToNative(); });
+        nextTick(() => { pushApiConfigToNative(); pushAdvancedSettingsToNative(); });
 
         const confirmTrpgProxy = () => {
             // 如果勾选了"本次不再提示"，设置内存变量
@@ -4247,12 +4342,37 @@ ${content}
             }
         };
 
+        // 从指定供应商拉取模型列表（供嵌入模型独立供应商使用）
+        const fetchModelsFromProvider = async (providerApiUrl, providerApiKey) => {
+            try {
+                const url = getOpenAICompatUrlForUrl(providerApiUrl, 'models');
+                const response = await fetch(url, {
+                    headers: { 'Authorization': `Bearer ${providerApiKey}` }
+                });
+                if (!response.ok) throw new Error('Failed to fetch models from provider');
+                const data = await response.json();
+                availableModels.value = data.data || [];
+            } catch (error) {
+                console.error('[Models] 从指定供应商获取模型失败:', error);
+                // 静默失败，用户仍可手动输入模型名
+            }
+        };
+
         const openModelSelector = (target) => {
             modelSelectionTarget.value = target;
             customModelInput.value = '';
             if (target === 'memoryEmbeddingModel') {
                 modelSearchQuery.value = 'embedding';
                 activeModelTag.value = 'all';
+                // 嵌入模型独立供应商：如果配置了独立供应商，从该供应商拉取模型列表
+                const embProviderId = memorySettings.embeddingApiProviderId;
+                if (embProviderId && embProviderId !== settings.apiProviderId) {
+                    const provider = getProviderById(embProviderId);
+                    const embApiKey = settings.apiProviderKeys[embProviderId] || '';
+                    if (provider && embApiKey) {
+                        fetchModelsFromProvider(provider.apiUrl, embApiKey);
+                    }
+                }
             } else if (modelSearchQuery.value === 'embedding') {
                 modelSearchQuery.value = '';
             }
@@ -4261,19 +4381,21 @@ ${content}
 
         const selectModel = (modelId) => {
             if (modelSelectionTarget.value === 'memoryEmbeddingModel') {
-                memorySettings.embeddingModel = modelId;
+                const embeddingProviderId = memorySettings.embeddingApiProviderId || settings.apiProviderId;
+                memorySettings.embeddingModel = addProviderPrefixToModel(modelId, embeddingProviderId);
                 showModelSelector.value = false;
                 return;
             }
 
-            settings[modelSelectionTarget.value] = modelId;
+            const prefixedModel = addProviderPrefixToModel(modelId, settings.apiProviderId);
+            settings[modelSelectionTarget.value] = prefixedModel;
 
             if (
                 (modelSelectionTarget.value === 'qualityModel' && currentModelMode.value === 'quality') ||
                 (modelSelectionTarget.value === 'balancedModel' && currentModelMode.value === 'balanced') ||
                 (modelSelectionTarget.value === 'fastModel' && currentModelMode.value === 'fast')
             ) {
-                settings.model = modelId;
+                settings.model = prefixedModel;
             }
 
             showModelSelector.value = false;
@@ -4283,6 +4405,20 @@ ${content}
             const trimmed = customModelInput.value.trim();
             if (!trimmed) {
                 showToast('请输入模型名称', 'warning');
+                return;
+            }
+            // 验证格式：<providerId>_<model_name>
+            if (!trimmed.includes('_')) {
+                showToast('模型名称格式应为 <供应商ID>_<模型名>，如 ark_deepseek-v4-pro', 'warning');
+                return;
+            }
+            const { providerId, modelName } = parseModelName(trimmed);
+            if (!providerId) {
+                showToast(`未找到供应商 "${trimmed.split('_')[0]}"，请先添加该供应商`, 'warning');
+                return;
+            }
+            if (!modelName) {
+                showToast('模型名称不能为空', 'warning');
                 return;
             }
             selectModel(trimmed);
@@ -4661,7 +4797,11 @@ ${content}
                 finishUiTemplateStatusAsToast('未选择变量分析模型', 'warning');
                 return false;
             }
-            const url = getOpenAICompatUrl('chat/completions');
+            // 多供应商路由：UI 模板分析模型也支持 <providerId>_<model_name> 格式
+            const uiTemplateApiUrl = getApiUrlForModel(fallbackModel);
+            const uiTemplateApiKey = getApiKeyForModel(fallbackModel);
+            const uiTemplateActualModel = getActualModelName(fallbackModel);
+            const url = getOpenAICompatUrlForUrl(uiTemplateApiUrl, 'chat/completions');
 
             try {
                 const updateRun = startUiTemplateUpdateRun();
@@ -4763,7 +4903,7 @@ ${content}
                 };
 
                 await Promise.all(templates.map(async (template) => {
-                    const model = fallbackModel;
+                    const model = uiTemplateActualModel;
                     try {
                         const currentVariableJson = JSON.stringify(template.variableState || {}, null, 2);
                         const variableSchemaText = stringifyUiSchema(template.variableSchema).trim();
@@ -4771,7 +4911,7 @@ ${content}
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${settings.apiKey}`
+                                'Authorization': `Bearer ${uiTemplateApiKey}`
                             },
                             body: JSON.stringify({
                                 model,
@@ -5107,6 +5247,7 @@ ${content}
 
         const canConfigureActiveToolResultCount = (tool) => !isWorldInfoActiveTool(tool)
             && !isSkillActiveTool(tool)
+            && !isSkillReadfileActiveTool(tool)
             && !(tool?.type === ACTIVE_TOOL_MCP_HTTP_TYPE);
 
         const shouldSuppressStandardVectorMemoryRecall = () => false;
@@ -6136,15 +6277,112 @@ ${content}
             };
 
             try {
-                        const url = getOpenAICompatUrl('chat/completions');
+                        // 多供应商路由：根据模型名前缀解析对应的供应商 URL/Key
+                        const chatApiUrl = getApiUrlForModel(settings.model);
+                        const chatApiKey = getApiKeyForModel(settings.model);
+                        const actualModel = getActualModelName(settings.model);
+                        const url = getOpenAICompatUrlForUrl(chatApiUrl, 'chat/completions');
+
+                        // 原生平台流式输出：通过 XMLHttpRequest + 本地代理实现真流式
+                        // CapacitorHttp patch 了 fetch，导致 fetch 的 ReadableStream 在 Android 上
+                        // 一次性返回完整数据；XMLHttpRequest 不被 patch，可逐步接收数据。
+                        const useNativeStream = isNativePlatform() && getEffectiveStream();
+
+                        if (useNativeStream) {
+                            // === 原生平台 XHR 流式分支 ===
+                            let pendingNativeReasoning = '';
+                            let nativeReasoningFlushRaf = null;
+                            const applyPendingNativeReasoning = () => {
+                                if (!assistantMessage || !pendingNativeReasoning) return;
+                                appendAssistantReasoning(assistantMessage, pendingNativeReasoning);
+                                pendingNativeReasoning = '';
+                            };
+                            const scheduleNativeReasoningFlush = () => {
+                                if (!assistantMessage || !pendingNativeReasoning || nativeReasoningFlushRaf) return;
+                                nativeReasoningFlushRaf = requestAnimationFrame(() => {
+                                    nativeReasoningFlushRaf = null;
+                                    applyPendingNativeReasoning();
+                                });
+                            };
+                            const flushNativeReasoning = () => {
+                                if (!assistantMessage || !pendingNativeReasoning) return;
+                                if (nativeReasoningFlushRaf) {
+                                    cancelAnimationFrame(nativeReasoningFlushRaf);
+                                    nativeReasoningFlushRaf = null;
+                                }
+                                applyPendingNativeReasoning();
+                            };
+
+                            await sendStreamRequestViaXHR({
+                                url,
+                                apiKey: chatApiKey,
+                                body: buildApiRequestBody({
+                                    model: actualModel,
+                                    messages: apiMessages,
+                                    temperature: settings.temperature,
+                                    stream: true
+                                }),
+                                signal: abortController.value.signal,
+                                onChunk: (dataStr, data) => {
+                                    const apiError = extractApiErrorMessage(data, 200);
+                                    if (apiError) throwApiError(apiError);
+
+                                    const choice = data.choices?.[0];
+                                    if (!choice) return;
+
+                                    const delta = choice.delta || choice.message || {};
+                                    const rawContent = delta.content || '';
+                                    const content = (!assistantMessage && !String(rawContent).trim()) ? '' : rawContent;
+                                    const reasoning = extractNativeReasoning(delta);
+
+                                    if (content || reasoning) {
+                                        let seededContent = false;
+                                        let seededReasoning = false;
+                                        if (!assistantMessage) {
+                                            if (reasoning) {
+                                                isThinking.value = true;
+                                            }
+                                            assistantMessage = ensureAssistantMessage(content, reasoning);
+                                            seededContent = !!content;
+                                            seededReasoning = !!reasoning;
+                                            if (seededContent && !reasoning) {
+                                                isThinking.value = false;
+                                                collapseNativeReasoning(assistantMessage);
+                                            }
+                                            // XHR onprogress 是同步回调，无法 await nextTick()
+                                            // 但 reactive 系统会自动批量更新，不影响正确性
+                                            nextTick();
+                                        }
+
+                                        if (reasoning && !seededReasoning) {
+                                            pendingNativeReasoning += reasoning;
+                                            isThinking.value = true;
+                                            scheduleNativeReasoningFlush();
+                                        }
+
+                                        if (content && !seededContent) {
+                                            flushNativeReasoning();
+                                            appendAssistantText(assistantMessage, 'content', content);
+                                            isThinking.value = false;
+                                            collapseNativeReasoning(assistantMessage);
+                                        }
+                                    }
+                                },
+                                onError: (status, errorText) => {
+                                    console.error('[XHR Stream] 错误:', status, errorText);
+                                }
+                            });
+                            flushNativeReasoning();
+                        } else {
+                        // === 浏览器 fetch 分支（流式 + 非流式）===
                         const response = await fetch(url, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${settings.apiKey}`
+                                'Authorization': `Bearer ${chatApiKey}`
                             },
                             body: JSON.stringify(buildApiRequestBody({
-                                model: settings.model,
+                                model: actualModel,
                                 messages: apiMessages,
                                 temperature: settings.temperature,
                                 stream: getEffectiveStream()
@@ -6351,6 +6589,7 @@ ${content}
                                 }
                             }
                         }
+                        } // === 结束浏览器 fetch 分支 ===
 
                         if (assistantMessage) {
                             generatedAssistantMessageId = assistantMessage.id;
@@ -6512,11 +6751,64 @@ ${content}
             return `${apiUrl}/${endpoint.replace(/^\/+/, '')}`;
         };
 
+        // 基于指定 baseUrl 拼接端点 URL（供多供应商路由使用）
+        const getOpenAICompatUrlForUrl = (baseUrl, endpoint) => {
+            const clean = (baseUrl || '').replace(/\/+$/, '');
+            const apiUrl = /\/v\d+$/.test(clean) ? clean : `${clean}/v1`;
+            return `${apiUrl}/${endpoint.replace(/^\/+/, '')}`;
+        };
+
+        // === 模型名解析：<providerId>_<model_name> 格式 ===
+        // 注意：providerId 仅允许英文字母（saveCustomProvider 校验），不含下划线，
+        // 因此第一个下划线即为分隔符。模型名可包含下划线。
+        const parseModelName = (modelWithProvider) => {
+            if (!modelWithProvider) return { providerId: '', modelName: '' };
+            const idx = modelWithProvider.indexOf('_');
+            if (idx === -1) return { providerId: '', modelName: modelWithProvider };
+            const providerId = modelWithProvider.substring(0, idx);
+            // 验证 providerId 是否存在于已注册供应商
+            const exists = getAllApiProviders().some(p => p.id === providerId);
+            if (!exists) return { providerId: '', modelName: modelWithProvider };
+            const modelName = modelWithProvider.substring(idx + 1);
+            // 防御：末尾下划线导致空 modelName 时，回退为完整字符串
+            if (!modelName) return { providerId: '', modelName: modelWithProvider };
+            return { providerId, modelName };
+        };
+        // 获取模型对应的供应商 apiUrl
+        const getApiUrlForModel = (modelWithProvider) => {
+            const { providerId } = parseModelName(modelWithProvider);
+            if (providerId) {
+                const provider = getProviderById(providerId);
+                if (provider) return provider.apiUrl;
+            }
+            return settings.apiUrl;
+        };
+        // 获取模型对应的供应商 apiKey
+        const getApiKeyForModel = (modelWithProvider) => {
+            const { providerId } = parseModelName(modelWithProvider);
+            if (providerId) return (settings.apiProviderKeys && settings.apiProviderKeys[providerId]) || '';
+            return settings.apiKey;
+        };
+        // 获取实际发送给 API 的 model name（去掉前缀）
+        const getActualModelName = (modelWithProvider) => {
+            return parseModelName(modelWithProvider).modelName;
+        };
+        // 为模型名添加 provider 前缀（从模型列表选择时自动添加）
+        const addProviderPrefixToModel = (modelName, providerId) => {
+            if (!modelName) return '';
+            const { providerId: existing } = parseModelName(modelName);
+            if (existing) return modelName; // 已有有效前缀
+            return `${providerId}_${modelName}`;
+        };
+
         // Capacitor native environment detection: CapacitorHttp patches fetch but does NOT support
         // true streaming (response.body.getReader() returns full data at once on Android).
-        // Force-disable streaming in native APK to avoid broken chat experience.
+        // 原生平台通过 XMLHttpRequest + 本地代理 (localhost:18527) 实现真流式输出，
+        // XMLHttpRequest 不被 CapacitorHttp patch，可绕过限制。
         const isNativePlatform = () => !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
-        const getEffectiveStream = () => settings.stream && !isNativePlatform();
+        const getEffectiveStream = () => settings.stream;
+        // 本地代理基础地址（仅原生平台使用）
+        const NATIVE_PROXY_BASE = 'http://localhost:18527';
 
         // === API 请求体高级设置辅助函数 ===
         /**
@@ -6555,7 +6847,7 @@ ${content}
 
         /**
          * 构建最终请求体（合并基础字段 + 快捷开关 + 自定义 JSON）
-         * 合并优先级：基础字段 < 深度思考开关 < 思考强度 < 自定义 JSON
+         * 合并优先级：基础字段 < 深度思考开关 < 自定义 JSON
          * 保护核心字段：model 和 messages 不允许被自定义 JSON 覆盖
          * @param {object} baseBody - 基础请求体（含 model, messages, temperature, stream）
          * @returns {object} 合并后的最终请求体
@@ -6565,9 +6857,7 @@ ${content}
             if (settings.enableThinking) {
                 result.thinking = { type: 'enabled' };
             }
-            if (settings.reasoningEffort) {
-                result.reasoning_effort = settings.reasoningEffort;
-            }
+            // 思考强度已移除下拉框，用户通过自定义 JSON 注入 reasoning_effort
             const customBody = parseCustomRequestBody();
             if (customBody) {
                 for (const key of Object.keys(customBody)) {
@@ -6576,6 +6866,202 @@ ${content}
                 }
             }
             return result;
+        };
+
+        /**
+         * 原生平台流式请求（XMLHttpRequest + 本地代理）
+         *
+         * CapacitorHttp 会 patch 全局 fetch，导致 response.body.getReader() 在 Android 上
+         * 一次性返回完整数据，无法实现真流式。XMLHttpRequest 不被 patch，其 onprogress
+         * 事件可逐步触发，responseText 也会增量更新，因此可用于真流式输出。
+         *
+         * 请求路径：XHR → http://localhost:18527/v1/chat/completions?_target=<真实API> → 真实API
+         * 本地代理（NanoHTTPD）使用 newChunkedResponse 透传上游响应，支持流式。
+         *
+         * @param {object} params - 请求参数
+         * @param {string} params.url - 真实 API URL（含 /v1/chat/completions 等端点）
+         * @param {string} params.apiKey - API 密钥
+         * @param {object} params.body - 请求体对象（已含 stream:true）
+         * @param {AbortSignal} [params.signal] - 中止信号
+         * @param {function} params.onChunk - SSE 数据块回调 (dataStr, parsedData) => void
+         * @param {function} [params.onError] - 错误回调 (status, errorText) => void
+         * @returns {Promise<{status:number, ok:boolean}>} 请求结果
+         */
+        const sendStreamRequestViaXHR = ({ url, apiKey, body, signal, onChunk, onError }) => {
+            return new Promise((resolve, reject) => {
+                // 构建本地代理 URL：将真实 API URL 作为 _target 参数传递
+                // 代理会读取 _target 并转发到真实 API，同时注入高级设置
+                let proxyUrl;
+                try {
+                    const targetUrl = new URL(url);
+                    // 提取端点路径（如 /v1/chat/completions），作为代理的 URI
+                    const endpointPath = targetUrl.pathname;
+                    proxyUrl = `${NATIVE_PROXY_BASE}${endpointPath}?_target=${encodeURIComponent(targetUrl.origin)}`;
+                    // 保留原 URL 的 query 参数（如 ?key=xxx）
+                    if (targetUrl.search) {
+                        proxyUrl += '&' + targetUrl.search.replace(/^\?/, '');
+                    }
+                } catch (e) {
+                    // URL 解析失败，回退到直接使用原 URL（可能无法流式，但至少能请求）
+                    console.warn('[XHR Stream] URL 解析失败，回退直连:', e);
+                    proxyUrl = url;
+                }
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', proxyUrl, true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.setRequestHeader('Accept', 'text/event-stream');
+                // Authorization 由本地代理注入（使用 cachedApiKey），此处仍传递以便代理透传
+                if (apiKey) {
+                    xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
+                }
+                xhr.responseType = 'text';
+                xhr.timeout = 0; // 流式请求不设超时
+
+                let receivedLength = 0;
+                let buffer = '';
+                let settled = false;
+                let chunkError = null; // onChunk 抛出的错误（API 错误等）
+
+                const finishOnce = (fn, ...args) => {
+                    if (settled) return;
+                    settled = true;
+                    fn(...args);
+                };
+
+                // 处理增量数据：从 responseText 提取新增部分，按 SSE 行解析
+                const processIncremental = () => {
+                    let fullText;
+                    try {
+                        fullText = xhr.responseText || '';
+                    } catch (e) {
+                        return;
+                    }
+                    if (fullText.length <= receivedLength) return;
+                    const newChunk = fullText.substring(receivedLength);
+                    receivedLength = fullText.length;
+
+                    buffer += newChunk;
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // 保留最后不完整的行
+
+                    for (const line of lines) {
+                        const trimmedLine = line.trim();
+                        if (!trimmedLine) continue;
+                        if (!trimmedLine.startsWith('data:')) continue;
+                        const dataStr = trimmedLine.replace(/^data:\s*/, '');
+                        if (dataStr === '[DONE]') continue;
+                        let parsed;
+                        try {
+                            parsed = JSON.parse(dataStr);
+                        } catch (e) {
+                            continue; // 非 JSON，忽略（可能是注释行或心跳）
+                        }
+                        try {
+                            onChunk(dataStr, parsed);
+                        } catch (e) {
+                            // onChunk 抛出错误（如 API 错误），中止请求并 reject
+                            chunkError = e;
+                            try { xhr.abort(); } catch (ignore) {}
+                            return;
+                        }
+                    }
+                };
+
+                xhr.onprogress = () => {
+                    if (chunkError) return;
+                    try {
+                        processIncremental();
+                    } catch (e) {
+                        console.warn('[XHR Stream] onprogress 处理异常:', e);
+                    }
+                };
+
+                xhr.onload = () => {
+                    // 处理最后可能残留的 buffer（仅当无 chunkError 时）
+                    if (!chunkError) {
+                        try {
+                            processIncremental();
+                            // 处理 buffer 中剩余的最后一行
+                            if (buffer.trim()) {
+                                const trimmedLine = buffer.trim();
+                                if (trimmedLine.startsWith('data:')) {
+                                    const dataStr = trimmedLine.replace(/^data:\s*/, '');
+                                    if (dataStr !== '[DONE]') {
+                                        let parsed;
+                                        try {
+                                            parsed = JSON.parse(dataStr);
+                                            onChunk(dataStr, parsed);
+                                        } catch (e) {
+                                            if (e instanceof Error && !(e instanceof SyntaxError)) {
+                                                chunkError = e;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('[XHR Stream] onload 处理异常:', e);
+                        }
+                    }
+
+                    // 优先处理 onChunk 抛出的错误
+                    if (chunkError) {
+                        finishOnce(reject, chunkError);
+                        return;
+                    }
+
+                    const status = xhr.status;
+                    const ok = status >= 200 && status < 300;
+                    if (!ok) {
+                        const errorText = xhr.responseText || '';
+                        if (onError) onError(status, errorText);
+                        finishOnce(reject, new Error(formatApiErrorMessage(status, errorText)));
+                        return;
+                    }
+                    finishOnce(resolve, { status, ok: true });
+                };
+
+                xhr.onerror = () => {
+                    if (chunkError) {
+                        finishOnce(reject, chunkError);
+                        return;
+                    }
+                    const errorText = xhr.responseText || '网络请求失败';
+                    if (onError) onError(0, errorText);
+                    finishOnce(reject, new Error(formatApiErrorMessage(0, errorText)));
+                };
+
+                xhr.ontimeout = () => {
+                    if (onError) onError(0, '请求超时');
+                    finishOnce(reject, new Error('流式请求超时'));
+                };
+
+                xhr.onabort = () => {
+                    if (chunkError) {
+                        finishOnce(reject, chunkError);
+                        return;
+                    }
+                    finishOnce(reject, new DOMException('Aborted', 'AbortError'));
+                };
+
+                // 支持 AbortController
+                if (signal) {
+                    if (signal.aborted) {
+                        finishOnce(reject, new DOMException('Aborted', 'AbortError'));
+                        return;
+                    }
+                    signal.addEventListener('abort', () => {
+                        try { xhr.abort(); } catch (e) { /* 忽略 */ }
+                    }, { once: true });
+                }
+
+                try {
+                    xhr.send(JSON.stringify(body));
+                } catch (e) {
+                    finishOnce(reject, e);
+                }
+            });
         };
 
         const trimMemoryText = (text, maxLength = 1800) => {
@@ -6834,20 +7320,28 @@ ${content}
 
         const requestMemoryEmbeddings = async (inputs, signal) => {
             const model = getMemoryEmbeddingModel();
-            if (!settings.apiUrl || !settings.apiKey) throw new Error('请先配置 API 地址和 Key');
             if (!model) throw new Error('请先选择向量嵌入模型');
+            // 嵌入模型独立供应商：优先使用 embeddingApiProviderId，空则跟随聊天供应商
+            const embeddingProviderId = memorySettings.embeddingApiProviderId || settings.apiProviderId;
+            const provider = getProviderById(embeddingProviderId);
+            // URL 与 Key 必须来自同一供应商，避免独立回退导致鉴权失败
+            if (!provider || !provider.apiUrl) throw new Error('请先配置嵌入供应商的 API 地址');
+            const embeddingApiKey = (settings.apiProviderKeys && settings.apiProviderKeys[embeddingProviderId]) || '';
+            if (!embeddingApiKey) throw new Error('请先配置嵌入供应商的 API Key');
+            const embeddingApiUrl = provider.apiUrl;
 
+            const actualModel = getActualModelName(model);
             const normalizedInputs = inputs.map(input => String(input || '').trim());
             if (normalizedInputs.some(input => !input)) throw new Error('嵌入内容不能为空');
 
-            const response = await fetch(getOpenAICompatUrl('embeddings'), {
+            const response = await fetch(getOpenAICompatUrlForUrl(embeddingApiUrl, 'embeddings'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${settings.apiKey}`
+                    'Authorization': `Bearer ${embeddingApiKey}`
                 },
                 body: JSON.stringify({
-                    model,
+                    model: actualModel,
                     input: normalizedInputs.length === 1 ? normalizedInputs[0] : normalizedInputs
                 }),
                 signal
@@ -9508,58 +10002,75 @@ ${content}
         const findActiveToolCallsInText = (text) => {
             const originalContent = String(text || '');
             if (!originalContent) return [];
-            const mainContent = stripCodeBlocksForToolDetection(parseCot(originalContent).main);
+            const parsed = parseCot(originalContent);
+            const mainContent = stripCodeBlocksForToolDetection(parsed.main);
+            // 反转义 cot 内容（parseCot 会把 < 转义为 &lt;），扫描 cot 内部的工具调用
+            const cotContent = stripCodeBlocksForToolDetection(
+                String(parsed.cot || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            );
             const tools = getEnabledActiveToolsForCurrentCharacter();
             const calls = [];
             const seen = new Set();
 
-            for (const tool of tools) {
-                // MCP 工具：每个子工具生成独立的 add/cover 标签
-                const mcpSubTools = isMcpHttpActiveTool(tool) ? (Array.isArray(tool.mcpTools) ? tool.mcpTools : []) : [];
-                const callForms = mcpSubTools.length > 0
-                    ? mcpSubTools.flatMap(sub => {
-                        const subLabels = getMcpSubToolCallLabels(tool, sub.name);
-                        return [
-                            { label: subLabels.add, mode: 'add', mcpSubToolName: sub.name },
-                            { label: subLabels.cover, mode: 'cover', mcpSubToolName: sub.name }
-                        ];
-                    })
-                    : (() => {
-                        const labels = getActiveToolCallLabels(tool);
-                        return [
-                            { label: labels.add, mode: 'add', mcpSubToolName: '' },
-                            { label: labels.cover, mode: 'cover', mcpSubToolName: '' }
-                        ];
-                    })();
-                for (const form of callForms) {
-                    const escapedName = escapeRegexText(form.label);
-                    const regex = new RegExp(`<\\s*${escapedName}\\s*:\\s*([\\s\\S]{1,30000}?)\\s*>`, 'gi');
-                    let match;
-                    while ((match = regex.exec(mainContent)) !== null) {
-                        const query = String(match[1] || '').trim();
-                        if (!query) continue;
+            // 提取扫描逻辑为内部函数，供 main 和 cot 复用
+            const scanContent = (content, isFromCot) => {
+                for (const tool of tools) {
+                    // MCP 工具：每个子工具生成独立的 add/cover 标签
+                    const mcpSubTools = isMcpHttpActiveTool(tool) ? (Array.isArray(tool.mcpTools) ? tool.mcpTools : []) : [];
+                    const callForms = mcpSubTools.length > 0
+                        ? mcpSubTools.flatMap(sub => {
+                            const subLabels = getMcpSubToolCallLabels(tool, sub.name);
+                            return [
+                                { label: subLabels.add, mode: 'add', mcpSubToolName: sub.name },
+                                { label: subLabels.cover, mode: 'cover', mcpSubToolName: sub.name }
+                            ];
+                        })
+                        : (() => {
+                            const labels = getActiveToolCallLabels(tool);
+                            return [
+                                { label: labels.add, mode: 'add', mcpSubToolName: '' },
+                                { label: labels.cover, mode: 'cover', mcpSubToolName: '' }
+                            ];
+                        })();
+                    for (const form of callForms) {
+                        const escapedName = escapeRegexText(form.label);
+                        const regex = new RegExp(`<\\s*${escapedName}\\s*:\\s*([\\s\\S]{1,30000}?)\\s*>`, 'gi');
+                        let match;
+                        while ((match = regex.exec(content)) !== null) {
+                            const query = String(match[1] || '').trim();
+                            if (!query) continue;
 
-                        const meta = buildActiveToolCallMeta(originalContent, mainContent, match[0], match.index);
-                        const raw = meta.raw;
-                        const index = meta.index;
-                        const key = `${index}:${match.index}:${form.label}:${raw}`;
-                        if (seen.has(key)) continue;
-                        seen.add(key);
+                            const meta = buildActiveToolCallMeta(originalContent, content, match[0], match.index);
+                            const raw = meta.raw;
+                            const index = meta.index;
+                            // 去重 key：包含 isFromCot 标记，避免 main 和 cot 中的相同调用被误判为重复
+                            const key = `${isFromCot ? 'cot' : 'main'}:${index}:${match.index}:${form.label}:${raw}`;
+                            if (seen.has(key)) continue;
+                            seen.add(key);
 
-                        calls.push({
-                            tool,
-                            mode: form.mode,
-                            callLabel: form.label,
-                            mcpSubToolName: form.mcpSubToolName || '',
-                            query,
-                            raw,
-                            toolRaw: meta.toolRaw,
-                            reason: meta.reason,
-                            index,
-                            mainIndex: meta.mainIndex
-                        });
+                            calls.push({
+                                tool,
+                                mode: form.mode,
+                                callLabel: form.label,
+                                mcpSubToolName: form.mcpSubToolName || '',
+                                query,
+                                raw,
+                                toolRaw: meta.toolRaw,
+                                reason: meta.reason,
+                                index,
+                                mainIndex: meta.mainIndex,
+                                isFromCot
+                            });
+                        }
                     }
                 }
+            };
+
+            // 优先扫描正文（main）
+            scanContent(mainContent, false);
+            // 兜底扫描 cot 内部（AI 可能在思考链内输出工具标签）
+            if (cotContent) {
+                scanContent(cotContent, true);
             }
 
             return calls.sort((a, b) => {
@@ -12361,7 +12872,7 @@ image###生成的提示词###
             showUpdateModal, updateCountdown, latestUpdate, closeUpdateModal, isUpdateScrolledToBottom, checkUpdateScroll, // Update Modal
             showConfirmModal, confirmMessage, modelMode, showNoMemoryNeededModal, // Export for template
             isGenerating, isRemoteGenerating, remoteEstimatedTime, isReceiving, isThinking, hasActiveToolInlineWork, activeToolInlineStatusText, isConversationBusy, activeToolContinuationMessageId, activeToolContinuationToolCallId, activeToolContinuationHasResponse, activeNativeReasoning, userInput, modelSearchQuery, activeModelTag, modelTags, characterSearchQuery, availableModels, customModelInput, filteredModels, filteredCharacters,
-            user, settings, apiProviderOptions, selectedApiProvider, isCustomApiProvider, customApiProviderOption, customApiProviderOptions, showApiProviderSelector, selectApiProvider, characters, currentCharacter, currentCharacterIndex, chatHistory, displayedChatMessages, handleChatScroll, presets, presetRoleOptions, fontFamilyOptions, imageStyleOptions, imageSizeOptions, imageGenCountOptions, scopeOptions, uiTemplatePlacementOptions, worldInfoPositionOptions, getPresetRoleLabel, getPresetRoleDisplayLabel, getPresetRoleBadgeClass, regexScripts, worldInfo,
+            user, settings, apiProviderOptions, selectedApiProvider, isCustomApiProvider, customApiProviderOptions, showApiProviderSelector, selectApiProvider, getAllApiProviders, getProviderById, showCustomProviderEditor, editingProvider, openCustomProviderEditor, filterProviderIdInput, saveCustomProvider, removeCustomApiProvider, characters, currentCharacter, currentCharacterIndex, chatHistory, displayedChatMessages, handleChatScroll, presets, presetRoleOptions, fontFamilyOptions, imageStyleOptions, imageSizeOptions, imageGenCountOptions, scopeOptions, uiTemplatePlacementOptions, worldInfoPositionOptions, getPresetRoleLabel, getPresetRoleDisplayLabel, getPresetRoleBadgeClass, regexScripts, worldInfo,
             activeTools, activeToolAggressivenessOptions: ACTIVE_TOOL_AGGRESSIVENESS_OPTIONS, getActiveToolAggressivenessLabel, editingActiveTool, normalizeActiveTools, isWebActiveTool, isWorldInfoActiveTool, getWorldInfoAccessMode, getActiveToolDisplayDescription, canConfigureActiveToolResultCount, getActiveToolResultCountMin, getActiveToolResultCountMax,
             // MCP HTTP 工具导入相关导出
             showMcpToolImport, mcpImportInput, mcpImportError, openMcpToolImport, onMcpJsonInput, parseMcpImportJson, testMcpConnection, confirmMcpToolImport, refreshMcpTool, removeMcpTool,
