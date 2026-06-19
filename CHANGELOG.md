@@ -1746,5 +1746,120 @@ const content = isText ? await entry.async('string') : '';
 
 ---
 
-**最后更新**：2026-06-18
+## 十七、第十一轮改动（2026-06-19：预设管理页改造 + Luzzy 内置预设 + 前序功能汇总）
+
+### 17.0 改动背景
+
+根据 TASK_NEW.txt 任务清单，对预设管理页进行改造，删除旧内置预设，新增 Luzzy 内置预设（含完整 NSFW 提示词，注入位置为 system）。同时汇总前序已落地的工具优化、记忆系统增强、UI 优化等功能。
+
+**硬约束**：保留成人内容注入提示词（预设）的相关设置，不允许修改、精简。Luzzy 预设中年龄下限从 12 调整为 18（平台政策要求），其余 NSFW 成人内容完整保留。
+
+### 17.1 预设管理页改造（`assets/js/app.js`）
+
+#### 17.1.1 删除旧内置预设
+
+删除以下 9 个旧内置预设 + 4 个破限预注入预设：
+- `破限`（`roleplay_hub_default`）
+- `破限预注入 · User 1` / `破限预注入 · AI 1` / `破限预注入 · User 2` / `破限预注入 · AI 2`
+- `色情内容增强`（`nsfw_enhancement`）
+- `防抢话`（`anti_robbery`）
+- `防神化`（`R-LOGIC`）
+- `防重复`（`anti_repetition`）
+- `人格内核`（`personality_core`）
+- `文风（抗八股）`（`writing_style`）
+- `禁止规则`（`prohibited_content`）
+- `COT`（`cot_protocol`）
+
+**清理机制**：通过 `removedBuiltinPresetNames` 数组，从用户已保存的 IndexedDB 数据中自动移除这些旧预设，避免残留。
+
+#### 17.1.2 新增 Luzzy 内置预设
+
+- **预设名**：`Luzzy`
+- **变量名**：`luzzyPresetName`（原 `defaultPresetName`）
+- **存储键**：`luzzy_preset`（原 `roleplay_hub_default`）
+- **注入位置**：`system`
+- **内容**：完整 NSFW 提示词（来自 TASK_NEW.txt 第 34-387 行），年龄下限调整为 18
+- **位置**：app.js 第 11689-12045 行
+
+#### 17.1.3 保留第二/第三人称预设
+
+- **第二人称预设**：`enabled` 联动 `user.person !== 'third'`
+- **第三人称预设**：`enabled` 联动 `user.person === 'third'`
+- **注入位置**：均为 `system`
+
+#### 17.1.4 新注入逻辑
+
+**位置**：app.js 第 12046-12100 行
+
+```javascript
+const builtinPresetDefaults = [
+    { name: luzzyPresetName, role: 'system', content: luzzyPresetContent },
+    { name: secondPersonPresetName, role: 'system', content: secondPersonPresetContent },
+    { name: thirdPersonPresetName, role: 'system', content: thirdPersonPresetContent }
+];
+// ... existingBuiltinPresetMap + orderedBuiltinPresets + removedBuiltinPresetNames 清理
+```
+
+### 17.2 前序功能汇总（已落地，本次确认）
+
+#### 17.2.1 工具优化（8 项）
+
+| # | 任务 | 位置 |
+|---|------|------|
+| 1 | SKILL GitHub 导入目录名表述加强 | index.html 第 4883 行 |
+| 2 | 移除 SKILL/MCP"返回条数" + 角色卡边界优化 | app.js 第 5108-5110 行 |
+| 3 | SKILL 文件管理器树形化 | app.js 第 8509/8531/8536 行 + index.html 第 4901-4941 行 |
+| 4 | MCP 导入自动提取工具名称 | app.js 第 7984 行 |
+| 5 | SKILL GitHub 导入国内镜像站 | app.js 第 1174-1178/8238 行 |
+| 6 | MCP 工具丢失排查 | `normalizeActiveTool` 正确保留 MCP 字段 |
+| 7 | MCP 配置同 SKILL 移除"返回条数" | app.js 第 5108-5110 行 |
+| 8 | 内置"记忆召回"工具 | app.js 第 1167/1339/5025/5698/7388 行 + index.html 第 695/4616 行 |
+
+#### 17.2.2 记忆系统增强（3 项）
+
+| # | 任务 | 位置 |
+|---|------|------|
+| 1 | 记忆召回 per-tool 全局记忆开关 | app.js 第 1527 行 + index.html 第 4616-4628 行 |
+| 2 | 全局记忆二级选项（MEMORY.md） | app.js 第 1115/2095/2204/2366/5862 行 + index.html 第 3480/5093 行 |
+| 3 | 向量记忆检索查看分片 | app.js 第 2202 行 + index.html 第 3385-3409 行 |
+
+#### 17.2.3 UI 优化（3 项）
+
+| # | 任务 | 位置 |
+|---|------|------|
+| 1 | 思考强度 custom-select | index.html 第 2230-2247 行 |
+| 2 | ZIP 文件选择按钮美化 | index.html 第 4902-4904 行 |
+| 3 | 新增 UI 参照现有风格 | 已在上述所有 UI 改动中遵循 |
+
+### 17.3 文件改动
+
+| 文件 | 改动类型 | 改动内容 |
+|------|----------|----------|
+| `assets/js/app.js` | 修改 | 删除 9 个旧预设 + 4 个预注入；新增 Luzzy 预设（第 11689-12045 行）；重写注入逻辑（第 12046-12100 行） |
+| `CHANGELOG.md` | 修改 | 本节（第十七轮改动记录） |
+| `README.md` | 修改 | 更新功能概览表格 + 新增功能说明章节 |
+
+### 17.4 保留功能
+
+- **TRPG 代理机制不受影响**
+- **SKILL 工具系统功能不受影响**
+- **MCP 工具功能不受影响**
+- **API 请求体高级设置不受影响**
+- **Luzzy 预设的 NSFW 成人内容完整保留**（仅年龄下限从 12 调整为 18）
+
+### 17.5 验证清单
+
+- [ ] app.js 中 `builtinPresetDefaults` 仅含 Luzzy、第二人称、第三人称
+- [ ] app.js 中无 `defaultPresetName`/`defaultPreludePresets` 残留
+- [ ] app.js 中无独立的旧预设注入逻辑
+- [ ] Luzzy 预设内容完整
+- [ ] Luzzy 预设中无 "12 years" 或 "age 12" 字样
+- [ ] 第二人称/第三人称预设 `user.person` 联动正常
+- [ ] `removedBuiltinPresetNames` 包含所有旧预设名
+- [ ] CHANGELOG.md 已添加第十七轮改动
+- [ ] README.md 已更新功能说明
+
+---
+
+**最后更新**：2026-06-19
 **维护者**：LuzzyMeow
