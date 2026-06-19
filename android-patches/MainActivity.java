@@ -8,6 +8,7 @@ import android.webkit.DownloadListener;
 import com.getcapacitor.BridgeActivity;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -16,6 +17,8 @@ import java.net.URL;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.json.JSONObject;
 
 import fi.iki.elonen.NanoHTTPD;
 
@@ -63,6 +66,9 @@ public class MainActivity extends BridgeActivity {
     // 配置缓存（由 JS 层通过 JavascriptInterface 推送）
     private volatile String cachedApiUrl = "";
     private volatile String cachedApiKey = "";
+    // 高级设置缓存（TRPG 代理注入使用）
+    private volatile boolean cachedEnableThinking = false;
+    private volatile String cachedCustomRequestBody = "";
 
     /**
      * JS 接口，供 RP-Hub 主页面推送 API 配置到原生层。
@@ -74,6 +80,14 @@ public class MainActivity extends BridgeActivity {
             cachedApiUrl = apiUrl != null ? apiUrl : "";
             cachedApiKey = apiKey != null ? apiKey : "";
             Log.i(TAG, "API config updated: url=" + apiUrl + " key=***");
+        }
+
+        @android.webkit.JavascriptInterface
+        public void setAdvancedSettings(String enableThinking, String customRequestBody) {
+            cachedEnableThinking = "true".equals(enableThinking);
+            cachedCustomRequestBody = customRequestBody != null ? customRequestBody : "";
+            Log.i(TAG, "Advanced settings updated: thinking=" + cachedEnableThinking
+                + " customBodyLen=" + cachedCustomRequestBody.length());
         }
     }
 
@@ -161,7 +175,8 @@ public class MainActivity extends BridgeActivity {
         private static final String VOLCANO_ARK_BASE = "https://ark.cn-beijing.volces.com/api/coding";
 
         public ApiProxyServer() {
-            super(PROXY_PORT);
+            // 绑定到 127.0.0.1，防止同一设备上的其他 App 通过本代理发起 SSRF 攻击
+            super("127.0.0.1", PROXY_PORT);
         }
 
         @Override
@@ -195,8 +210,14 @@ public class MainActivity extends BridgeActivity {
                 String endpoint = uri.replaceFirst("^/v\\d+", "");
                 if (endpoint.startsWith("/")) endpoint = endpoint.substring(1);
 
-                // 构建目标 URL：RP-Hub apiUrl + endpoint
-                String baseUrl = cachedApiUrl.replaceAll("/+$", ""); // 去掉末尾斜杠
+                // 构建目标 URL：优先使用 _target 参数（支持多供应商路由），否则用 cachedApiUrl
+                String targetParam = getParam(session, "_target");
+                String baseUrl;
+                if (targetParam != null && !targetParam.isEmpty()) {
+                    baseUrl = targetParam.replaceAll("/+$", "");
+                } else {
+                    baseUrl = cachedApiUrl.replaceAll("/+$", ""); // 去掉末尾斜杠
+                }
                 String targetUrl = baseUrl + "/" + endpoint;
 
                 // 保留 query string（移除 _target 参数，向后兼容）
@@ -247,24 +268,70 @@ public class MainActivity extends BridgeActivity {
                             contentLength = -1;
                         }
                     }
-                    // 用 chunked streaming，避免重算 / 截断风险
-                    conn.setChunkedStreamingMode(0);
+
+                    // 读取完整请求体到内存（用于高级设置注入）
                     InputStream clientIn = session.getInputStream();
-                    try (OutputStream upstreamOut = conn.getOutputStream()) {
-                        byte[] buf = new byte[8192];
-                        long total = 0;
-                        while (true) {
-                            // 若 Content-Length 已知，避免读到下一个请求
-                            int toRead = (contentLength >= 0)
-                                ? (int) Math.min(buf.length, contentLength - total)
-                                : buf.length;
-                            if (toRead <= 0) break;
-                            int n = clientIn.read(buf, 0, toRead);
-                            if (n <= 0) break;
-                            upstreamOut.write(buf, 0, n);
-                            total += n;
-                            if (contentLength >= 0 && total >= contentLength) break;
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    long total = 0;
+                    while (true) {
+                        int toRead = (contentLength >= 0)
+                            ? (int) Math.min(buf.length, contentLength - total)
+                            : buf.length;
+                        if (toRead <= 0) break;
+                        int n = clientIn.read(buf, 0, toRead);
+                        if (n <= 0) break;
+                        baos.write(buf, 0, n);
+                        total += n;
+                        if (contentLength >= 0 && total >= contentLength) break;
+                    }
+                    byte[] bodyBytes = baos.toByteArray();
+
+                    // 高级设置注入：仅对 chat/completions 端点生效
+                    // 捕获局部变量避免多线程读写不一致
+                    final boolean enableThinking = cachedEnableThinking;
+                    final String customBody = cachedCustomRequestBody;
+                    boolean shouldInject = uri.contains("chat/completions")
+                        && (enableThinking || (customBody != null && !customBody.isEmpty()));
+                    if (shouldInject) {
+                        try {
+                            String bodyStr = new String(bodyBytes, "UTF-8");
+                            JSONObject json = new JSONObject(bodyStr);
+
+                            // 注入深度思考开关（独立 try-catch，避免自定义请求体解析失败影响 thinking 注入）
+                            if (enableThinking && !json.has("thinking")) {
+                                json.put("thinking", new JSONObject().put("type", "enabled"));
+                            }
+
+                            // 注入自定义请求体字段
+                            if (customBody != null && !customBody.isEmpty()) {
+                                try {
+                                    JSONObject custom = new JSONObject(customBody);
+                                    java.util.Iterator<String> keys = custom.keys();
+                                    while (keys.hasNext()) {
+                                        String key = keys.next();
+                                        if ("model".equals(key) || "messages".equals(key)) continue;
+                                        json.put(key, custom.get(key));
+                                    }
+                                } catch (Exception ce) {
+                                    Log.w(TAG, "Failed to parse custom request body: " + ce.getMessage()
+                                        + " — skipping custom fields, thinking injection still applied");
+                                }
+                            }
+
+                            bodyBytes = json.toString().getBytes("UTF-8");
+                            Log.i(TAG, "Advanced settings injected into request body");
+                        } catch (Exception e) {
+                            Log.w(TAG, "Failed to inject advanced settings: " + e.getMessage()
+                                + " — using original request body");
+                            // 注入失败时使用原始请求体
                         }
+                    }
+
+                    conn.setFixedLengthStreamingMode(bodyBytes.length);
+                    conn.setRequestProperty("Content-Type", "application/json");
+                    try (OutputStream upstreamOut = conn.getOutputStream()) {
+                        upstreamOut.write(bodyBytes);
                         upstreamOut.flush();
                     }
                 }
@@ -291,10 +358,11 @@ public class MainActivity extends BridgeActivity {
 
             } catch (Exception e) {
                 Log.e(TAG, "Proxy error: " + e.getMessage(), e);
+                String errMsg = e.getMessage() != null ? e.getMessage().replace("\"", "\\\"") : e.getClass().getSimpleName();
                 Response errorResponse = newFixedLengthResponse(
                     Response.Status.INTERNAL_ERROR,
                     "application/json",
-                    "{\"error\":\"Proxy failed: " + e.getMessage().replace("\"", "\\\"") + "\"}"
+                    "{\"error\":\"Proxy failed: " + errMsg + "\"}"
                 );
                 addCorsHeaders(errorResponse);
                 return errorResponse;
@@ -356,7 +424,9 @@ public class MainActivity extends BridgeActivity {
                     !"Content-Type".equalsIgnoreCase(entry.getKey()) &&
                     !"Content-Length".equalsIgnoreCase(entry.getKey()) &&
                     !"Transfer-Encoding".equalsIgnoreCase(entry.getKey()) &&
-                    !"Content-Encoding".equalsIgnoreCase(entry.getKey())) {
+                    !"Content-Encoding".equalsIgnoreCase(entry.getKey()) &&
+                    // 跳过 CORS 头，避免与 addCorsHeaders 设置的头重复导致浏览器 CORS 冲突
+                    !entry.getKey().toLowerCase().startsWith("access-control-")) {
                     for (String value : entry.getValue()) {
                         response.addHeader(entry.getKey(), value);
                     }

@@ -1861,5 +1861,142 @@ const builtinPresetDefaults = [
 
 ---
 
+## 十八、第十二轮改动（2026-06-19：多供应商架构 + 流式输出 + 工具修复 + 高级设置优化）
+
+### 18.0 改动背景
+
+根据用户实测反馈，对 RP-Hub v1.7.1 v6 进行 5 项核心优化：多供应商架构重构、SKILL 工具修复、世界书工具调用修复、API 高级设置优化、流式输出实现。同时完成静态代码审查并修复审查发现的多项 Bug。
+
+**硬约束**：保留所有内置 NSFW 提示词内容完整不修改，仅针对代码逻辑进行工作。
+
+### 18.1 多供应商架构重构（`assets/js/app.js` + `index.html`）
+
+#### 18.1.1 动态供应商列表
+
+- 新增 `settings.customApiProviders` 动态数组，替代旧的固定槽位 `customApiUrl`/`customApiUrl2`
+- 只要设置了密钥即算启用，不再强制切换单一供应商
+- 新增自定义供应商编辑器（`openCustomProviderEditor`/`saveCustomProvider`/`removeCustomApiProvider`）
+- 供应商 ID 限制为英文字母（`/^[a-zA-Z]+$/`），通过 `filterProviderIdInput` 实时过滤
+- 向后兼容：自动迁移旧 `customApiUrl`/`customApiUrl2` 到动态数组，迁移后清除旧字段防止"复活"
+
+#### 18.1.2 模型名格式 `<providerId>_<model_name>`
+
+- 新增 `parseModelName` 函数：用 `indexOf('_')` 解析，第一个下划线作为分隔符
+- 新增 `getApiUrlForModel`/`getApiKeyForModel`/`getActualModelName` 实现按模型名路由供应商
+- `selectModel` 选择模型时自动添加当前供应商前缀
+- `confirmCustomModel` 验证 `<providerId>_<model_name>` 格式
+- 防御性处理：末尾下划线导致空 modelName 时回退为完整字符串
+
+#### 18.1.3 嵌入模型独立供应商
+
+- 新增 `memorySettings.embeddingApiProviderId`，支持嵌入模型使用与聊天模型不同的供应商
+- `requestMemoryEmbeddings` 使用嵌入独立供应商的 URL 和 Key（同一供应商，避免鉴权失败）
+- 嵌入模型选择器从独立供应商拉取模型列表（`fetchModelsFromProvider`）
+
+#### 18.1.4 级联清理
+
+- 删除自定义供应商时，自动移除所有模型字段中该供应商的前缀（`settings.model`/`qualityModel`/`balancedModel`/`fastModel`/`embeddingModel`）
+- 清理 `apiProviderKeys`/`apiProviderId`/`embeddingApiProviderId` 中的关联引用
+
+### 18.2 SKILL 文件阅读工具修复（`assets/js/app.js`）
+
+- `canConfigureActiveToolResultCount` 新增 `!isSkillReadfileActiveTool(tool)` 条件
+- SKILL 文件阅读工具不再设置返回条数，启用哪个 skill 就返回哪个 skill 的完整内容
+
+### 18.3 世界书工具调用修复（`assets/js/app.js`）
+
+- `findActiveToolCallsInText` 新增扫描 `<cot>` 思考链内部的工具调用标签
+- 反转义 `parseCot` 产生的 `&lt;`/`&gt;` 转义后扫描
+- 去重 key 包含 `isFromCot` 标记，区分来自 main 和 cot 的调用
+- 修复 AI 在思考链内输出工具标签但工具未执行的问题
+
+### 18.4 API 请求体高级设置优化（`assets/js/app.js` + `index.html` + `android-patches/MainActivity.java`）
+
+#### 18.4.1 移除思考强度下拉框
+
+- 移除 `reasoningEffort` 注入逻辑，改为用户通过自定义 JSON 输入 `reasoning_effort`
+- 更新 placeholder 为 `{"reasoning_effort":"medium","max_completion_tokens":8192}`
+- 添加 "TRPG 模式下同样生效" 说明
+
+#### 18.4.2 TRPG 代理高级设置注入
+
+- `MainActivity.java` 新增 `setAdvancedSettings` JavascriptInterface
+- 代理服务器解析 POST 请求体 JSON，注入 `thinking`/`customRequestBody` 字段
+- 仅对 `chat/completions` 端点生效
+- thinking 注入与自定义请求体合并独立 try-catch，避免自定义解析失败影响 thinking
+- `app.js` 新增 `pushAdvancedSettingsToNative` 函数，watch 设置变化自动推送
+
+### 18.5 流式输出实现（`assets/js/app.js` + `android-patches/MainActivity.java`）
+
+#### 18.5.1 XMLHttpRequest 流式方案
+
+- `getEffectiveStream` 不再强制禁用原生平台流式（`() => settings.stream`）
+- 新增 `sendStreamRequestViaXHR` 函数：用 XMLHttpRequest 发送流式请求，绕过 CapacitorHttp patch
+- 请求路径：XHR → `localhost:18527/v1/chat/completions?_target=<真实API>` → 真实 API
+- `onprogress` 事件逐步接收数据，`responseText` 增量更新
+- SSE 行解析：buffer 处理 partial lines，`onload` 处理残留 buffer
+- 支持 AbortController 中止
+- `chunkError` 机制：`onChunk` 抛出的错误中止请求并 reject Promise
+
+#### 18.5.2 sendMessage 流式分支
+
+- 原生平台 + stream=true：走 `sendStreamRequestViaXHR`（XHR + 本地代理）
+- 浏览器 + stream=true：走现有 fetch + ReadableStream
+- 非流式：走现有 fetch
+- `MainActivity.java` 代理支持 `_target` 参数实现多供应商路由
+
+### 18.6 静态审查修复
+
+#### 18.6.1 安全修复
+
+- `MainActivity.java` 代理服务器绑定到 `127.0.0.1`（原绑定 `0.0.0.0`），防止同设备其他 App SSRF
+- `copyResponseHeaders` 跳过 CORS 头，避免与 `addCorsHeaders` 重复导致浏览器 CORS 冲突
+- 错误响应 NPE 防御：`e.getMessage()` 为 null 时使用类名
+
+#### 18.6.2 Bug 修复
+
+- **删除供应商后模型前缀污染**：`removeCustomApiProvider` 级联清理所有模型字段前缀
+- **迁移供应商"复活"**：`normalizeApiProviderSettings` 迁移后清除旧字段
+- **编辑模式 ID 修改静默失败**：`saveCustomProvider` 编辑模式找不到供应商时提示错误
+- **嵌入 URL/Key 不一致**：`requestMemoryEmbeddings` 强制 URL 和 Key 来自同一供应商
+- **parseModelName 空 modelName**：末尾下划线防御性回退
+- **getApiKeyForModel NPE**：`apiProviderKeys` null 防御
+- **高级设置注入异常处理**：thinking 注入与自定义请求体合并独立 try-catch
+- **多线程读写不一致**：`serve` 方法捕获局部变量
+
+### 18.7 文件改动清单
+
+| 文件 | 改动类型 | 说明 |
+|------|----------|------|
+| `assets/js/app.js` | 修改 | 多供应商架构 + SKILL 修复 + 世界书修复 + 高级设置 + 流式输出 |
+| `index.html` | 修改 | 供应商列表 UI + 嵌入供应商选择器 + 移除思考强度下拉框 |
+| `android-patches/MainActivity.java` | 修改 | 代理绑定 127.0.0.1 + _target 支持 + 高级设置注入 + 安全修复 |
+
+### 18.8 保留功能
+
+- **Luzzy 预设的 NSFW 成人内容完整保留**
+- **TRPG 代理机制不受影响**
+- **SKILL 工具系统功能不受影响**
+- **MCP 工具功能不受影响**
+- **记忆系统功能不受影响**
+
+### 18.9 验证清单
+
+- [ ] 多供应商：设置密钥即启用，模型名格式 `<providerId>_<model_name>`
+- [ ] 嵌入模型可使用独立供应商
+- [ ] 自定义供应商 ID 仅英文字母
+- [ ] 删除供应商后模型前缀自动清理
+- [ ] SKILL 文件阅读无返回条数限制
+- [ ] 思考链内工具调用可执行
+- [ ] API 高级设置自定义 JSON 可用
+- [ ] TRPG 模式高级设置注入可用
+- [ ] 原生平台流式输出正常
+- [ ] 浏览器流式输出正常
+- [ ] 代理绑定 127.0.0.1
+- [ ] CHANGELOG.md 已添加第十八轮改动
+- [ ] README.md 已更新功能说明
+
+---
+
 **最后更新**：2026-06-19
 **维护者**：LuzzyMeow
