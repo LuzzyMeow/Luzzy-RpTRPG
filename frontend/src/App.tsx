@@ -10,14 +10,14 @@ const ChatPage = lazy(() =>
 const CharactersPage = lazy(() =>
   import('@/pages/CharactersPage').then((m) => ({ default: m.CharactersPage })),
 );
+const TrpgPage = lazy(() =>
+  import('@/pages/TrpgPage').then((m) => ({ default: m.TrpgPage })),
+);
 const ToolsPage = lazy(() =>
   import('@/pages/ToolsPage').then((m) => ({ default: m.ToolsPage })),
 );
-const SettingsPage = lazy(() =>
-  import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
-);
-const MorePage = lazy(() =>
-  import('@/pages/MorePage').then((m) => ({ default: m.MorePage })),
+const MinePage = lazy(() =>
+  import('@/pages/MinePage').then((m) => ({ default: m.MinePage })),
 );
 
 /** 应用级错误边界状态 */
@@ -37,6 +37,11 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
     return { hasError: true, error };
   }
 
+  componentDidCatch(error: Error, info: { componentStack: string }): void {
+    // 记录错误与组件栈，便于排查线上问题（避免错误被静默吞没）
+    console.error('[ErrorBoundary] 捕获到渲染错误:', error, info.componentStack);
+  }
+
   handleReset = (): void => {
     this.setState({ hasError: false, error: null });
   };
@@ -46,7 +51,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
       return (
         <div style={{ padding: 24, textAlign: 'center' }}>
           <h2 style={{ marginBottom: 12 }}>页面出错了</h2>
-          <p style={{ color: '#d32f2f', marginBottom: 16, wordBreak: 'break-word' }}>
+          <p style={{ color: 'var(--luzzy-error)', marginBottom: 16, wordBreak: 'break-word' }}>
             {this.state.error?.message ?? '未知错误'}
           </p>
           <button
@@ -56,8 +61,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
               padding: '8px 16px',
               borderRadius: 8,
               border: 'none',
-              background: '#1976d2',
-              color: '#fff',
+              background: 'var(--luzzy-primary)',
+              color: 'var(--luzzy-on-primary)',
               cursor: 'pointer',
             }}
           >
@@ -105,9 +110,9 @@ export function App() {
               <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/chat" element={<ChatPage />} />
               <Route path="/characters" element={<CharactersPage />} />
+              <Route path="/trpg" element={<TrpgPage />} />
               <Route path="/tools" element={<ToolsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/more" element={<MorePage />} />
+              <Route path="/mine" element={<MinePage />} />
               <Route path="*" element={<Navigate to="/chat" replace />} />
             </Routes>
           </Suspense>

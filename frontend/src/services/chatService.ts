@@ -17,8 +17,15 @@ import type {
   MemorySettings,
   MessageRole,
   RegexScript,
+  VectorMemoryShard,
 } from '@/types';
 import { parseCot } from '@/services/markdownService';
+import {
+  buildVectorMemory,
+  searchVectorMemory,
+  loadVectorMemoryShards,
+  saveVectorMemoryShards,
+} from '@/services/memoryService';
 
 // ============================================================================
 // 类型定义
@@ -42,6 +49,10 @@ export interface BuildContextParams {
   settings: ApiSettings;
   apiProviders: ApiProvider[];
   apiProviderKeys: Record<string, string>;
+  /** 向量记忆分片（用于记忆召回） */
+  vectorMemoryShards?: VectorMemoryShard[];
+  /** 记忆设置（启用时进行向量记忆召回） */
+  memorySettings?: MemorySettings;
 }
 
 /** buildContext 返回值 */
@@ -56,6 +67,10 @@ export interface ExtractMemoryParams {
   character: Character | null;
   settings: ApiSettings;
   memorySettings: MemorySettings;
+  /** 供应商列表（内置 + 自定义），用于嵌入 API 路由 */
+  apiProviders: ApiProvider[];
+  /** 各供应商的 API Key 映射 */
+  apiProviderKeys: Record<string, string>;
 }
 
 // ============================================================================
@@ -240,7 +255,9 @@ const matchWorldInfoEntries = (
  * @param params - 构建参数
  * @returns 系统提示词与 API 消息列表
  */
-export const buildContext = (params: BuildContextParams): BuildContextResult => {
+export const buildContext = async (
+  params: BuildContextParams,
+): Promise<BuildContextResult> => {
   const {
     messages,
     character,
@@ -248,6 +265,11 @@ export const buildContext = (params: BuildContextParams): BuildContextResult => 
     presets,
     worldInfoEntries,
     globalMemory,
+    settings,
+    apiProviders,
+    apiProviderKeys,
+    vectorMemoryShards,
+    memorySettings,
   } = params;
 
   // 1. 过滤启用的世界书条目
@@ -307,6 +329,38 @@ export const buildContext = (params: BuildContextParams): BuildContextResult => 
     systemPromptParts.push(
       `<global_memory>\n${globalMemory.content.trim()}\n</global_memory>`,
     );
+  }
+
+  // 3.7 向量记忆召回
+  if (memorySettings?.enabled && vectorMemoryShards && vectorMemoryShards.length > 0) {
+    const latestUserMessage = [...messages]
+      .reverse()
+      .find((m) => m.role === 'user');
+    if (latestUserMessage && latestUserMessage.content.trim()) {
+      try {
+        const recalledShards = await searchVectorMemory(
+          latestUserMessage.content,
+          vectorMemoryShards,
+          memorySettings,
+          settings,
+          apiProviders,
+          apiProviderKeys,
+        );
+        if (recalledShards.length > 0) {
+          const recallText = recalledShards
+            .map(
+              (s, i) =>
+                `  <memory index="${i + 1}" turn="${s.turn}">\n    ${s.content}\n  </memory>`,
+            )
+            .join('\n\n');
+          systemPromptParts.push(
+            `<memory_recall>\n${recallText}\n</memory_recall>`,
+          );
+        }
+      } catch (e) {
+        console.warn('[ChatService] 向量记忆召回失败:', e);
+      }
+    }
   }
 
   const systemPrompt = systemPromptParts.join('\n\n');
@@ -515,7 +569,14 @@ export const processRegex = (
 export const extractMemory = async (
   params: ExtractMemoryParams,
 ): Promise<void> => {
-  const { messages, character, memorySettings } = params;
+  const {
+    messages,
+    character,
+    settings,
+    memorySettings,
+    apiProviders,
+    apiProviderKeys,
+  } = params;
 
   // 检查记忆功能是否启用
   if (!memorySettings.enabled) return;
@@ -540,26 +601,46 @@ export const extractMemory = async (
 
     if (!userContent.trim() || !assistantContent.trim()) return;
 
-    // 记忆提取日志
-    console.log(
-      `[Memory] 提取记忆: 角色=${character.name}, ` +
-        `用户消息长度=${userContent.length}, ` +
-        `AI消息长度=${assistantContent.length}`,
+    // 计算当前轮次号（用户消息的序号，从 1 开始）
+    const turnNumber = messages
+      .slice(0, lastUserIndex + 1)
+      .filter((m) => m.role === 'user').length;
+
+    // 使用 buildVectorMemory 生成本轮的向量记忆分片
+    // buildVectorMemory 内部会调用嵌入 API 生成向量
+    const latestTurnMessages: ChatMessage[] = [
+      { ...userMessage, content: userContent },
+      { ...assistantMessage, content: assistantContent },
+    ];
+    const newShards = await buildVectorMemory(
+      latestTurnMessages,
+      character,
+      memorySettings,
+      settings,
+      apiProviders,
+      apiProviderKeys,
     );
 
-    // TODO: 调用嵌入模型服务生成向量并存储到 IndexedDB
-    // 需要嵌入模型服务（embeddingService）实现后扩展：
-    // const embedding = await generateEmbedding(
-    //   `${userContent}\n\n${assistantContent}`,
-    //   memorySettings.embeddingModel,
-    //   params.settings,
-    // );
-    // await storeVectorMemory({
-    //   characterUuid: character.uuid,
-    //   turn: Math.floor(lastUserIndex / 2) + 1,
-    //   content: `${userContent}\n\n${assistantContent}`,
-    //   embedding,
-    // });
+    if (newShards.length === 0) return;
+
+    // 调整轮次号（buildVectorMemory 从 1 开始编号，需修正为实际轮次）
+    const adjustedShards: VectorMemoryShard[] = newShards.map((s) => ({
+      ...s,
+      turn: turnNumber,
+    }));
+
+    // 合并已有分片并持久化到 IndexedDB
+    const existingShards = await loadVectorMemoryShards(character.uuid);
+    const allShards = [...existingShards, ...adjustedShards];
+
+    // 限制最大记忆数量，超出时保留最新的 N 条
+    const maxMemories = memorySettings.maxMemories || 100;
+    const trimmedShards =
+      allShards.length > maxMemories
+        ? allShards.slice(allShards.length - maxMemories)
+        : allShards;
+
+    await saveVectorMemoryShards(character.uuid, trimmedShards);
   } catch (e) {
     console.warn('[Memory] 记忆提取失败:', e);
   }
