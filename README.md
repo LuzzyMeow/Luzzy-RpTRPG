@@ -2,7 +2,7 @@
 
 <img src="frontend/public/icons/icon-192.png" width="120" height="120" alt="LUZZY Logo" />
 
-# LUZZY · 露西
+# LUZZY · 鹿溪
 
 > **让每一次对话，都像翻开一本新的角色扮演小说。**
 > 
