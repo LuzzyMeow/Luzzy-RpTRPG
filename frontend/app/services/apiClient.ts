@@ -641,7 +641,15 @@ const sendStreamRequestViaXHR = (
       proxyUrl = url;
     }
 
-    const xhr = new XMLHttpRequest();
+    // v0.4.0-patch: CapacitorHttp 会 patch 全局 XMLHttpRequest，将 http:// 请求转发到原生层，
+    // 导致 XHR 无法直接访问 localhost:18527 的 NanoHTTPD 代理（API error: 0）。
+    // 修复：使用 Capacitor 保存的原始 XMLHttpRequest（未被 patch），直接发起到本地代理。
+    const OriginalXHR = (window as unknown as {
+      CapacitorWebXMLHttpRequest?: { constructor: typeof XMLHttpRequest };
+    }).CapacitorWebXMLHttpRequest;
+    const XhrCtor: typeof XMLHttpRequest = OriginalXHR?.constructor ?? XMLHttpRequest;
+
+    const xhr = new XhrCtor();
     xhr.open('POST', proxyUrl, true);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('Accept', 'text/event-stream');
