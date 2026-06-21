@@ -10,7 +10,6 @@ import { motion } from "motion/react";
 import { IconInfo, IconLink, IconCopyEdit } from "~/components/luzzy/luzzy-icons";
 
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
-import Logo from "~/components/logo";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -23,7 +22,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.3.5";
+const APP_VERSION = "v0.3.7";
 
 export default function AboutPage() {
   const [systemInfo, setSystemInfo] = React.useState<Record<string, string>>({});
@@ -93,8 +92,8 @@ export default function AboutPage() {
             animate={{ opacity: 1, y: 0 }}
             className="flex flex-col items-center gap-3 py-8"
           >
-            <div className="flex size-20 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/80 to-primary shadow-lg">
-              <Logo className="size-12 text-primary-foreground" />
+            <div className="flex size-20 items-center justify-center overflow-hidden rounded-2xl shadow-lg">
+              <img src="/icons/icon-192.png" alt="LUZZY" className="size-full object-cover" />
             </div>
             <div className="text-center">
               <h1 className="text-2xl font-bold tracking-tight">LUZZY</h1>
@@ -123,7 +122,7 @@ export default function AboutPage() {
                 {Object.entries(systemInfo).map(([key, value]) => (
                   <div
                     key={key}
-                    className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-3 border-b border-border/30 py-1.5 last:border-0"
+                    className="grid grid-cols-[minmax(4.5rem,5.5rem)_minmax(0,1fr)] gap-3 border-b border-border/30 py-1.5 last:border-0"
                   >
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {key}
@@ -203,7 +202,7 @@ export default function AboutPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.25 }}
-            className="pb-8 text-center"
+            className="pb-[calc(2rem+env(safe-area-inset-bottom))] text-center"
           >
             <p className="text-xs text-muted-foreground">
               © 2026 LUZZY. All rights reserved.

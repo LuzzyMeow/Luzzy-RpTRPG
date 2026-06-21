@@ -77,6 +77,52 @@ export interface BuildContextResult {
   appliedSkillIds?: string[];
 }
 
+// ============================================================================
+// CoT 输出协议指令（v0.3.6 新增）
+// ============================================================================
+/**
+ * 强制要求模型将思考链包裹在 <cot> 标签内，按 Step 顺序输出。
+ *
+ * 解决问题：LUZZY_PRESET_CONTENT 的 14 个 Step 从未明确指示模型输出 <cot> 标签，
+ * 导致 parseCot 提取不到思考链，思考卡片永不显示。
+ *
+ * 此指令作为独立片段追加到系统提示词末尾，不修改 presetContent.ts 中的 NSFW 预设内容。
+ * 兼容 LUXI_PROMPT 的 5 步框架：模型根据当前角色选择 Step 数量。
+ */
+const COT_OUTPUT_PROTOCOL = `<cot_output_protocol>
+【输出格式强制要求 - 思考链协议】
+在每次回复的正文之前，你必须先输出完整的思考链，严格遵循以下格式：
+
+1. 以 <cot> 标签开始思考链
+2. 按系统预设中定义的 Step 顺序，逐一输出每个步骤的思考内容
+3. 每个 Step 必须以 **Step N：步骤标题** 格式开头（N 为步骤编号，与预设中的 Step 编号对应）
+4. 每个 Step 之间必须用空行（双换行 \\n\\n）分隔，确保每个 Step 独立成段
+5. 所有 Step 输出完毕后，必须以 </cot> 标签关闭思考链
+6. 在 </cot> 之后立即输出正文，无任何过渡文本、无元评论、无道歉
+
+输出示例：
+<cot>
+**Step 1：宇宙声明与认知隔离**
+[此处输出 Step1 的具体思考内容]
+
+**Step 2：核心指令加载**
+[此处输出 Step2 的具体思考内容]
+
+...（依此类推，输出预设中定义的所有 Step）
+
+**Step 14：最终执行锁**
+[此处输出 Step14 的具体思考内容]
+</cot>
+[此处直接输出正文，无任何过渡]
+
+强制规则：
+- 思考链内容对用户不可见，仅用于你的内部推理，不影响正文生成质量
+- 所有角色（含鹿溪）统一按 LUZZY 预设的 14 步框架输出（Step 1-14）
+- 必须输出完整的所有 Step，不得跳过、合并或缩写
+- <cot> 开始标签和 </cot> 结束标签都必须出现，否则正文无法正常显示
+- 每个 Step 的标题必须与预设中的 Step 标题完全一致
+</cot_output_protocol>`;
+
 /** extractMemory 参数 */
 export interface ExtractMemoryParams {
   messages: ChatMessage[];
@@ -450,6 +496,11 @@ export const buildContext = async (
     }
   }
 
+  // 3.x CoT 输出协议指令（v0.3.6 新增）
+  // 独立追加，不修改 presetContent.ts 中的 NSFW 预设内容
+  // 明确要求模型将思考链包裹在 <cot> 标签内，按 Step 顺序输出
+  systemPromptParts.push(COT_OUTPUT_PROTOCOL);
+
   const systemPrompt = systemPromptParts.join('\n\n');
 
   // 4. 构建 API 消息列表
@@ -548,17 +599,17 @@ export const buildContext = async (
  * - HTML 标签（<html>...</html>）
  * - Script 块（<script>...</script>）
  * - Style 块（<style>...</style>）
- * - CoT/Think 块（<cot>...</cot> 或 <think>...</think>，支持未闭合）
+ * - CoT/Think 块（<cot>/<think>/<thinking>/<reasoning>/<thought>/<thoughts>/<reflection>/<analysis>...</tag>，支持未闭合）
  * - Markdown 代码块（```...```）
  * - 行内代码（`...`）
  * - HTML 标签（<tag>）
  */
 const PROTECTION_PATTERN =
-  /(<!DOCTYPE html>[\s\S]*?<\/html>|<html\b[^>]*>[\s\S]*?<\/html>|<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>|<(?:cot|think)>[\s\S]*?(?:<\/(?:cot|think)>|<(?:cot|think)>|$)|```[\s\S]*?```|`[^`]+`|<\/?[a-zA-Z][\w:-]*[^>]*>)/gi;
+  /(<!DOCTYPE html>[\s\S]*?<\/html>|<html\b[^>]*>[\s\S]*?<\/html>|<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>|<(?:cot|think|thinking|reasoning|thought|thoughts|reflection|analysis)>[\s\S]*?(?:<\/(?:cot|think|thinking|reasoning|thought|thoughts|reflection|analysis)>|<(?:cot|think|thinking|reasoning|thought|thoughts|reflection|analysis)>|$)|```[\s\S]*?```|`[^`]+`|<\/?[a-zA-Z][\w:-]*[^>]*>)/gi;
 
 /** 受保护内容的测试模式（用于判断分割后的部分是否受保护） */
 const PROTECTION_TEST_PATTERN =
-  /^(<!DOCTYPE html>[\s\S]*?<\/html>|<html\b[^>]*>[\s\S]*?<\/html>|<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>|<(?:cot|think)>[\s\S]*?(?:<\/(?:cot|think)>|<(?:cot|think)>|$)|```[\s\S]*?```|`[^`]+`|<\/?[a-zA-Z][\w:-]*[^>]*>)$/i;
+  /^(<!DOCTYPE html>[\s\S]*?<\/html>|<html\b[^>]*>[\s\S]*?<\/html>|<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>|<(?:cot|think|thinking|reasoning|thought|thoughts|reflection|analysis)>[\s\S]*?(?:<\/(?:cot|think|thinking|reasoning|thought|thoughts|reflection|analysis)>|<(?:cot|think|thinking|reasoning|thought|thoughts|reflection|analysis)>|$)|```[\s\S]*?```|`[^`]+`|<\/?[a-zA-Z][\w:-]*[^>]*>)$/i;
 
 /**
  * 正则脚本处理（v0.3.0 重构）

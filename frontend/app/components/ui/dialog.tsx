@@ -54,13 +54,25 @@ function DialogContent({
   showCloseButton?: boolean
 }) {
   // v0.3.1: 弹窗输入法适配 — 监听 VisualViewport 变化，自适应弹窗高度
+  // v0.3.6: 增强 — 同时调整弹窗位置，避免键盘遮挡底部按钮
   React.useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const onResize = () => {
+      const viewport = window.visualViewport!;
       const dialogs = document.querySelectorAll("[data-slot='dialog-content']");
+      const keyboardHeight = window.innerHeight - viewport.height;
       dialogs.forEach((dialog) => {
         if (dialog instanceof HTMLElement) {
-          dialog.style.maxHeight = `${window.visualViewport!.height * 0.9}px`;
+          // 调整最大高度为可视区域的 90%
+          dialog.style.maxHeight = `${viewport.height * 0.9}px`;
+          // v0.3.6: 键盘弹起时上移弹窗，使其在可视区域内居中
+          // 默认 top:50% + translate-y:-50% 居中于整个窗口
+          // 键盘弹起后，需要上移 keyboardHeight/2 使其在可视区域居中
+          if (keyboardHeight > 10) {
+            dialog.style.transform = `translate(-50%, calc(-50% - ${keyboardHeight / 2}px))`;
+          } else {
+            dialog.style.transform = "translate(-50%, -50%)";
+          }
         }
       });
     };

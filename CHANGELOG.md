@@ -1,5 +1,59 @@
 # Changelog
 
+## v0.3.7
+
+### 🐛 Bug 修复
+
+- **CoT Step 卡片不生效（核心修复）**：`luzzy-thinking-timeline.tsx` `parseThinkingSteps` 正则扩展为同时匹配 `**Step N` 和 `【Step N】` 两种格式；`extractStepTitle` 兼容中点 `·` 分隔符；`chat-slice.ts` 流式节流阈值从 50 字符降至 10、`updateMessage` 间隔从 60ms 降至 30ms，闭合标签检测扩展到全部 8 种变体
+- **流式输出未成功应用（核心修复）**：思考卡片 Markdown 传递 `isAnimating` prop；打字机新增自适应追赶（差距 >100 字符时 4x 加速）；CoT 期间气泡显示"正在思考中"提示
+- **memory-recall 工具无效**：`chat-slice.ts` 新增 memory-recall 内置工具预执行块，调用 `searchLongTermMemory` 检索长期记忆，结果填充 `message.memoryRecalls` 供 UI 显示并注入上下文
+- **角色卡导入乱码**：`characters.tsx` 新增 `decodeBase64Utf8` 辅助函数，替换 3 处 `atob` 调用，修复 UTF-8 中文字符解码
+- **新会话不自动跳转**：`chat.tsx` `handleCreateSession` 使用 `createSession` 返回的 session ID，替代脆弱的 `sessions.find` 查找
+- **Switch 动画拉伸**：`switch.tsx` `transition-all` 改为 `transition-[background-color,box-shadow]`，新增 `self-center` 防止父容器 flex stretch
+- **用户档案全屏崩溃**：`profile.tsx` 新增 `descFullscreenOpen` 状态，全屏编辑器打开时关闭 Dialog，避免 z-index 冲突
+- **鹿溪 CoT 框架冗余**：`presetContent.ts` 移除 LUXI_PROMPT 的 CoT 框架章节，统一使用 LUZZY 14 步预设框架；`chatService.ts` COT_OUTPUT_PROTOCOL 简化
+
+### ✨ 新增功能
+
+- **聊天引号高亮**：`markdown.tsx` preProcess 阶段将 `"..."` 引号内容替换为 `<span class="luzzy-highlight">`；`markdown.css` 新增 `.luzzy-highlight` 类；`luzzy-chat-message.tsx` 通过 CSS 变量 `--luzzy-highlight-color` 注入颜色
+- **高亮显示设置**：`settings.tsx` 新增高亮显示设置卡片（启用开关 + 6 色预设 + 自定义颜色输入）
+- **会话删除按钮**：`all-sessions-list.tsx` 会话项新增显式删除图标按钮，避免用户难以发现左滑删除
+- **删除确认弹窗 UI 优化**：`luzzy-confirm.tsx` 头部图标移至标题上方居中，正文左对齐，按钮非通栏居中
+
+### 🚀 功能增强
+
+- **启动屏配色统一**：`luzzy-splash.tsx` 背景从固定紫色渐变改为 APP 主题 CSS 变量，自动适配浅色/深色主题；LUZZY 文字字符级 stagger 入场动画；进度条 shimmer 光泽流动；液态玻璃质感卡片包裹
+- **Anysearch 工具清理**：`tools.tsx` "检索全局记忆"选项仅对 vector-memory 和 memory-recall 显示；anysearch 文档图标从 size-6 增大到 size-8
+- **嵌入供应商移除**：`memory.tsx` 移除冗余的嵌入供应商选择器，由嵌入模型自动确定
+- **PROTECTION_PATTERN 扩展**：`chatService.ts` CoT 保护正则扩展到全部 8 种标签变体
+- **版本号升级**：v0.3.6 → v0.3.7（package.json + build.gradle versionCode 15 + about.tsx）
+
+## v0.3.6
+
+### 🐛 Bug 修复
+
+- **CoT 思考链不生效（核心修复）**：`chatService.ts` 新增 `COT_OUTPUT_PROTOCOL` 输出协议指令，注入 `buildContext` 系统提示词末尾，强制要求模型将思考链包裹在 `<cot>` 标签内并按 Step 顺序输出。解决 LUZZY_PRESET_CONTENT 的 14 个 Step 从未明确指示模型输出 `<cot>` 标签、导致 `parseCot` 提取不到思考链、思考卡片永不显示的根本问题
+- **CoT Step 解析重写**：`luzzy-thinking-timeline.tsx` `parseThinkingSteps` 重写分段逻辑：优先按 `**Step N` 标记切分（前瞻断言保留分隔标记），回退到双换行分段，实现短段落合并（<10 字符合并到上一个），解决 Step 卡片不生效问题
+- **打字机效果性能优化**：`luzzy-thinking-timeline.tsx` `useTypewriter` 从 `setInterval` 重写为 `requestAnimationFrame` + 增量追赶快照模式，单一定时器平滑追赶，解决旧版每次 fullText 变化都重建 setInterval、流式时定时器堆积导致 UI 卡顿
+- **流式输出节流优化**：`chat-slice.ts` `onChunk` 回调新增 `parseCot` 调用节流（50 字符阈值）和 `updateMessage` 节流（60ms 间隔），避免每个 chunk 都全量解析和高频更新导致 UI 卡顿
+- **工具强制模式未生效**：`chat-slice.ts` force 模式下，初始 API 调用前主动执行所有已启用的非 vector-memory 工具（keyword/web/world/skill/mcp），将结果作为独立 user 消息注入上下文末尾，不破坏 KV 缓存命中率
+- **翻译自定义按钮无效**：`settings.tsx` 引入独立 `isCustomMode` 状态与 `customLanguage` 解耦，修复点击"自定义"后 `customLanguage` 被置空导致选中状态丢失、输入框不显示的问题
+- **关于页信息溢出**：`about.tsx` Grid 列宽从 `4.5rem` 改为 `minmax(4.5rem,5.5rem)`，底部版权区添加 `pb-[calc(2rem+env(safe-area-inset-bottom))]` 适配全面屏
+- **关于页 LOGO 错误**：`about.tsx` LOGO 从 `Logo` SVG 组件替换为 `/icons/icon-192.png`，与安装包图标一致
+- **后台切回白屏**：`root.tsx` 新增 `visibilitychange` 和 `pageshow` 事件监听，通过 `setRefreshKey` 触发重新渲染，修复从后台切回前台时全屏白屏问题
+- **侧边栏顶部冲突**：`luzzy-sidebar.tsx` 移动端和桌面端头部从 `py-3` 改为 `pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]`，避免与手机状态栏冲突
+- **弹窗键盘遮挡**：`dialog.tsx` 增强 `visualViewport` 处理器，键盘弹起时调整 `transform` 上移弹窗，使其在可视区域内居中
+- **消息按钮中文说明**：`luzzy-chat-message.tsx` `ActionButton` 简化为仅图标（`size-7` 方形按钮），移除中文 label 文本
+- **角色卡描述硬截断**：`character-picker.tsx` 描述从 `truncate` 改为 `line-clamp-3` + 展开/收起按钮 + 详情弹窗（Markdown 渲染完整描述）
+
+### ✨ 新增功能
+
+- **翻译语言药丸按钮**：`settings.tsx` 翻译语言选择从 ToggleGroup 改为圆角药丸形状按钮（`rounded-full`），宽度自适应文本长度；独立"+ 自定义"按钮（虚线边框区分），点击弹出 Dialog 输入语言名称；自定义模式激活时显示当前语言 + 删除按钮
+
+### 🚀 功能增强
+
+- **版本号升级**：v0.3.5 → v0.3.6（package.json + build.gradle versionCode 14 + about.tsx）
+
 ## v0.3.5
 
 ### 🐛 Bug 修复

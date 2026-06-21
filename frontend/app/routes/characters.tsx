@@ -133,6 +133,23 @@ const NON_CJK_FONT_STYLE: React.CSSProperties = {
 };
 
 /** 从 PNG 文件解析 SillyTavern 角色卡（支持 tEXt/iTXt/zTXt chunk） */
+
+/**
+ * v0.3.7: 正确解码 base64 + UTF-8 字符串
+ *
+ * 旧实现 `JSON.parse(atob(b64))` 中 atob 返回 binary string，直接传给 JSON.parse
+ * 无法正确处理 UTF-8 多字节字符（中文），导致角色卡设定文字乱码。
+ * 新实现先将 base64 解码为字节数组，再用 TextDecoder("utf-8") 解码。
+ */
+function decodeBase64Utf8(b64: string): string {
+  const binaryString = atob(b64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
 async function parsePngCharacterCard(file: File): Promise<unknown> {
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
@@ -163,7 +180,7 @@ async function parsePngCharacterCard(file: File): Promise<unknown> {
         if (SUPPORTED_KEYWORDS.includes(keyword)) {
           const b64 = new TextDecoder("latin1").decode(chunkData.subarray(nul + 1));
           try {
-            const json = atob(b64);
+            const json = decodeBase64Utf8(b64);
             return JSON.parse(json);
           } catch {
             // base64 解码失败,继续尝试其他 chunk
@@ -197,7 +214,7 @@ async function parsePngCharacterCard(file: File): Promise<unknown> {
         } else {
           text = new TextDecoder().decode(textData);
         }
-        const json = atob(text);
+        const json = decodeBase64Utf8(text);
         return JSON.parse(json);
       } catch {
         // 解码失败,继续尝试
@@ -216,7 +233,7 @@ async function parsePngCharacterCard(file: File): Promise<unknown> {
               new Blob([compressedData]).stream().pipeThrough(new DecompressionStream("deflate")),
             ).text();
             const b64 = decompressed;
-            const json = atob(b64);
+            const json = decodeBase64Utf8(b64);
             return JSON.parse(json);
           } catch {
             // 解压失败,继续

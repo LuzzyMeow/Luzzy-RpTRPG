@@ -52,6 +52,28 @@ function AppContent() {
     return sessionStorage.getItem("luzzy-splash-shown") ? false : true;
   });
 
+  // v0.3.6: 修复从后台切回前台时白屏问题
+  // 通过 visibilitychange 和 pageshow 事件触发重新渲染
+  const [, setRefreshKey] = useState(0);
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        // 触发重新渲染，修复白屏
+        setRefreshKey((k) => k + 1);
+      }
+    };
+    const handlePageShow = () => {
+      // 从 bfcache 恢复时也触发重新渲染
+      setRefreshKey((k) => k + 1);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+    };
+  }, []);
+
   // v0.3.2: 应用启动时初始化 logger
   useEffect(() => {
     void initLogger().then(() => {

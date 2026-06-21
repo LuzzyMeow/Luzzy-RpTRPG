@@ -32,12 +32,14 @@ import {
   IconRestore,
   IconRefresh,
   IconGrid,
+  IconText,
 } from "~/components/luzzy/luzzy-icons";
 
 import { useAppStore } from "~/stores";
 import { DEFAULT_TRANSLATION_SETTINGS } from "~/stores/slices/settings-slice";
 import type { ApiProvider, ApiType, ModelConfig } from "~/types/luzzy";
 import { logger } from "~/services/logger";
+import { cn } from "~/lib/utils";
 import { useTheme } from "~/components/theme-provider";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { Button } from "~/components/ui/button";
@@ -90,6 +92,16 @@ const API_TYPE_LABELS: Record<ApiType, string> = {
   "anthropic-messages": "Anthropic Messages",
   "openai-responses": "OpenAI Responses",
 };
+
+/** 高亮颜色预设（v0.3.7） */
+const HIGHLIGHT_COLOR_PRESETS = [
+  { name: "主题紫", value: "oklch(0.65 0.2 280)" },
+  { name: "暖橙", value: "oklch(0.7 0.15 60)" },
+  { name: "翠绿", value: "oklch(0.7 0.15 150)" },
+  { name: "玫红", value: "oklch(0.65 0.2 10)" },
+  { name: "青蓝", value: "oklch(0.7 0.15 220)" },
+  { name: "琥珀", value: "oklch(0.75 0.15 90)" },
+];
 
 /** 解析长度字符串（支持 1000000 / 1000k / 1000K / 1m / 1M） */
 function parseLength(value: string): number | undefined {
@@ -149,6 +161,9 @@ export default function SettingsPage() {
   // v0.3.3: 翻译设置
   const translationSettings = useAppStore((s) => s.translationSettings);
   const setTranslationSettings = useAppStore((s) => s.setTranslationSettings);
+  // v0.3.7: 高亮显示设置
+  const highlightSettings = useAppStore((s) => s.highlightSettings);
+  const setHighlightSettings = useAppStore((s) => s.setHighlightSettings);
   const [translatingSaving, setTranslatingSaving] = React.useState(false);
   // 本地编辑态（提示词模板），保存时才写入 store
   const [promptDraft, setPromptDraft] = React.useState(
@@ -158,6 +173,17 @@ export default function SettingsPage() {
   React.useEffect(() => {
     setPromptDraft(translationSettings.promptTemplate);
   }, [translationSettings.promptTemplate]);
+
+  // v0.3.6 C5: 自定义语言模式状态（与 customLanguage 解耦）
+  // 初始值从 customLanguage 推导：有值则为自定义模式
+  const [isCustomMode, setIsCustomMode] = React.useState(
+    Boolean(translationSettings.customLanguage?.trim()),
+  );
+  // v0.3.6 C6: 自定义语言输入弹窗
+  const [customDialogOpen, setCustomDialogOpen] = React.useState(false);
+  const [customLanguageDraft, setCustomLanguageDraft] = React.useState(
+    translationSettings.customLanguage || "",
+  );
 
   // 新增供应商弹窗
   const [newProvider, setNewProvider] = React.useState<ApiProvider | null>(
@@ -336,21 +362,21 @@ export default function SettingsPage() {
     { value: "العربية", label: "العربية" },
   ];
 
-  /** 当前语言选择值：自定义优先，否则取 targetLanguage */
-  const currentLanguageValue = translationSettings.customLanguage?.trim()
+  /** 当前语言选择值：v0.3.6 改用 isCustomMode 状态判断 */
+  const currentLanguageValue = isCustomMode
     ? "__custom__"
     : translationSettings.targetLanguage;
 
-  /** 切换语言快速选项 */
+  /** 切换语言快速选项（v0.3.6 重构：使用 isCustomMode 状态） */
   const handleLanguageChange = React.useCallback(
     (value: string) => {
       if (value === "__custom__") {
-        // 进入自定义模式：保留已有 customLanguage 或置空
-        setTranslationSettings({
-          customLanguage: translationSettings.customLanguage || "",
-        });
+        // 进入自定义模式：打开弹窗让用户输入
+        setCustomLanguageDraft(translationSettings.customLanguage || "");
+        setCustomDialogOpen(true);
       } else {
-        // 选择预设语言：清空 customLanguage，设置 targetLanguage
+        // 选择预设语言：退出自定义模式，清空 customLanguage，设置 targetLanguage
+        setIsCustomMode(false);
         setTranslationSettings({
           targetLanguage: value,
           customLanguage: "",
@@ -359,6 +385,24 @@ export default function SettingsPage() {
     },
     [setTranslationSettings, translationSettings.customLanguage],
   );
+
+  /** v0.3.6 C6: 确认自定义语言 */
+  const handleConfirmCustomLanguage = React.useCallback(() => {
+    const trimmed = customLanguageDraft.trim();
+    if (!trimmed) {
+      toast.warning("请输入目标语言名称");
+      return;
+    }
+    setIsCustomMode(true);
+    setTranslationSettings({ customLanguage: trimmed });
+    setCustomDialogOpen(false);
+  }, [customLanguageDraft, setTranslationSettings]);
+
+  /** v0.3.6 C6: 退出自定义模式 */
+  const handleExitCustomMode = React.useCallback(() => {
+    setIsCustomMode(false);
+    setTranslationSettings({ customLanguage: "" });
+  }, [setTranslationSettings]);
 
   /** 保存翻译提示词（带动画） */
   const handleSaveTranslationPrompt = React.useCallback(async () => {
@@ -806,62 +850,71 @@ export default function SettingsPage() {
                         <label className="text-sm font-medium">
                           目标语言
                           <span className="ml-2 text-xs text-muted-foreground">
-                            点击选择主流语言，或选择「自定义」
+                            点击选择主流语言，或点击「+ 自定义」
                           </span>
                         </label>
-                        <ToggleGroup
-                          type="single"
-                          value={currentLanguageValue}
-                          onValueChange={(v) => v && handleLanguageChange(v)}
-                          variant="outline"
-                          className="flex flex-wrap justify-start gap-2"
-                        >
-                          {LANGUAGE_OPTIONS.map((opt) => (
-                            <ToggleGroupItem
-                              key={opt.value}
-                              value={opt.value}
-                              className="text-xs"
-                            >
-                              {opt.label}
-                            </ToggleGroupItem>
-                          ))}
-                          <ToggleGroupItem
-                            value="__custom__"
-                            className="text-xs"
-                          >
-                            自定义
-                          </ToggleGroupItem>
-                        </ToggleGroup>
 
-                        {/* 自定义语言输入框 */}
-                        <AnimatePresence initial={false}>
-                          {currentLanguageValue === "__custom__" && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
-                              exit={{ opacity: 0, height: 0 }}
-                              transition={{
-                                duration: 0.2,
-                                ease: [0.4, 0, 0.2, 1],
-                              }}
-                              className="overflow-hidden"
+                        {/* v0.3.6 C6: 自定义模式激活时显示当前自定义语言 + 删除按钮 */}
+                        {isCustomMode && translationSettings.customLanguage?.trim() && (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            className="flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs"
+                          >
+                            <IconCheck className="size-3 text-primary" />
+                            <span className="font-medium text-primary">
+                              {translationSettings.customLanguage}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleExitCustomMode}
+                              className="ml-1 rounded-full p-0.5 hover:bg-primary/20"
+                              aria-label="移除自定义语言"
                             >
-                              <Input
-                                value={translationSettings.customLanguage}
-                                onChange={(e) =>
-                                  setTranslationSettings({
-                                    customLanguage: e.target.value,
-                                  })
-                                }
-                                placeholder="请输入目标语言（如：Thai、Vietnamese）"
-                                maxLength={40}
-                              />
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                自定义语言将优先于快速选项生效
-                              </p>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                              <IconClose className="size-3" />
+                            </button>
+                          </motion.div>
+                        )}
+
+                        {/* v0.3.6 C6: 药丸形状语言按钮 + 独立自定义按钮 */}
+                        <div className="flex flex-wrap gap-2">
+                          {LANGUAGE_OPTIONS.map((opt) => {
+                            const isSelected =
+                              !isCustomMode &&
+                              currentLanguageValue === opt.value;
+                            return (
+                              <motion.button
+                                key={opt.value}
+                                type="button"
+                                {...pressableSubtle}
+                                onClick={() => handleLanguageChange(opt.value)}
+                                className={cn(
+                                  "rounded-full px-3 py-1 text-xs transition-all active:scale-95",
+                                  isSelected
+                                    ? "bg-primary text-primary-foreground shadow-sm"
+                                    : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                                )}
+                              >
+                                {opt.label}
+                              </motion.button>
+                            );
+                          })}
+                          {/* 独立「+ 自定义」按钮（虚线边框区分） */}
+                          <motion.button
+                            type="button"
+                            {...pressableSubtle}
+                            onClick={() => handleLanguageChange("__custom__")}
+                            className={cn(
+                              "rounded-full border border-dashed px-3 py-1 text-xs transition-all active:scale-95",
+                              isCustomMode
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border text-muted-foreground hover:border-primary/50 hover:text-primary",
+                            )}
+                          >
+                            + 自定义
+                          </motion.button>
+                        </div>
 
                         {/* 当前生效语言提示 */}
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -869,9 +922,9 @@ export default function SettingsPage() {
                           <span>
                             当前生效语言：
                             <span className="font-medium text-foreground">
-                              {translationSettings.customLanguage?.trim() ||
-                                translationSettings.targetLanguage ||
-                                "简体中文"}
+                              {isCustomMode && translationSettings.customLanguage?.trim()
+                                ? translationSettings.customLanguage
+                                : translationSettings.targetLanguage || "简体中文"}
                             </span>
                           </span>
                         </div>
@@ -949,8 +1002,127 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           </motion.div>
+
+          {/* v0.3.7: 高亮显示设置 */}
+          <motion.div {...fadeSlide}>
+            <Card className="min-w-0">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <IconText className="size-4" />
+                  高亮显示
+                </CardTitle>
+                <CardDescription>
+                  高亮显示消息中引号内的文字内容
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {/* 启用开关 */}
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">启用高亮显示</label>
+                  <Switch
+                    checked={highlightSettings.enabled}
+                    onCheckedChange={(v) => setHighlightSettings({ enabled: v })}
+                  />
+                </div>
+
+                <AnimatePresence initial={false}>
+                  {highlightSettings.enabled && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+                      className="grid gap-4 overflow-hidden"
+                    >
+                      {/* 颜色预设 */}
+                      <div className="grid gap-2">
+                        <label className="text-sm font-medium">高亮颜色</label>
+                        <div className="flex flex-wrap gap-2">
+                          {HIGHLIGHT_COLOR_PRESETS.map((preset) => (
+                            <button
+                              key={preset.value}
+                              type="button"
+                              onClick={() => setHighlightSettings({ color: preset.value })}
+                              className={cn(
+                                "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-all",
+                                highlightSettings.color === preset.value
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-border hover:bg-accent",
+                              )}
+                            >
+                              <span
+                                className="size-3 rounded-full"
+                                style={{ backgroundColor: preset.value }}
+                              />
+                              {preset.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 自定义颜色 */}
+                      <div className="grid gap-2">
+                        <label className="text-sm font-medium">自定义颜色</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={highlightSettings.color}
+                            onChange={(e) => setHighlightSettings({ color: e.target.value })}
+                            className="size-8 shrink-0 cursor-pointer rounded-md border border-border"
+                          />
+                          <Input
+                            value={highlightSettings.color}
+                            onChange={(e) => setHighlightSettings({ color: e.target.value })}
+                            placeholder="CSS 颜色值（如 #ff0000、oklch(...)）"
+                            className="flex-1"
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </CardContent>
+            </Card>
+          </motion.div>
         </div>
       </ScrollArea>
+
+      {/* v0.3.6 C6: 自定义语言输入弹窗 */}
+      <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
+        <DialogContent className="max-w-[90vw]">
+          <DialogHeader>
+            <DialogTitle>自定义目标语言</DialogTitle>
+            <DialogDescription>
+              输入目标语言名称（如：Thai、Vietnamese、French (France)）
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={customLanguageDraft}
+            onChange={(e) => setCustomLanguageDraft(e.target.value)}
+            placeholder="请输入目标语言名称"
+            maxLength={40}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleConfirmCustomLanguage();
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCustomDialogOpen(false)}
+            >
+              取消
+            </Button>
+            <Button onClick={handleConfirmCustomLanguage}>
+              <IconCheck className="mr-2 size-4" />
+              确认
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 新增供应商弹窗 */}
       <Dialog

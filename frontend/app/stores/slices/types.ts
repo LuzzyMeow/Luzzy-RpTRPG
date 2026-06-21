@@ -7,6 +7,7 @@ import type {
   Character,
   Session,
   TranslationSettings,
+  HighlightSettings,
   ToolGlobalSettings,
   KnowledgeBase,
   Skill,
@@ -105,6 +106,8 @@ export interface SettingsSlice {
   // ===== v0.2.0 新增 =====
   /** 翻译设置 */
   translationSettings: TranslationSettings;
+  /** v0.3.7: 高亮显示设置 */
+  highlightSettings: HighlightSettings;
   /** 工具全局设置 */
   toolGlobalSettings: ToolGlobalSettings;
   /** 内置工具配置列表 */
@@ -166,6 +169,7 @@ export interface SettingsSlice {
 
   // ===== Actions：v0.2.0 新增 =====
   setTranslationSettings: (settings: Partial<TranslationSettings>) => void;
+  setHighlightSettings: (settings: Partial<HighlightSettings>) => void;
   setToolGlobalMode: (mode: ToolGlobalSettings['mode']) => void;
   updateBuiltinToolConfig: (
     type: BuiltinToolType,

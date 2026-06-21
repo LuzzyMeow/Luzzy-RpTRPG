@@ -53,6 +53,7 @@ import {
 import { TypingIndicator } from "~/components/ui/typing-indicator";
 import Markdown from "~/components/markdown/markdown";
 import { LuzzyTokenUsageBar } from "~/components/luzzy/luzzy-token-usage-bar";
+import { useAppStore } from "~/stores";
 import { LuzzyAgentSteps } from "~/components/luzzy/luzzy-agent-steps";
 import { LuzzyThinkingTimeline } from "~/components/luzzy/luzzy-thinking-timeline";
 import { pressableSubtle } from "~/lib/motion-presets";
@@ -297,13 +298,12 @@ function ActionButton({
       aria-label={label}
       {...pressableSubtle}
       className={cn(
-        "flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground",
+        "flex size-7 items-center justify-center rounded-md text-muted-foreground",
         "transition-colors hover:bg-accent hover:text-accent-foreground",
         "disabled:cursor-not-allowed disabled:opacity-40",
       )}
     >
       <Icon className={cn("size-4", spinning && "animate-spin text-blue-500")} />
-      <span>{label}</span>
     </motion.button>
   );
 }
@@ -400,6 +400,9 @@ export function LuzzyChatMessage({
   const hasError = Boolean(message.error);
   const hasTranslation = Boolean(message.translatedContent);
   const hasRetryVersions = (retryVersionCount ?? 0) > 1;
+
+  // v0.3.7: 引号高亮设置
+  const highlightSettings = useAppStore((s) => s.highlightSettings);
 
   // 更多弹窗状态
   const [moreDialogOpen, setMoreDialogOpen] = React.useState(false);
@@ -506,11 +509,21 @@ export function LuzzyChatMessage({
               : "bg-muted text-foreground",
             hasError && "border-2 border-destructive",
           )}
+          style={
+            highlightSettings.enabled && !isUser
+              ? { "--luzzy-highlight-color": highlightSettings.color } as React.CSSProperties
+              : undefined
+          }
         >
           {isLoading ? (
             <TypingIndicator />
           ) : message.content ? (
             <Markdown content={message.content} isAnimating={isGenerating && isLast} />
+          ) : isGenerating && isLast && message.cot ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <IconRefresh className="size-3 animate-spin" />
+              <span>正在思考中，请查看上方思考卡片...</span>
+            </div>
           ) : null}
 
           {/* 错误信息 */}
