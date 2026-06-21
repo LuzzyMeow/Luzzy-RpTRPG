@@ -35,8 +35,10 @@ import type { KnowledgeBase, KnowledgeBaseFile } from "~/types/luzzy";
 import { getItem } from "~/services/storage";
 import { useAppStore } from "~/stores";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Textarea } from "~/components/ui/textarea";
 import { Badge } from "~/components/ui/badge";
 import { Card } from "~/components/ui/card";
 import { Checkbox } from "~/components/ui/checkbox";
@@ -117,6 +119,7 @@ export default function KnowledgeBasePage() {
   const updateKnowledgeBase = useAppStore((s) => s.updateKnowledgeBase);
   const removeKnowledgeBase = useAppStore((s) => s.removeKnowledgeBase);
   const saveKnowledgeBases = useAppStore((s) => s.saveKnowledgeBases);
+  const confirm = useConfirm();
 
   const [loaded, setLoaded] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -136,6 +139,12 @@ export default function KnowledgeBasePage() {
   const [previewFile, setPreviewFile] = React.useState<KnowledgeBaseFile | null>(
     null,
   );
+
+  // 新建 md 文件
+  const [newFileDialog, setNewFileDialog] = React.useState<{
+    name: string;
+    content: string;
+  } | null>(null);
 
   // 嵌入模型是否已配置
   const [hasEmbeddingModel, setHasEmbeddingModel] = React.useState(false);
@@ -242,13 +251,18 @@ export default function KnowledgeBasePage() {
   /** 删除知识库 */
   const handleDelete = React.useCallback(
     async (kb: KnowledgeBase) => {
-      if (!confirm(`确定删除知识库「${kb.name}」及其所有文件吗？`)) return;
+      const ok = await confirm({
+        title: "删除知识库",
+        description: `确定删除知识库「${kb.name}」及其所有文件吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       removeKnowledgeBase(kb.id);
       await saveKnowledgeBases();
       if (currentKbId === kb.id) setCurrentKbId(null);
       toast.success("已删除");
     },
-    [removeKnowledgeBase, saveKnowledgeBases, currentKbId],
+    [removeKnowledgeBase, saveKnowledgeBases, currentKbId, confirm],
   );
 
   /** 点击上传文件 */
@@ -317,7 +331,12 @@ export default function KnowledgeBasePage() {
   /** 删除文件 */
   const handleDeleteFile = React.useCallback(
     async (kb: KnowledgeBase, fileId: string) => {
-      if (!confirm("确定删除此文件吗？")) return;
+      const ok = await confirm({
+        title: "删除文件",
+        description: "确定删除此文件吗？此操作不可撤销。",
+        destructive: true,
+      });
+      if (!ok) return;
       updateKnowledgeBase(kb.id, {
         files: kb.files.filter((f) => f.id !== fileId),
       });
@@ -325,7 +344,7 @@ export default function KnowledgeBasePage() {
       setPreviewFile(null);
       toast.success("文件已删除");
     },
-    [updateKnowledgeBase, saveKnowledgeBases],
+    [updateKnowledgeBase, saveKnowledgeBases, confirm],
   );
 
   /** 切换标签筛选 */
@@ -334,6 +353,39 @@ export default function KnowledgeBasePage() {
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
   }, []);
+
+  /** 打开新建 md 文件弹窗 */
+  const handleOpenNewFile = React.useCallback(() => {
+    setNewFileDialog({ name: "", content: "" });
+  }, []);
+
+  /** 保存新建 md 文件 */
+  const handleSaveNewFile = React.useCallback(async () => {
+    if (!newFileDialog) return;
+    if (!currentKb) return;
+    const trimmedName = newFileDialog.name.trim();
+    if (!trimmedName) {
+      toast.warning("请输入文件名称");
+      return;
+    }
+    // 自动补 .md 后缀
+    const fileName = trimmedName.endsWith(".md") ? trimmedName : `${trimmedName}.md`;
+    const content = newFileDialog.content;
+    const newFile: KnowledgeBaseFile = {
+      id: crypto.randomUUID(),
+      name: fileName,
+      type: "md",
+      content,
+      size: new Blob([content]).size,
+      uploadedAt: Date.now(),
+    };
+    updateKnowledgeBase(currentKb.id, {
+      files: [...currentKb.files, newFile],
+    });
+    await saveKnowledgeBases();
+    setNewFileDialog(null);
+    toast.success(`已创建文件：${fileName}`);
+  }, [newFileDialog, currentKb, updateKnowledgeBase, saveKnowledgeBases]);
 
   /** 保存角色卡绑定 */
   const handleSaveCharacters = React.useCallback(
@@ -362,6 +414,15 @@ export default function KnowledgeBasePage() {
               {...pressableSubtle}
             >
               <IconChevronLeft className="size-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={handleOpenNewFile}
+              title="新建文件"
+              {...pressableSubtle}
+            >
+              <IconPlus className="size-4" />
             </Button>
             <Button
               size="icon"
@@ -469,7 +530,7 @@ export default function KnowledgeBasePage() {
                             onClick={() => setPreviewFile(file)}
                             {...pressableSubtle}
                           >
-                            <IconSearch className="size-3.5" />
+                            <IconSearch className="size-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -478,7 +539,7 @@ export default function KnowledgeBasePage() {
                             onClick={() => void handleDeleteFile(currentKb, file.id)}
                             {...pressableSubtle}
                           >
-                            <IconTrash className="size-3.5" />
+                            <IconTrash className="size-4" />
                           </Button>
                         </div>
                       </Card>
@@ -524,6 +585,65 @@ export default function KnowledgeBasePage() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setPreviewFile(null)}>
                 关闭
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* 新建 md 文件弹窗 */}
+        <Dialog
+          open={!!newFileDialog}
+          onOpenChange={(o) => !o && setNewFileDialog(null)}
+        >
+          <DialogContent className="max-h-[90vh] sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>新建 Markdown 文件</DialogTitle>
+              <DialogDescription>
+                在当前知识库内创建一个新的 .md 文件，支持 Markdown 语法
+              </DialogDescription>
+            </DialogHeader>
+            {newFileDialog && (
+              <ScrollArea className="max-h-[60vh] pr-2">
+                <div className="grid gap-4 py-2">
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">文件名称</label>
+                    <Input
+                      value={newFileDialog.name}
+                      onChange={(e) =>
+                        setNewFileDialog((prev) =>
+                          prev ? { ...prev, name: e.target.value } : prev,
+                        )
+                      }
+                      placeholder="例如：角色设定笔记（自动添加 .md 后缀）"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">文件内容</label>
+                    <Textarea
+                      value={newFileDialog.content}
+                      onChange={(e) =>
+                        setNewFileDialog((prev) =>
+                          prev
+                            ? { ...prev, content: e.target.value }
+                            : prev,
+                        )
+                      }
+                      placeholder="支持 Markdown 格式，例如：&#10;# 标题&#10;&#10;正文内容..."
+                      rows={12}
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              </ScrollArea>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setNewFileDialog(null)}>
+                取消
+              </Button>
+              <Button onClick={() => void handleSaveNewFile()} {...pressable}>
+                <IconCheck className="mr-2 size-4" />
+                创建
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -578,7 +698,7 @@ export default function KnowledgeBasePage() {
                 className="absolute right-1 top-1/2 size-7 -translate-y-1/2"
                 onClick={() => setSearchQuery("")}
               >
-                <IconClose className="size-3.5" />
+                <IconClose className="size-4" />
               </Button>
             )}
           </div>
@@ -709,7 +829,7 @@ export default function KnowledgeBasePage() {
                             title="上传文件"
                             {...pressableSubtle}
                           >
-                            <IconUpload className="size-3.5" />
+                            <IconUpload className="size-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -719,7 +839,7 @@ export default function KnowledgeBasePage() {
                             title="角色卡绑定"
                             {...pressableSubtle}
                           >
-                            <IconBookmark className="size-3.5" />
+                            <IconBookmark className="size-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -729,7 +849,7 @@ export default function KnowledgeBasePage() {
                             title="编辑"
                             {...pressableSubtle}
                           >
-                            <IconEdit className="size-3.5" />
+                            <IconEdit className="size-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -739,7 +859,7 @@ export default function KnowledgeBasePage() {
                             title="删除"
                             {...pressableSubtle}
                           >
-                            <IconTrash className="size-3.5" />
+                            <IconTrash className="size-4" />
                           </Button>
                         </div>
                       </Card>

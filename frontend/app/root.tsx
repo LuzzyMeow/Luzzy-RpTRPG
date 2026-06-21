@@ -16,6 +16,7 @@ import { Toaster } from "./components/ui/sonner";
 import { ThemeProvider } from "./components/theme-provider";
 import { LuzzySplash } from "./components/luzzy/luzzy-splash";
 import { GlobalTrpgIframe } from "./components/luzzy/luzzy-global-trpg-iframe";
+import { ConfirmProvider } from "./components/luzzy/luzzy-confirm";
 
 const queryClient = new QueryClient();
 
@@ -49,20 +50,22 @@ function AppContent() {
 
   return (
     <ThemeProvider defaultTheme="system">
-      {showSplash ? (
-        <LuzzySplash
-          onComplete={() => {
-            setShowSplash(false);
-            sessionStorage.setItem("luzzy-splash-shown", "1");
-          }}
-        />
-      ) : (
-        <>
-          <Outlet />
-          <GlobalTrpgIframe />
-          <Toaster position="top-center" />
-        </>
-      )}
+      <ConfirmProvider>
+        {showSplash ? (
+          <LuzzySplash
+            onComplete={() => {
+              setShowSplash(false);
+              sessionStorage.setItem("luzzy-splash-shown", "1");
+            }}
+          />
+        ) : (
+          <>
+            <Outlet />
+            <GlobalTrpgIframe />
+            <Toaster position="top-center" />
+          </>
+        )}
+      </ConfirmProvider>
     </ThemeProvider>
   );
 }

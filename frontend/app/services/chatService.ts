@@ -307,7 +307,7 @@ export const buildContext = async (
 
   // 3.1 预设内容（保持 NSFW 预设内容完整）
   const presetContents = presets
-    .filter((p) => p.content && p.content.trim())
+    .filter((p) => p.enabled !== false && p.content && p.content.trim())
     .map((p) => p.content)
     .join('\n\n---\n\n');
   if (presetContents) {
@@ -335,6 +335,13 @@ export const buildContext = async (
     const charParts: string[] = ['[Character]', charPrompt];
     if (character.mesExample && character.mesExample.trim()) {
       charParts.push(character.mesExample);
+    }
+    // v0.3.1: 注入结构化对话示例（气泡样式）
+    if (character.dialogueExamples && character.dialogueExamples.length > 0) {
+      const exampleBlocks = character.dialogueExamples
+        .map((ex) => `{{char}}: ${ex.agent}\n{{user}}: ${ex.user}`)
+        .join('\n\n');
+      charParts.push(`<example>\n${exampleBlocks}\n</example>`);
     }
     systemPromptParts.push(charParts.join('\n\n'));
   }

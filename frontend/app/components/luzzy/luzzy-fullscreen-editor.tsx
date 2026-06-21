@@ -32,9 +32,9 @@ import {
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
-import { ScrollArea } from "~/components/ui/scroll-area";
 import Markdown from "~/components/markdown/markdown";
 import { pressable, pressableSubtle } from "~/lib/motion-presets";
+import { IconMinus, IconFont } from "~/components/luzzy/luzzy-icons";
 
 interface LuzzyFullscreenEditorProps {
   /** 是否打开 */
@@ -85,6 +85,21 @@ function prependLines(text: string, textarea: HTMLTextAreaElement, marker: strin
 /** 工具栏工具列表 */
 const TOOLBAR_TOOLS: ToolbarTool[] = [
   {
+    id: "heading",
+    icon: IconFont,
+    title: "标题",
+    action: (text, ta) => {
+      const { selectionStart, selectionEnd } = ta;
+      const selected = text.slice(selectionStart, selectionEnd) || "标题";
+      const before = text.slice(0, selectionStart);
+      const after = text.slice(selectionEnd);
+      const newText = `${before}# ${selected}${after}`;
+      const newStart = selectionStart + 2;
+      const newEnd = newStart + selected.length;
+      return { text: newText, selectionStart: newStart, selectionEnd: newEnd };
+    },
+  },
+  {
     id: "bold",
     icon: Bold,
     title: "加粗",
@@ -107,6 +122,19 @@ const TOOLBAR_TOOLS: ToolbarTool[] = [
     icon: Strikethrough,
     title: "删除线",
     action: (text, ta) => wrapSelection(text, ta, "~~"),
+  },
+  {
+    id: "divider",
+    icon: IconMinus,
+    title: "分割线",
+    action: (text, ta) => {
+      const { selectionStart } = ta;
+      const before = text.slice(0, selectionStart);
+      const after = text.slice(selectionStart);
+      const newText = `${before}\n---\n${after}`;
+      const newCursor = selectionStart + 5;
+      return { text: newText, selectionStart: newCursor, selectionEnd: newCursor };
+    },
   },
   {
     id: "unordered-list",
@@ -162,7 +190,17 @@ export function LuzzyFullscreenEditor({
 }: LuzzyFullscreenEditorProps) {
   const reduceMotion = useReducedMotion();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const previewRef = React.useRef<HTMLDivElement>(null);
   const [enablePreview, setEnablePreview] = React.useState(false);
+
+  /** 同步滚动：编辑区滚动时同步预览区 */
+  const handleEditorScroll = () => {
+    const textarea = textareaRef.current;
+    const preview = previewRef.current;
+    if (!textarea || !preview) return;
+    const ratio = textarea.scrollTop / (textarea.scrollHeight - textarea.clientHeight || 1);
+    preview.scrollTop = ratio * (preview.scrollHeight - preview.clientHeight);
+  };
 
   /** 工具按钮点击 */
   const handleToolClick = (tool: ToolbarTool) => {
@@ -255,14 +293,15 @@ export function LuzzyFullscreenEditor({
             </Button>
           </div>
 
-          {/* 中间：编辑区 + 预览区 */}
-          <div className="flex flex-1 overflow-hidden">
-            {/* 编辑区 */}
-            <div className={cn("flex flex-col", enablePreview ? "w-1/2 border-r border-border/20" : "w-full")}>
+          {/* 中间：编辑区 + 预览区（上下分栏） */}
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {/* 编辑区（上） */}
+            <div className={cn("flex flex-col", enablePreview ? "h-1/2 border-b border-border/20" : "h-full")}>
               <Textarea
                 ref={textareaRef}
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
+                onScroll={handleEditorScroll}
                 placeholder="输入消息内容..."
                 disabled={disabled}
                 className="flex-1 resize-none rounded-none border-0 bg-transparent p-4 font-mono text-sm focus-visible:ring-0"
@@ -270,24 +309,23 @@ export function LuzzyFullscreenEditor({
               />
             </div>
 
-            {/* 预览区（仅启用渲染时显示） */}
+            {/* 预览区（下，仅启用渲染时显示） */}
             {enablePreview && (
               <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
+                ref={previewRef}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
                 transition={{ duration: 0.2 }}
-                className="w-1/2 overflow-hidden"
+                className="h-1/2 overflow-y-auto"
               >
-                <ScrollArea className="h-full">
-                  <div className="p-4">
-                    {value.trim() ? (
-                      <Markdown content={value} />
-                    ) : (
-                      <p className="text-sm text-muted-foreground">预览区域为空</p>
-                    )}
-                  </div>
-                </ScrollArea>
+                <div className="p-4">
+                  {value.trim() ? (
+                    <Markdown content={value} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">预览区域为空</p>
+                  )}
+                </div>
               </motion.div>
             )}
           </div>

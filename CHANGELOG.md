@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.3.1
+
+13 项 Bug 修复 + 8 项新增功能 + 7 项功能增强 + 全局弹窗输入法适配 + ICON 一致性优化。
+
+### Bug 修复
+
+- **设置页删除按钮可见性**：`settings.tsx` 移除 `opacity-0 group-hover:opacity-100`，移动端无 hover 也能始终显示删除按钮；按钮尺寸从 `size-7` 调整为 `size-8`，图标从 `size-3.5` 调整为 `size-4`
+- **角色卡删除确认**：`characters.tsx` 原生 `confirm()` 替换为 `useConfirm()` AlertDialog，统一全局弹窗风格
+- **聊天页置底箭头**：`chat.tsx` 改用直接 `scrollRef.current.scrollTo({ top: scrollHeight, behavior: "smooth" })`，修复 `useStickToBottom` API 不生效问题
+- **聊天页发送按钮布局**：`luzzy-chat-input.tsx` 发送按钮移至第一排与聊天框同行，全屏按钮嵌入聊天框内右侧，发送 icon 从 `IconSend` 更换为 `IconPlane`（game-icon-pack）
+- **聊天页未配置 API 提示**：`chat.tsx` 新增居中卡片式提示（`IconExclamation` + "前往设置"按钮 + Motion 动画），替代原有 toast
+- **聊天页全屏编辑器分栏**：`luzzy-fullscreen-editor.tsx` 从水平分栏改为垂直分栏（上下各 `h-1/2`），添加同步滚动，工具栏新增标题工具（`IconFont`）和分割线工具（`IconMinus`）
+- **聊天页右上角删除按钮**：`chat.tsx` 移除无用的"清空消息"按钮（`IconTrash`）
+- **全局 confirm() 替换**：13 个文件 17 处原生 `confirm()` 全部替换为 `useConfirm()` AlertDialog（characters/regex/tools/chat/profile/ui-template/knowledge-base/world-info/preset/all-sessions-list）
+- **预设注入过滤**：`chatService.ts` 新增 `p.enabled !== false` 过滤条件，禁用的预设不再注入模型消息
+- **MCP JSON 导入格式适配**：`mcpService.ts` 新增 `parseMcpImportJsonMulti` 支持 `{mcpServers: {name: {url}}}` Claude Desktop/Cursor 嵌套格式，stdio 格式检测并提示
+
+### 新增功能
+
+- **对话示例注入**：`chatService.ts` 新增 `dialogueExamples` 注入逻辑，角色卡的对话示例以 `<example>` 标签格式注入提示词，确保 agent 可见并生效
+- **anysearch token 配置**：`tools.tsx` 新增 anysearch API token 输入框（`Input type="password"`），`toolService.ts` 新增 `executeAnysearchSearch` 函数调用 `https://api.anysearch.com/v1/search`，支持 Bearer token 认证和匿名访问
+- **知识库新建 md 文件**：`knowledge-base.tsx` 文件列表页新增"新建文件"按钮，支持输入文件名（自动补 .md 后缀）和内容，保存到 IndexedDB
+- **UI 模板全屏编辑**：`ui-template.tsx` 编辑弹窗增宽至 `sm:max-w-3xl`，Textarea 增高至 `rows=16 + min-h-[300px]`，新增全屏按钮复用 `LuzzyFullscreenEditor`
+- **用户档案描述全屏编辑**：`profile.tsx` 编辑弹窗增宽至 `sm:max-w-2xl`，描述 Textarea 增高至 `rows=12 + min-h-[200px]`，新增全屏按钮复用 `LuzzyFullscreenEditor`
+- **全局弹窗输入法适配**：`dialog.tsx` 新增 VisualViewport 监听 useEffect，弹窗高度随输入法弹出自适应；`app.css` 新增移动端 `@media (max-width: 768px)` 规则，弹窗使用 `100dvh` 高度
+- **默认预设状态调整**：`presetContent.ts` 第三人称预设默认 `enabled: false`，仅 Luzzy 和第二人称默认开启
+- **内置工具全局模式纵向排列**：`tools.tsx` 全局模式从 `grid grid-cols-3` 改为 `flex flex-col gap-2`，长条形纵向排列
+
+### 功能增强
+
+- **SKILL 导入简化**：`tools.tsx` GitHub 导入仅显示 URL 输入，ZIP 导入仅显示文件选择器，自动从 SKILL.md YAML 解析 name/description，无需用户手动填写
+- **MCP 仅保留 JSON 导入**：`tools.tsx` 移除"新建 MCP"按钮，仅保留 JSON 导入入口
+- **世界书字段布局**：`world-info.tsx` 注入位置/深度、顺序/插入顺序从 `grid-cols-2` 改为 `grid-cols-1`，每个字段独占一行
+- **记忆页去重**：`memory.tsx` 移除"启用记忆压缩"开关和"保留最近消息数"输入（与设置页"历史消息数"功能重复），保留 store 字段向后兼容
+- **ICON 大小一致性**：10 个文件共 48 处操作按钮图标从 `size-3`/`size-3.5` 调整为 `size-4`，保留装饰性/状态指示图标不变
+- **静态审查优化**：修复 6 个 lint 警告（未使用导入/变量），包括 `LUXI_CHARACTER_DESCRIPTION`、`AnimatePresence`、`cn`、`parseModelName`、`handleNew`（MCP）等
+- **关于页版本号**：`about.tsx` `APP_VERSION` 从 `"v0.3.0"` 更新为 `"v0.3.1"`
+
+### 工程约束
+
+- NSFW 提示词原样保留（`presetContent.ts` 中 `LUZZY_PRESET_CONTENT` 未修改）
+- 用户数据不清空（`compressionEnabled`/`compressionKeepRecent` 字段保留，仅隐藏 UI）
+- 缓存高命中率（预设/系统提示词注入顺序保持稳定，ACE 注入格式确定性排序）
+- 仅使用 game-icon-pack 图标包和 AlibabaPuHuiTi-3/AlibabaSans 字体
+- 所有新增交互具备进入/交互/退出三态丝滑动画
+
+---
+
 ## v0.3.0
 
 22 项优化/新增 + ACE 记忆机制重大升级 + 11 项工程约束 + 补充 Bug 修复。

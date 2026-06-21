@@ -12,7 +12,7 @@
 import * as React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  IconSend,
+  IconPlane,
   IconStop,
   IconPlus,
   IconLight,
@@ -132,7 +132,7 @@ export function LuzzyChatInput({
   }, []);
 
   /** 键盘事件处理：回车不触发发送，仅换行 */
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (_e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // 回车键仅换行，不触发发送
     // Shift+Enter 也换行（默认行为）
     // 发送仅通过点击发送按钮触发
@@ -183,28 +183,43 @@ export function LuzzyChatInput({
         className={cn("border-t bg-background/80 backdrop-blur-xl", className)}
         style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
       >
-        {/* 第一排：文本输入框 + 全屏按钮 */}
+        {/* 第一排：文本输入框（内嵌全屏按钮） + 发送按钮 */}
         <div className="flex items-end gap-2 px-3 pt-3">
-          <Textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            disabled={disabled}
-            rows={1}
-            className="min-h-[40px] max-h-[200px] resize-none flex-1"
-          />
+          <div className="relative flex-1">
+            <Textarea
+              ref={textareaRef}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              disabled={disabled}
+              rows={1}
+              className="min-h-[40px] max-h-[200px] resize-none pr-10"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowFullscreen(true)}
+              disabled={disabled}
+              title="全屏编辑"
+              className="absolute bottom-2 right-2 size-8"
+              {...pressableSubtle}
+            >
+              <IconExpand className="size-4" />
+            </Button>
+          </div>
           <Button
-            variant="ghost"
             size="icon"
-            onClick={() => setShowFullscreen(true)}
-            disabled={disabled}
-            title="全屏编辑"
-            className="shrink-0"
-            {...pressableSubtle}
+            onClick={handleSendClick}
+            disabled={!isGenerating && (disabled || !value.trim())}
+            className="size-10 shrink-0"
+            {...pressable}
           >
-            <IconExpand className="size-4" />
+            {isGenerating ? (
+              <IconStop className="size-4" />
+            ) : (
+              <IconPlane className="size-4" />
+            )}
           </Button>
         </div>
 
@@ -246,7 +261,7 @@ export function LuzzyChatInput({
             )}
           </div>
 
-          {/* 右侧：加号 + 发送 */}
+          {/* 右侧：加号 */}
           <div className="flex shrink-0 items-center gap-1">
             <Button
               variant="ghost"
@@ -257,19 +272,6 @@ export function LuzzyChatInput({
               {...pressableSubtle}
             >
               <IconPlus className="size-4" />
-            </Button>
-            <Button
-              size="icon"
-              onClick={handleSendClick}
-              disabled={!isGenerating && (disabled || !value.trim())}
-              className="shrink-0"
-              {...pressable}
-            >
-              {isGenerating ? (
-                <IconStop className="size-4" />
-              ) : (
-                <IconSend className="size-4" />
-              )}
             </Button>
           </div>
         </div>

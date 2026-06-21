@@ -22,6 +22,7 @@ import {
   IconCheck,
   IconBookmark,
 } from "~/components/luzzy/luzzy-icons";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 
 import type { Preset } from "~/types/luzzy";
 import {
@@ -73,6 +74,7 @@ interface BuiltinPreset {
   name: string;
   role: "system";
   content: string;
+  enabled?: boolean;
 }
 
 type ViewMode = "raw" | "rendered";
@@ -92,6 +94,7 @@ export default function PresetPage() {
   const [showCharDialog, setShowCharDialog] = React.useState<Preset | null>(
     null,
   );
+  const confirm = useConfirm();
 
   /** 加载自定义预设与内置预设覆盖 */
   React.useEffect(() => {
@@ -151,7 +154,7 @@ export default function PresetPage() {
         content: builtin.content,
         isBuiltin: true,
         isReadonly: false,
-        enabled: true,
+        enabled: builtin.enabled ?? true,
         enabledForCharacters: [],
         createdAt: 0,
         updatedAt: 0,
@@ -280,18 +283,28 @@ export default function PresetPage() {
     async (p: Preset) => {
       if (p.isBuiltin) {
         // 内置预设：重置为默认（删除覆盖）
-        if (!confirm(`确定重置内置预设「${p.name}」为默认内容吗？`)) return;
+        const ok = await confirm({
+          title: "操作确认",
+          description: `确定重置内置预设「${p.name}」为默认内容吗？此操作不可撤销。`,
+          destructive: true,
+        });
+        if (!ok) return;
         const next = { ...builtinOverrides };
         delete next[p.name];
         await persistOverrides(next);
         toast.success("已重置为默认");
         return;
       }
-      if (!confirm(`确定删除预设「${p.name}」吗？`)) return;
+      const ok = await confirm({
+        title: "操作确认",
+        description: `确定删除预设「${p.name}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       await persistCustom(customPresets.filter((x) => x.id !== p.id));
       toast.success("已删除");
     },
-    [customPresets, persistCustom, builtinOverrides, persistOverrides],
+    [customPresets, persistCustom, builtinOverrides, persistOverrides, confirm],
   );
 
   /** 保存角色卡绑定 */
@@ -376,7 +389,7 @@ export default function PresetPage() {
                 onClick={() => handleView(preset)}
                 {...pressableSubtle}
               >
-                <IconSearch className="size-3.5" />
+                <IconSearch className="size-4" />
               </Button>
               <Button
                 variant="ghost"
@@ -385,7 +398,7 @@ export default function PresetPage() {
                 onClick={() => handleEdit(preset)}
                 {...pressableSubtle}
               >
-                <IconEdit className="size-3.5" />
+                <IconEdit className="size-4" />
               </Button>
               <Button
                 variant="ghost"
@@ -394,7 +407,7 @@ export default function PresetPage() {
                 onClick={() => setShowCharDialog(preset)}
                 {...pressableSubtle}
               >
-                <IconBookmark className="size-3.5" />
+                <IconBookmark className="size-4" />
               </Button>
               <Button
                 variant="ghost"
@@ -404,9 +417,9 @@ export default function PresetPage() {
                 {...pressableSubtle}
               >
                 {preset.isBuiltin ? (
-                  <IconClose className="size-3.5" />
+                  <IconClose className="size-4" />
                 ) : (
-                  <IconTrash className="size-3.5" />
+                  <IconTrash className="size-4" />
                 )}
               </Button>
             </div>

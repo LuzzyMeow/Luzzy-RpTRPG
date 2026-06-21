@@ -14,10 +14,10 @@ import type { Character } from "~/types/luzzy";
 import { getItem, setItem, removeItem } from "~/services/storage";
 import {
   LUXI_CHARACTER_NAME,
-  LUXI_CHARACTER_DESCRIPTION,
   LUXI_CHARACTER_PERSONALITY,
   LUXI_CHARACTER_FIRST_MESSAGE,
   LUXI_CHARACTER_TAGS,
+  LUXI_PROMPT,
 } from "~/services/presetContent";
 import type { AppStoreState, CharacterSlice } from "~/stores/slices/types";
 
@@ -293,7 +293,7 @@ export const createCharacterSlice: StateCreator<
         id: uuid,
         uuid,
         name: LUXI_CHARACTER_NAME,
-        description: LUXI_CHARACTER_DESCRIPTION,
+        description: LUXI_PROMPT,
         personality: LUXI_CHARACTER_PERSONALITY,
         firstMessage: LUXI_CHARACTER_FIRST_MESSAGE,
         mesExample: "",
@@ -303,6 +303,11 @@ export const createCharacterSlice: StateCreator<
         creator: "LUZZY",
         characterVersion: "1.0",
         avatar: "/avatars/luxi.png",
+        customBackground: {
+          image: "/backgrounds/luzzy-default-bg.png",
+          opacity: 45,
+          blur: 0,
+        },
         createdAt: Date.now(),
         updatedAt: Date.now(),
         favorite: false,

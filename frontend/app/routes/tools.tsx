@@ -37,6 +37,7 @@ import type {
 } from "~/types/luzzy";
 import { getItem, setItem } from "~/services/storage";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
@@ -82,6 +83,7 @@ import {
 import {
   initializeMcpServer,
   listMcpTools,
+  parseMcpImportJsonMulti,
 } from "~/services/mcpService";
 import { toast } from "sonner";
 
@@ -259,6 +261,7 @@ function SkillTab() {
   const loadSkills = useAppStore((s) => s.loadSkills);
   const saveSkills = useAppStore((s) => s.saveSkills);
   const characters = useAppStore((s) => s.characters);
+  const confirm = useConfirm();
 
   const [loaded, setLoaded] = React.useState(false);
   const [editing, setEditing] = React.useState<Skill | null>(null);
@@ -297,7 +300,9 @@ function SkillTab() {
 
   const handleSave = React.useCallback(async () => {
     if (!editing) return;
-    if (!editing.name.trim()) {
+    // GitHub/ZIP 导入模式名称自动从 SKILL.md 解析，跳过手动校验
+    const skipNameCheck = isNew && (importMode === "github" || importMode === "file");
+    if (!skipNameCheck && !editing.name.trim()) {
       toast.warning("请输入技能名称");
       return;
     }
@@ -363,7 +368,15 @@ function SkillTab() {
 
       await persist();
       setEditing(null);
-      toast.success(isNew ? "技能已创建" : "技能已更新");
+      // GitHub/ZIP 导入成功后显示自动识别到的 name 和 description
+      if (isNew && (importMode === "github" || importMode === "file")) {
+        const descPreview = finalSkill.description
+          ? ` — ${finalSkill.description.slice(0, 60)}`
+          : "";
+        toast.success(`技能已创建：${finalSkill.name}${descPreview}`);
+      } else {
+        toast.success(isNew ? "技能已创建" : "技能已更新");
+      }
     } finally {
       setSaving(false);
     }
@@ -372,12 +385,17 @@ function SkillTab() {
   /** 删除 SKILL */
   const handleDelete = React.useCallback(
     async (skill: Skill) => {
-      if (!confirm(`确定删除技能「${skill.name}」吗？`)) return;
+      const ok = await confirm({
+        title: "删除技能",
+        description: `确定删除技能「${skill.name}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       removeSkill(skill.id);
       await persist();
       toast.success("已删除");
     },
-    [removeSkill, persist],
+    [removeSkill, persist, confirm],
   );
 
   /** 切换启用 */
@@ -545,7 +563,7 @@ function SkillTab() {
                           setIsNew(false);
                         }}
                       >
-                        <IconEdit className="size-3.5" />
+                        <IconEdit className="size-4" />
                       </Button>
                       <Button
                         variant="ghost"
@@ -553,7 +571,7 @@ function SkillTab() {
                         className="size-8 p-0 text-destructive"
                         onClick={() => void handleDelete(s)}
                       >
-                        <IconTrash className="size-3.5" />
+                        <IconTrash className="size-4" />
                       </Button>
                     </div>
                   </Card>
@@ -595,7 +613,11 @@ function SkillTab() {
               )}
 
               {isNew && importMode === "github" && (
-                <div className="grid gap-2">
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="grid gap-2"
+                >
                   <label className="text-sm font-medium">GitHub 仓库 URL</label>
                   <Input
                     value={githubUrl}
@@ -603,14 +625,18 @@ function SkillTab() {
                     placeholder="https://github.com/user/skill-repo"
                   />
                   <p className="text-xs text-muted-foreground">
-                    输入仓库 URL，系统将记录地址。完整文件拉取功能开发中。
+                    输入仓库 URL，系统将自动拉取 SKILL.md 并解析名称与描述。
                   </p>
-                </div>
+                </motion.div>
               )}
 
               {isNew && importMode === "file" && (
-                <div className="grid gap-2">
-                  <label className="text-sm font-medium">导入 SKILL.md 文件</label>
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="grid gap-2"
+                >
+                  <label className="text-sm font-medium">导入 SKILL.md / ZIP 文件</label>
                   <div className="flex items-center gap-2">
                     <Button
                       variant="outline"
@@ -625,7 +651,7 @@ function SkillTab() {
                     <input
                       id="skill-file-input"
                       type="file"
-                      accept=".md,.txt,.markdown"
+                      accept=".md,.txt,.markdown,.zip"
                       className="hidden"
                       onChange={handleFileImport}
                     />
@@ -633,7 +659,10 @@ function SkillTab() {
                   {skillContent && (
                     <p className="text-xs text-green-600">已导入 {skillContent.length} 字符</p>
                   )}
-                </div>
+                  <p className="text-xs text-muted-foreground">
+                    支持 .md / .zip 文件，系统将自动解析 SKILL.md 中的名称与描述。
+                  </p>
+                </motion.div>
               )}
 
               {isNew && importMode === "manual" && (
@@ -649,99 +678,104 @@ function SkillTab() {
                 </div>
               )}
 
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">技能名称</label>
-                <Input
-                  value={editing.name}
-                  onChange={(e) => updateField("name", e.target.value)}
-                  placeholder="技能名称"
-                />
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">描述</label>
-                <Textarea
-                  value={editing.description}
-                  onChange={(e) => updateField("description", e.target.value)}
-                  placeholder="技能描述"
-                  rows={2}
-                />
-              </div>
-
-              {/* 标签 */}
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">标签</label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleAddTag();
-                      }
-                    }}
-                    placeholder="输入标签后回车"
-                  />
-                  <Button size="sm" variant="outline" onClick={handleAddTag}>
-                    <IconTag className="size-4" />
-                  </Button>
-                </div>
-                {skillTags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {skillTags.map((tag) => (
-                      <Badge
-                        key={tag}
-                        variant="secondary"
-                        className="cursor-pointer gap-1"
-                        onClick={() =>
-                          setSkillTags(skillTags.filter((t) => t !== tag))
-                        }
-                      >
-                        {tag}
-                        <IconClose className="size-3" />
-                      </Badge>
-                    ))}
+              {/* 手动模式或编辑已有技能时显示手动字段；GitHub/ZIP 导入自动解析，无需手动填写 */}
+              {(!isNew || importMode === "manual") && (
+                <>
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">技能名称</label>
+                    <Input
+                      value={editing.name}
+                      onChange={(e) => updateField("name", e.target.value)}
+                      placeholder="技能名称"
+                    />
                   </div>
-                )}
-              </div>
-
-              {/* 角色卡绑定 */}
-              {characters.length > 0 && (
-                <div className="grid gap-2">
-                  <label className="text-sm font-medium">启用的角色卡</label>
-                  <div className="max-h-32 overflow-y-auto rounded-md border p-2">
-                    {characters.map((c) => {
-                      const checked =
-                        editing.enabledForCharacters?.includes(c.uuid) ?? false;
-                      return (
-                        <label
-                          key={c.uuid}
-                          className="flex items-center gap-2 py-1 text-sm"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const set = new Set(
-                                editing.enabledForCharacters ?? [],
-                              );
-                              if (e.target.checked) set.add(c.uuid);
-                              else set.delete(c.uuid);
-                              updateField(
-                                "enabledForCharacters",
-                                Array.from(set),
-                              );
-                            }}
-                          />
-                          <span className="truncate">{c.name}</span>
-                        </label>
-                      );
-                    })}
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">描述</label>
+                    <Textarea
+                      value={editing.description}
+                      onChange={(e) => updateField("description", e.target.value)}
+                      placeholder="技能描述"
+                      rows={2}
+                    />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    不选择则全局启用
-                  </p>
-                </div>
+
+                  {/* 标签 */}
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">标签</label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddTag();
+                          }
+                        }}
+                        placeholder="输入标签后回车"
+                      />
+                      <Button size="sm" variant="outline" onClick={handleAddTag}>
+                        <IconTag className="size-4" />
+                      </Button>
+                    </div>
+                    {skillTags.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {skillTags.map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="secondary"
+                            className="cursor-pointer gap-1"
+                            onClick={() =>
+                              setSkillTags(skillTags.filter((t) => t !== tag))
+                            }
+                          >
+                            {tag}
+                            <IconClose className="size-3" />
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 角色卡绑定 */}
+                  {characters.length > 0 && (
+                    <div className="grid gap-2">
+                      <label className="text-sm font-medium">启用的角色卡</label>
+                      <div className="max-h-32 overflow-y-auto rounded-md border p-2">
+                        {characters.map((c) => {
+                          const checked =
+                            editing.enabledForCharacters?.includes(c.uuid) ?? false;
+                          return (
+                            <label
+                              key={c.uuid}
+                              className="flex items-center gap-2 py-1 text-sm"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  const set = new Set(
+                                    editing.enabledForCharacters ?? [],
+                                  );
+                                  if (e.target.checked) set.add(c.uuid);
+                                  else set.delete(c.uuid);
+                                  updateField(
+                                    "enabledForCharacters",
+                                    Array.from(set),
+                                  );
+                                }}
+                              />
+                              <span className="truncate">{c.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        不选择则全局启用
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -777,6 +811,7 @@ function McpTab() {
   } | null>(null);
 
   const characters = useAppStore((s) => s.characters);
+  const confirm = useConfirm();
 
   React.useEffect(() => {
     void (async () => {
@@ -802,11 +837,6 @@ function McpTab() {
     } catch (e) {
       toast.error("保存失败：" + (e as Error).message);
     }
-  }, []);
-
-  const handleNew = React.useCallback(() => {
-    setEditing(createEmptyMcpTool());
-    setIsNew(true);
   }, []);
 
   const handleEdit = React.useCallback((t: ActiveTool) => {
@@ -835,11 +865,16 @@ function McpTab() {
 
   const handleDelete = React.useCallback(
     async (t: ActiveTool) => {
-      if (!confirm(`确定删除 MCP 工具「${t.name}」吗？`)) return;
+      const ok = await confirm({
+        title: "删除 MCP 工具",
+        description: `确定删除 MCP 工具「${t.name}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       await persist(tools.filter((x) => x.id !== t.id));
       toast.success("已删除");
     },
-    [tools, persist],
+    [tools, persist, confirm],
   );
 
   const handleToggle = React.useCallback(
@@ -887,35 +922,58 @@ function McpTab() {
     }
   }, [editing]);
 
-  /** JSON 导入 */
+  /** JSON 导入（支持 mcpServers 嵌套 / 扁平 / 简写格式，多服务器批量导入） */
   const handleJsonImport = React.useCallback(async () => {
+    let result;
     try {
-      const parsed = JSON.parse(jsonInput);
-      const newTool: ActiveTool = {
-        ...createEmptyMcpTool(),
-        id: crypto.randomUUID(),
-        name: parsed.name || "导入的 MCP",
-        callName: parsed.callName || parsed.name || `mcp_${Date.now()}`,
-        mcpServerUrl: parsed.mcpServerUrl || parsed.url || "",
-        mcpServerName: parsed.mcpServerName || parsed.serverName || "",
-        description: parsed.description || "",
-        displayDescription: parsed.displayDescription || "",
-        enabled: parsed.enabled ?? false,
-        enableMode: parsed.enableMode || "all",
-        allowedCharacterUuids: parsed.allowedCharacterUuids || [],
-        mcpTools: parsed.mcpTools || [],
-      };
-      if (!newTool.mcpServerUrl) {
-        toast.warning("JSON 中缺少 mcpServerUrl 字段");
-        return;
-      }
-      await persist([...tools, newTool]);
-      setShowJsonImport(false);
-      setJsonInput("");
-      toast.success("MCP 工具已导入");
-    } catch {
-      toast.error("JSON 格式错误");
+      result = parseMcpImportJsonMulti(jsonInput);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "JSON 格式错误");
+      return;
     }
+
+    const { configs, stdioSkipped } = result;
+
+    // 全部为 stdio 格式
+    if (configs.length === 0) {
+      if (stdioSkipped.length > 0) {
+        toast.warning("暂不支持 stdio 格式的 MCP 服务器");
+      } else {
+        toast.warning("未识别到可导入的 MCP 配置");
+      }
+      return;
+    }
+
+    // 为每个配置创建对应工具
+    const baseTs = Date.now();
+    const newTools: ActiveTool[] = configs.map((cfg, idx) => ({
+      ...createEmptyMcpTool(),
+      id: crypto.randomUUID(),
+      name: cfg.name || `导入的 MCP ${idx + 1}`,
+      callName: `mcp_${baseTs}_${idx}`,
+      mcpServerUrl: cfg.url,
+      mcpServerName: cfg.name || "",
+      description: "",
+      displayDescription: "",
+      enabled: false,
+      enableMode: "all",
+      allowedCharacterUuids: [],
+      mcpTools: [],
+    }));
+
+    await persist([...tools, ...newTools]);
+    setShowJsonImport(false);
+    setJsonInput("");
+
+    // 部分为 stdio 格式时提示
+    if (stdioSkipped.length > 0) {
+      toast.warning(
+        `暂不支持 stdio 格式的 MCP 服务器（已跳过：${stdioSkipped.join(", ")}）`,
+      );
+    }
+
+    const names = newTools.map((t) => t.name).join(", ");
+    toast.success(`已导入 ${newTools.length} 个 MCP 工具：${names}`);
   }, [jsonInput, tools, persist]);
 
   const updateField = React.useCallback(
@@ -947,10 +1005,6 @@ function McpTab() {
             </EmptyHeader>
             <EmptyContent>
               <div className="flex gap-2">
-                <Button onClick={handleNew} {...pressable}>
-                  <IconPlus className="mr-2 size-4" />
-                  新建
-                </Button>
                 <Button
                   variant="outline"
                   onClick={() => setShowJsonImport(true)}
@@ -973,10 +1027,6 @@ function McpTab() {
             >
               <IconImport className="mr-1.5 size-4" />
               JSON 导入
-            </Button>
-            <Button size="sm" onClick={handleNew}>
-              <IconPlus className="mr-1.5 size-4" />
-              新建
             </Button>
           </div>
           <div className="grid grid-cols-1 gap-3 pb-4 sm:grid-cols-2">
@@ -1013,7 +1063,7 @@ function McpTab() {
                         className="size-8 p-0"
                         onClick={() => handleEdit(t)}
                       >
-                        <IconEdit className="size-3.5" />
+                        <IconEdit className="size-4" />
                       </Button>
                       <Button
                         variant="ghost"
@@ -1021,7 +1071,7 @@ function McpTab() {
                         className="size-8 p-0 text-destructive"
                         onClick={() => void handleDelete(t)}
                       >
-                        <IconTrash className="size-3.5" />
+                        <IconTrash className="size-4" />
                       </Button>
                     </div>
                   </Card>
@@ -1198,13 +1248,13 @@ function McpTab() {
           <DialogHeader>
             <DialogTitle>JSON 导入 MCP 工具</DialogTitle>
             <DialogDescription>
-              粘贴 JSON 配置，支持字段：name, mcpServerUrl, mcpServerName, description, enabled, enableMode, allowedCharacterUuids, mcpTools
+              支持以下格式：Claude Desktop/Cursor（mcpServers 嵌套）、扁平格式（name+url）、简写格式（mcpServerUrl）。stdio 格式暂不支持。
             </DialogDescription>
           </DialogHeader>
           <Textarea
             value={jsonInput}
             onChange={(e) => setJsonInput(e.target.value)}
-            placeholder='{"name": "示例 MCP", "mcpServerUrl": "https://...", "description": "..."}'
+            placeholder={'{\n  "mcpServers": {\n    "github": { "url": "https://..." }\n  }\n}'}
             rows={8}
             className="font-mono text-xs"
           />
@@ -1254,7 +1304,7 @@ function BuiltinToolsTab() {
               <p className="text-xs text-muted-foreground">
                 控制工具调用的整体策略
               </p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="flex flex-col gap-2">
                 {(Object.keys(GLOBAL_MODE_LABELS) as ToolGlobalMode[]).map(
                   (mode) => {
                     const isActive = toolGlobalSettings.mode === mode;
@@ -1262,24 +1312,34 @@ function BuiltinToolsTab() {
                       <motion.button
                         key={mode}
                         onClick={() => setToolGlobalMode(mode)}
-                        className={`rounded-lg border p-3 text-left transition-all ${
+                        className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${
                           isActive
                             ? "border-primary bg-primary/5"
                             : "border-border hover:border-primary/50"
                         }`}
                         {...pressableSubtle}
                       >
-                        <div className="flex items-center gap-1.5">
-                          {isActive && (
-                            <IconCheck className="size-3.5 text-primary" />
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-current/20">
+                          {isActive ? (
+                            <motion.span
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              transition={{ type: "spring", stiffness: 500, damping: 25 }}
+                            >
+                              <IconCheck className="size-4 text-primary" />
+                            </motion.span>
+                          ) : (
+                            <span className="size-2 rounded-full bg-muted-foreground/40" />
                           )}
-                          <span className="text-sm font-medium">
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium">
                             {GLOBAL_MODE_LABELS[mode]}
                           </span>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {GLOBAL_MODE_DESCRIPTIONS[mode]}
+                          </p>
                         </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {GLOBAL_MODE_DESCRIPTIONS[mode]}
-                        </p>
                       </motion.button>
                     );
                   },
@@ -1382,6 +1442,32 @@ function BuiltinToolsTab() {
                           <span>{range.max}</span>
                         </div>
                       </div>
+
+                      {/* anysearch 专属：API Token 输入 */}
+                      {toolType === "anysearch" && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="grid gap-2"
+                        >
+                          <label className="text-sm font-medium">
+                            API Token（可选）
+                          </label>
+                          <Input
+                            type="password"
+                            value={config.anysearchToken ?? ""}
+                            onChange={(e) =>
+                              updateBuiltinToolConfig(toolType, {
+                                anysearchToken: e.target.value,
+                              })
+                            }
+                            placeholder="留空使用匿名免费配额"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            不填使用匿名免费配额，填写后使用付费配额
+                          </p>
+                        </motion.div>
+                      )}
 
                       {/* 检索全局记忆 */}
                       <div className="flex items-center justify-between">

@@ -408,39 +408,6 @@ function MemorySettingsCard({
                 </div>
               </div>
 
-              {/* 压缩设置 */}
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <div className="text-sm font-medium">启用记忆压缩</div>
-                  <div className="text-xs text-muted-foreground">
-                    保留最近 N 条消息，其余由向量记忆覆盖
-                  </div>
-                </div>
-                <Switch
-                  checked={settings.compressionEnabled}
-                  onCheckedChange={(v) =>
-                    onUpdate("compressionEnabled", v)
-                  }
-                />
-              </div>
-
-              {settings.compressionEnabled && (
-                <div className="grid gap-2">
-                  <label className="text-sm font-medium">保留最近消息数</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={settings.compressionKeepRecent}
-                    onChange={(e) =>
-                      onUpdate(
-                        "compressionKeepRecent",
-                        Number(e.target.value),
-                      )
-                    }
-                  />
-                </div>
-              )}
-
               <div className="flex justify-end">
                 <Button onClick={onSave} {...pressable}>
                   <IconSave className="mr-2 size-4" />
@@ -1071,11 +1038,11 @@ function GlobalMemoryTab() {
                   disabled={sortedSkills.length === 0}
                   {...pressable}
                 >
-                  <IconDownload className="mr-1.5 size-3.5" />
+                  <IconDownload className="mr-1.5 size-4" />
                   导出
                 </Button>
                 <Button size="sm" onClick={handleAddNew} {...pressable}>
-                  <IconPlus className="mr-1.5 size-3.5" />
+                  <IconPlus className="mr-1.5 size-4" />
                   新增
                 </Button>
               </div>
@@ -1232,9 +1199,9 @@ function SkillCard({ skill, onEdit, onToggleActive }: SkillCardProps) {
               title={skill.active ? "停用" : "启用"}
             >
               {skill.active ? (
-                <IconPause className="size-3.5" />
+                <IconPause className="size-4" />
               ) : (
-                <IconCheck className="size-3.5" />
+                <IconCheck className="size-4" />
               )}
             </Button>
             <Button
@@ -1245,7 +1212,7 @@ function SkillCard({ skill, onEdit, onToggleActive }: SkillCardProps) {
                 onEdit();
               }}
             >
-              <IconEdit className="size-3.5" />
+              <IconEdit className="size-4" />
             </Button>
           </div>
         </div>
@@ -1371,7 +1338,7 @@ function SkillEditDialog({
                 onClick={onSoftDelete}
                 disabled={!skill.active}
               >
-                <IconPause className="mr-1 size-3.5" />
+                <IconPause className="mr-1 size-4" />
                 停用
               </Button>
             )}
@@ -1382,7 +1349,7 @@ function SkillEditDialog({
                 className="text-destructive"
                 onClick={onHardDelete}
               >
-                <IconTrash className="mr-1 size-3.5" />
+                <IconTrash className="mr-1 size-4" />
                 删除
               </Button>
             )}
@@ -1392,7 +1359,7 @@ function SkillEditDialog({
               <Button variant="outline">取消</Button>
             </DialogClose>
             <Button onClick={handleSave}>
-              <IconSave className="mr-1.5 size-3.5" />
+              <IconSave className="mr-1.5 size-4" />
               保存
             </Button>
           </div>

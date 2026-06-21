@@ -76,6 +76,7 @@ import {
 import { getItem, setItem } from "~/services/storage";
 import { toast } from "sonner";
 import { cn } from "~/lib/utils";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "角色卡 - LUZZY" }];
@@ -110,12 +111,14 @@ function createEmptyCharacter(): Character {
   };
 }
 
-/** 从 PNG 文件解析 SillyTavern 角色卡（tEXt chunk: chara） */
+/** 从 PNG 文件解析 SillyTavern 角色卡（支持 tEXt/iTXt/zTXt chunk） */
 async function parsePngCharacterCard(file: File): Promise<unknown> {
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
   // PNG 签名 8 字节
   if (bytes.length < 8) throw new Error("无效的 PNG 文件");
+  // 支持的 keyword 列表
+  const SUPPORTED_KEYWORDS = ["chara", "character", "ccv3"];
   let offset = 8;
   while (offset < bytes.length) {
     const len =
@@ -131,22 +134,79 @@ async function parsePngCharacterCard(file: File): Promise<unknown> {
     );
     offset += 8;
     if (type === "tEXt") {
+      // tEXt: keyword\0text (Latin-1)
       const chunkData = bytes.subarray(offset, offset + len);
-      // tEXt: keyword\0text
       const nul = chunkData.indexOf(0);
       if (nul >= 0) {
-        const keyword = new TextDecoder().decode(chunkData.subarray(0, nul));
-        if (keyword === "chara") {
-          const b64 = new TextDecoder().decode(chunkData.subarray(nul + 1));
-          const json = atob(b64);
-          return JSON.parse(json);
+        const keyword = new TextDecoder("latin1").decode(chunkData.subarray(0, nul));
+        if (SUPPORTED_KEYWORDS.includes(keyword)) {
+          const b64 = new TextDecoder("latin1").decode(chunkData.subarray(nul + 1));
+          try {
+            const json = atob(b64);
+            return JSON.parse(json);
+          } catch {
+            // base64 解码失败,继续尝试其他 chunk
+          }
+        }
+      }
+    } else if (type === "iTXt") {
+      // iTXt: keyword\0compressionFlag\0compressionMethod\0languageTag\0translatedKeyword\0text
+      const chunkData = bytes.subarray(offset, offset + len);
+      const nul1 = chunkData.indexOf(0);
+      if (nul1 < 0) { offset += len + 4; continue; }
+      const keyword = new TextDecoder().decode(chunkData.subarray(0, nul1));
+      if (!SUPPORTED_KEYWORDS.includes(keyword)) { offset += len + 4; continue; }
+      const compressionFlag = chunkData[nul1 + 1];
+      // 跳过 compressionMethod(1字节)、languageTag(\0)、translatedKeyword(\0)
+      let pos = nul1 + 3;
+      const nul2 = chunkData.indexOf(0, pos);
+      if (nul2 < 0) { offset += len + 4; continue; }
+      pos = nul2 + 1;
+      const nul3 = chunkData.indexOf(0, pos);
+      if (nul3 < 0) { offset += len + 4; continue; }
+      const textData = chunkData.subarray(nul3 + 1);
+      try {
+        let text: string;
+        if (compressionFlag === 1) {
+          // zlib 压缩,使用 DecompressionStream 解压
+          const decompressed = await new Response(
+            new Blob([textData]).stream().pipeThrough(new DecompressionStream("deflate")),
+          ).text();
+          text = decompressed;
+        } else {
+          text = new TextDecoder().decode(textData);
+        }
+        const json = atob(text);
+        return JSON.parse(json);
+      } catch {
+        // 解码失败,继续尝试
+      }
+    } else if (type === "zTXt") {
+      // zTXt: keyword\0compressionMethod\0compressedText (zlib)
+      const chunkData = bytes.subarray(offset, offset + len);
+      const nul = chunkData.indexOf(0);
+      if (nul >= 0) {
+        const keyword = new TextDecoder("latin1").decode(chunkData.subarray(0, nul));
+        if (SUPPORTED_KEYWORDS.includes(keyword)) {
+          // 跳过 compressionMethod(1字节)
+          const compressedData = chunkData.subarray(nul + 2);
+          try {
+            const decompressed = await new Response(
+              new Blob([compressedData]).stream().pipeThrough(new DecompressionStream("deflate")),
+            ).text();
+            const b64 = decompressed;
+            const json = atob(b64);
+            return JSON.parse(json);
+          } catch {
+            // 解压失败,继续
+          }
         }
       }
     }
     offset += len + 4; // data + CRC
     if (type === "IEND") break;
   }
-  throw new Error("PNG 中未找到角色卡数据");
+  throw new Error("PNG 中未找到角色卡数据（支持的 keyword: chara/character/ccv3）");
 }
 
 /**
@@ -266,6 +326,7 @@ export default function CharactersPage() {
   const importCharacterFromCard = useAppStore((s) => s.importCharacterFromCard);
   const exportCharacter = useAppStore((s) => s.exportCharacter);
   const searchCharacters = useAppStore((s) => s.searchCharacters);
+  const confirm = useConfirm();
 
   const [editing, setEditing] = React.useState<Character | null>(null);
   const [isNew, setIsNew] = React.useState(false);
@@ -359,7 +420,12 @@ export default function CharactersPage() {
   /** 删除 */
   const handleDelete = React.useCallback(
     async (c: Character) => {
-      if (!confirm(`确定删除角色卡「${c.name}」吗？`)) return;
+      const ok = await confirm({
+        title: "删除角色卡",
+        description: `确定删除角色卡「${c.name}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       try {
         await deleteCharacter(c.uuid);
         toast.success("已删除");
@@ -367,7 +433,7 @@ export default function CharactersPage() {
         toast.error("删除失败：" + (e as Error).message);
       }
     },
-    [deleteCharacter],
+    [deleteCharacter, confirm],
   );
 
   /** 导出 JSON */
@@ -636,7 +702,7 @@ export default function CharactersPage() {
                 className="h-6 px-2 text-xs"
                 onClick={clearTagFilter}
               >
-                <IconClose className="mr-1 size-3" />
+                <IconClose className="mr-1 size-4" />
                 清除
               </Button>
             )}
@@ -750,7 +816,7 @@ export default function CharactersPage() {
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="sm" className="size-8 p-0">
-                              <IconEdit className="size-3.5" />
+                              <IconEdit className="size-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
@@ -842,98 +908,6 @@ export default function CharactersPage() {
                 </div>
               </div>
 
-              {/* 自定义背景（v0.3.0 新增） */}
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">自定义背景</label>
-                <p className="text-xs text-muted-foreground">
-                  为聊天页设置专属背景图。留空则使用默认背景
-                </p>
-                <div className="flex items-center gap-3">
-                  <div className="relative size-20 shrink-0 overflow-hidden rounded-lg border bg-muted">
-                    {editing.customBackground?.image ? (
-                      <img
-                        src={editing.customBackground.image}
-                        alt="背景预览"
-                        className="size-full object-cover"
-                        style={{
-                          opacity: (editing.customBackground.opacity ?? 80) / 100,
-                          filter: `blur(${editing.customBackground.blur ?? 0}px)`,
-                        }}
-                      />
-                    ) : (
-                      <div className="flex size-full items-center justify-center text-muted-foreground">
-                        <IconImage className="size-6" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => backgroundInputRef.current?.click()}
-                    >
-                      <IconImage className="mr-2 size-4" />
-                      选择背景
-                    </Button>
-                    {editing.customBackground?.image && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs text-muted-foreground"
-                        onClick={() => updateField("customBackground", undefined)}
-                      >
-                        移除背景
-                      </Button>
-                    )}
-                  </div>
-                  <input
-                    ref={backgroundInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleBackgroundUpload}
-                  />
-                </div>
-                {editing.customBackground?.image && (
-                  <div className="grid gap-3 pt-1">
-                    <div className="grid gap-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">透明度</span>
-                        <span className="text-xs font-mono">
-                          {editing.customBackground.opacity ?? 80}%
-                        </span>
-                      </div>
-                      <Slider
-                        min={0}
-                        max={100}
-                        step={1}
-                        value={[editing.customBackground.opacity ?? 80]}
-                        onValueChange={(vals) =>
-                          updateBackgroundField("opacity", vals[0] ?? 80)
-                        }
-                      />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">模糊度</span>
-                        <span className="text-xs font-mono">
-                          {editing.customBackground.blur ?? 0}px
-                        </span>
-                      </div>
-                      <Slider
-                        min={0}
-                        max={20}
-                        step={1}
-                        value={[editing.customBackground.blur ?? 0]}
-                        onValueChange={(vals) =>
-                          updateBackgroundField("blur", vals[0] ?? 0)
-                        }
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
               {/* 背景与性格（提示词） */}
               <div className="grid gap-2">
                 <label className="text-sm font-medium">背景与性格（提示词）</label>
@@ -945,18 +919,87 @@ export default function CharactersPage() {
                 />
               </div>
 
-              {/* 对话示例（键值对填写方式） */}
+              {/* 对话示例（气泡样式，v0.3.1 新增） */}
               <div className="grid gap-2">
-                <label className="text-sm font-medium">对话示例（键值对）</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">对话示例</label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const examples = [...(editing.dialogueExamples ?? [])];
+                      examples.push({ agent: "", user: "" });
+                      updateField("dialogueExamples", examples);
+                    }}
+                  >
+                    <IconPlus className="mr-1.5 size-4" />
+                    新增对话组
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  每行一对，格式：角色:内容 或 用户:内容
+                  左侧为角色（agent）回复，右侧为用户（user）输入。对话示例会注入到提示词中供模型参考
                 </p>
-                <Textarea
-                  value={editing.mesExample}
-                  onChange={(e) => updateField("mesExample", e.target.value)}
-                  placeholder={"{{user}}:你好\n{{char}}:嗯，你好"}
-                  rows={4}
-                />
+                {(editing.dialogueExamples ?? []).length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border/40 p-4 text-center text-xs text-muted-foreground">
+                    暂无对话示例。点击「新增对话组」添加示例对话
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {(editing.dialogueExamples ?? []).map((ex, idx) => (
+                      <div key={idx} className="space-y-1.5 rounded-lg border border-border/20 bg-card/30 p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-muted-foreground">对话组 {idx + 1}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-6 text-destructive"
+                            onClick={() => {
+                              const examples = [...(editing.dialogueExamples ?? [])];
+                              examples.splice(idx, 1);
+                              updateField("dialogueExamples", examples);
+                            }}
+                          >
+                            <IconClose className="size-4" />
+                          </Button>
+                        </div>
+                        {/* Agent 气泡（左） */}
+                        <div className="flex justify-start">
+                          <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-primary/10 px-3 py-2">
+                            <div className="mb-1 text-xs font-medium text-primary">角色</div>
+                            <textarea
+                              value={ex.agent}
+                              onChange={(e) => {
+                                const examples = [...(editing.dialogueExamples ?? [])];
+                                examples[idx] = { ...examples[idx], agent: e.target.value };
+                                updateField("dialogueExamples", examples);
+                              }}
+                              placeholder="角色的回复示例..."
+                              rows={2}
+                              className="w-full resize-none border-0 bg-transparent p-0 text-sm outline-none placeholder:text-muted-foreground/50"
+                            />
+                          </div>
+                        </div>
+                        {/* User 气泡（右） */}
+                        <div className="flex justify-end">
+                          <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-muted px-3 py-2">
+                            <div className="mb-1 text-right text-xs font-medium text-muted-foreground">用户</div>
+                            <textarea
+                              value={ex.user}
+                              onChange={(e) => {
+                                const examples = [...(editing.dialogueExamples ?? [])];
+                                examples[idx] = { ...examples[idx], user: e.target.value };
+                                updateField("dialogueExamples", examples);
+                              }}
+                              placeholder="用户的输入示例..."
+                              rows={2}
+                              className="w-full resize-none border-0 bg-transparent p-0 text-sm outline-none placeholder:text-muted-foreground/50"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* 世界书启用选项 */}
@@ -1044,6 +1087,103 @@ export default function CharactersPage() {
                   checked={!!editing.favorite}
                   onCheckedChange={(v) => updateField("favorite", v)}
                 />
+              </div>
+
+              {/* 自定义背景（v0.3.1 移至最下方，全宽预览） */}
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">自定义背景</label>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => backgroundInputRef.current?.click()}
+                    >
+                      <IconImage className="mr-1.5 size-4" />
+                      选择背景
+                    </Button>
+                    {editing.customBackground?.image && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-destructive"
+                        onClick={() => updateField("customBackground", undefined)}
+                      >
+                        移除背景
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  为聊天页设置专属背景图。留空则使用默认背景
+                </p>
+                {/* 全宽预览区，保持图片比例 */}
+                <div className="relative w-full overflow-hidden rounded-lg border bg-muted" style={{ minHeight: "120px" }}>
+                  {editing.customBackground?.image ? (
+                    <img
+                      src={editing.customBackground.image}
+                      alt="背景预览"
+                      className="w-full object-contain"
+                      style={{
+                        opacity: (editing.customBackground.opacity ?? 80) / 100,
+                        filter: `blur(${editing.customBackground.blur ?? 0}px)`,
+                        maxHeight: "240px",
+                      }}
+                    />
+                  ) : (
+                    <div className="flex h-[120px] w-full items-center justify-center text-muted-foreground">
+                      <div className="flex flex-col items-center gap-1.5">
+                        <IconImage className="size-8" />
+                        <span className="text-xs">未设置背景</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={backgroundInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleBackgroundUpload}
+                />
+                {editing.customBackground?.image && (
+                  <div className="grid gap-3 pt-1">
+                    <div className="grid gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">透明度</span>
+                        <span className="text-xs font-mono">
+                          {editing.customBackground.opacity ?? 80}%
+                        </span>
+                      </div>
+                      <Slider
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={[editing.customBackground.opacity ?? 80]}
+                        onValueChange={(vals) =>
+                          updateBackgroundField("opacity", vals[0] ?? 80)
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">模糊度</span>
+                        <span className="text-xs font-mono">
+                          {editing.customBackground.blur ?? 0}px
+                        </span>
+                      </div>
+                      <Slider
+                        min={0}
+                        max={20}
+                        step={1}
+                        value={[editing.customBackground.blur ?? 0]}
+                        onValueChange={(vals) =>
+                          updateBackgroundField("blur", vals[0] ?? 0)
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -297,7 +297,7 @@ function ActionButton({
         "disabled:cursor-not-allowed disabled:opacity-40",
       )}
     >
-      <Icon className="size-3.5" />
+      <Icon className="size-4" />
       <span>{label}</span>
     </motion.button>
   );
@@ -324,7 +324,7 @@ function RetryVersionSwitcher({
         className="rounded-md p-1 transition-colors hover:bg-accent disabled:opacity-30"
         aria-label="上一个版本"
       >
-        <IconChevronLeft className="size-3.5" />
+        <IconChevronLeft className="size-4" />
       </motion.button>
       <span>
         {current + 1} / {total}
@@ -337,7 +337,7 @@ function RetryVersionSwitcher({
         className="rounded-md p-1 transition-colors hover:bg-accent disabled:opacity-30"
         aria-label="下一个版本"
       >
-        <IconChevronRight className="size-3.5" />
+        <IconChevronRight className="size-4" />
       </motion.button>
     </div>
   );

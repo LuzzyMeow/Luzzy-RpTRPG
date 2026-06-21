@@ -1,0 +1,149 @@
+import * as React from "react";
+import { motion } from "motion/react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "~/components/ui/dialog";
+import { Button } from "~/components/ui/button";
+import { IconExclamation, IconTrash, IconCheck, IconClose } from "~/components/luzzy/luzzy-icons";
+
+export interface ConfirmOptions {
+  /** 标题(默认"确认操作") */
+  title?: string;
+  /** 描述内容 */
+  description: string;
+  /** 确认按钮文字(默认"确认") */
+  confirmText?: string;
+  /** 取消按钮文字(默认"取消") */
+  cancelText?: string;
+  /** 是否为破坏性操作(删除等,确认按钮变红色,默认 false) */
+  destructive?: boolean;
+  /** 是否显示警告图标(默认 true) */
+  showIcon?: boolean;
+}
+
+interface ConfirmState extends ConfirmOptions {
+  open: boolean;
+  resolve?: (value: boolean) => void;
+}
+
+const ConfirmContext = React.createContext<{
+  confirm: (options: ConfirmOptions | string) => Promise<boolean>;
+} | null>(null);
+
+/**
+ * ConfirmProvider - 在 root.tsx 中包裹应用
+ * 提供 confirm() 方法,替代原生 window.confirm()
+ */
+export function ConfirmProvider({ children }: { children: React.ReactNode }) {
+  const [state, setState] = React.useState<ConfirmState>({
+    open: false,
+    description: "",
+  });
+
+  const confirm = React.useCallback((options: ConfirmOptions | string) => {
+    const opts: ConfirmOptions =
+      typeof options === "string" ? { description: options } : options;
+    return new Promise<boolean>((resolve) => {
+      setState({
+        open: true,
+        resolve,
+        title: opts.title ?? "确认操作",
+        description: opts.description,
+        confirmText: opts.confirmText ?? "确认",
+        cancelText: opts.cancelText ?? "取消",
+        destructive: opts.destructive ?? false,
+        showIcon: opts.showIcon ?? true,
+      });
+    });
+  }, []);
+
+  const handleClose = React.useCallback(
+    (result: boolean) => {
+      setState((prev) => {
+        prev.resolve?.(result);
+        return { ...prev, open: false, resolve: undefined };
+      });
+    },
+    []
+  );
+
+  return (
+    <ConfirmContext.Provider value={{ confirm }}>
+      {children}
+      <Dialog open={state.open} onOpenChange={(open) => !open && handleClose(false)}>
+        <DialogContent showCloseButton={false} className="max-w-[calc(100%-2rem)] sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-start gap-3">
+              {state.showIcon && (
+                <motion.div
+                  initial={{ scale: 0, rotate: -10 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                  className={`flex size-10 shrink-0 items-center justify-center rounded-full ${
+                    state.destructive
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-primary/10 text-primary"
+                  }`}
+                >
+                  {state.destructive ? (
+                    <IconTrash size={20} />
+                  ) : (
+                    <IconExclamation size={20} />
+                  )}
+                </motion.div>
+              )}
+              <div className="flex-1 space-y-1.5">
+                <DialogTitle className="text-base">{state.title}</DialogTitle>
+                <DialogDescription className="text-sm leading-relaxed whitespace-pre-wrap">
+                  {state.description}
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="flex gap-2 pt-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => handleClose(false)}
+            >
+              <IconClose size={16} className="mr-1.5" />
+              {state.cancelText}
+            </Button>
+            <Button
+              variant={state.destructive ? "destructive" : "default"}
+              className="flex-1"
+              onClick={() => handleClose(true)}
+            >
+              {state.destructive ? (
+                <IconTrash size={16} className="mr-1.5" />
+              ) : (
+                <IconCheck size={16} className="mr-1.5" />
+              )}
+              {state.confirmText}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </ConfirmContext.Provider>
+  );
+}
+
+/**
+ * useConfirm hook
+ * 返回 confirm 函数,调用后弹出确认弹窗,返回 Promise<boolean>
+ * @example
+ * const confirm = useConfirm();
+ * const ok = await confirm({ description: "确定删除?", destructive: true });
+ * if (ok) { /* 执行删除 *\/ }
+ */
+export function useConfirm() {
+  const ctx = React.useContext(ConfirmContext);
+  if (!ctx) {
+    throw new Error("useConfirm 必须在 ConfirmProvider 内使用");
+  }
+  return ctx.confirm;
+}

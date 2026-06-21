@@ -23,7 +23,6 @@ import type {
   ApiProvider,
 } from '~/types/luzzy';
 import {
-  parseModelName,
   getApiUrlForModel,
   getApiKeyForModel,
   getActualModelName,
@@ -225,7 +224,6 @@ export const reflect = async (params: ReflectParams): Promise<AceReflection> => 
   if (!model) return empty;
 
   try {
-    const { providerId } = parseModelName(model, providers);
     const baseUrl = getApiUrlForModel(model, providers, settings.apiUrl);
     const apiKey = getApiKeyForModel(
       model,

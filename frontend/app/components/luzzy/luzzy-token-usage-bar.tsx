@@ -9,11 +9,10 @@
  */
 
 import * as React from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import { ArrowUp, ArrowDown } from "lucide-react";
 
 import type { TokenUsage } from "~/types/luzzy";
-import { cn } from "~/lib/utils";
 
 interface LuzzyTokenUsageBarProps {
   /** Token 使用统计（完成后） */
