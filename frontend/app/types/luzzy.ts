@@ -571,6 +571,15 @@ export interface TranslationSettings {
   promptTemplate: string;
 }
 
+/** 高亮显示设置（v0.3.7 新增） */
+export interface HighlightSettings {
+  enabled: boolean;
+  /** 高亮字体颜色（CSS color 值） */
+  color: string;
+  /** 匹配模式（默认 "" 中文引号，支持自定义正则） */
+  pattern: string;
+}
+
 /** 知识库 */
 export interface KnowledgeBase {
   id: string;

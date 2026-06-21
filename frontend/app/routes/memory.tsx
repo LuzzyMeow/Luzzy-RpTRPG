@@ -114,9 +114,6 @@ export function meta(_: Route.MetaArgs) {
 /** 记忆设置在 IndexedDB 中的存储键 */
 const MEMORY_SETTINGS_KEY = "memorySettings";
 
-/** 嵌入供应商「跟随聊天供应商」占位值 */
-const FOLLOW_CHAT_PROVIDER = "__follow_chat__";
-
 /** 默认记忆设置（v0.2.0 移除 maxMemories） */
 const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   enabled: false,
@@ -415,39 +412,6 @@ function MemorySettingsCard({
                     未配置嵌入模型，向量记忆将降级为关键词匹配
                   </motion.p>
                 )}
-              </div>
-
-              {/* 嵌入供应商 */}
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">嵌入供应商</label>
-                <Select
-                  value={
-                    settings.embeddingApiProviderId || FOLLOW_CHAT_PROVIDER
-                  }
-                  onValueChange={(v) =>
-                    onUpdate(
-                      "embeddingApiProviderId",
-                      v === FOLLOW_CHAT_PROVIDER ? "" : v,
-                    )
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={FOLLOW_CHAT_PROVIDER}>
-                      跟随聊天供应商
-                    </SelectItem>
-                    {providers.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  嵌入供应商独立于聊天供应商，可单独指定
-                </p>
               </div>
 
               {/* 数值参数 */}

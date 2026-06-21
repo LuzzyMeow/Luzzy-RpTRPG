@@ -1475,12 +1475,12 @@ function BuiltinToolsTab() {
                         <h3 className="font-medium">
                           {BUILTIN_TOOL_LABELS[toolType]}
                         </h3>
-                        {/* v0.3.0 新增：anysearch 官方文档链接 */}
+                                              {/* v0.3.0 新增：anysearch 官方文档链接 */}
                         {toolType === "anysearch" && (
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="size-6"
+                            className="size-8"
                             asChild
                           >
                             <a
@@ -1490,7 +1490,7 @@ function BuiltinToolsTab() {
                               aria-label="anysearch 官方文档"
                               title="官方文档"
                             >
-                              <IconLink className="size-3" />
+                              <IconLink className="size-4" />
                             </a>
                           </Button>
                         )}
@@ -1579,20 +1579,22 @@ function BuiltinToolsTab() {
                         </motion.div>
                       )}
 
-                      {/* 检索全局记忆 */}
-                      <div className="flex items-center justify-between">
-                        <label className="text-sm font-medium">
-                          检索全局记忆
-                        </label>
-                        <Switch
-                          checked={config.searchGlobalMemory}
-                          onCheckedChange={(v) =>
-                            updateBuiltinToolConfig(toolType, {
-                              searchGlobalMemory: v,
-                            })
-                          }
-                        />
-                      </div>
+                      {/* 检索全局记忆（v0.3.7: 仅 vector-memory 和 memory-recall 显示） */}
+                      {(toolType === "vector-memory" || toolType === "memory-recall") && (
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium">
+                            检索全局记忆
+                          </label>
+                          <Switch
+                            checked={config.searchGlobalMemory}
+                            onCheckedChange={(v) =>
+                              updateBuiltinToolConfig(toolType, {
+                                searchGlobalMemory: v,
+                              })
+                            }
+                          />
+                        </div>
+                      )}
 
                       {/* 角色卡绑定 */}
                       <div className="flex items-center justify-between">

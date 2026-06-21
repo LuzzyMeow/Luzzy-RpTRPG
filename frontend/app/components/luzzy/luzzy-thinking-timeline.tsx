@@ -51,7 +51,8 @@ interface LuzzyThinkingTimelineProps {
  */
 function extractStepTitle(para: string, fallbackIndex: number): string {
   // 1. 优先匹配 **Step N：xxx** 或 **Step N: xxx** 格式（含中文/英文冒号）
-  const boldStepMatch = para.match(/\*+\s*Step\s*(\d+)\s*[:：]\s*([^*\n*【】]+)/i);
+  // v0.3.7: 兼容中点 · 分隔符（防御性处理）
+  const boldStepMatch = para.match(/\*+\s*Step\s*(\d+)\s*[:：·]\s*([^*\n*【】]+)/i);
   if (boldStepMatch) {
     return boldStepMatch[2].trim();
   }
@@ -63,7 +64,8 @@ function extractStepTitle(para: string, fallbackIndex: number): string {
   }
 
   // 3. 匹配 【Step N：xxx】 或 【Step N: xxx】 格式
-  const bracketStepMatch = para.match(/【\s*Step\s*(\d+)\s*[:：]\s*([^】]+)】/i);
+  // v0.3.7: 兼容中点 · 分隔符
+  const bracketStepMatch = para.match(/【\s*Step\s*(\d+)\s*[:：·]\s*([^】]+)】/i);
   if (bracketStepMatch) {
     return bracketStepMatch[2].trim();
   }
@@ -123,25 +125,52 @@ function extractStepTitle(para: string, fallbackIndex: number): string {
 /**
  * 将 CoT 文本拆分为多个思考步骤
  *
- * v0.3.5: 增强版，识别 CoT 14 步路径标记，提取真正的"思维节点"名称
- * 按 \n\n 分割为段落，每个段落是一个步骤。
- * 若段落过短（<10 字符），合并到上一个步骤。
+ * v0.3.6: 彻底重写分段逻辑，解决 Step 卡片不生效问题
+ * 1. 优先按 **Step N 标记切分（兼容单换行和双换行分隔）
+ * 2. 回退到双换行分段
+ * 3. 实现短段落合并（<10 字符合并到上一个，兑现历史注释承诺）
  */
 function parseThinkingSteps(cot: string, isGenerating: boolean): ThinkingStep[] {
   if (!cot.trim()) return [];
 
-  const paragraphs = cot
-    .split(/\n\n+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
+  // 优先按 **Step N 标记切分（v0.3.6 核心修复）
+  // v0.3.7: 同时匹配 **Step N 和 【Step N 两种格式，确保所有 step 卡片正确切分
+  // 使用前瞻断言，保留分隔标记在结果中
+  const stepMarkerRegex = /(?=\*\*\s*Step\s*\d+|【\s*Step\s*\d+)/i;
+  const hasStepMarkers = /\*\*\s*Step\s*\d+|【\s*Step\s*\d+/i.test(cot);
+
+  let paragraphs: string[];
+  if (hasStepMarkers) {
+    paragraphs = cot
+      .split(stepMarkerRegex)
+      .map((p) => p.trim())
+      .filter((p) => /\*\*\s*Step\s*\d+|【\s*Step\s*\d+/i.test(p));
+  } else {
+    // 回退到双换行分段
+    paragraphs = cot
+      .split(/\n\n+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+  }
 
   if (paragraphs.length === 0) return [];
 
+  // 短段落合并（<10 字符合并到上一个，兑现历史注释承诺）
+  const merged: string[] = [];
+  for (const para of paragraphs) {
+    if (para.length < 10 && merged.length > 0) {
+      merged[merged.length - 1] += "\n" + para;
+    } else {
+      merged.push(para);
+    }
+  }
+
+  // 生成步骤节点
   const steps: ThinkingStep[] = [];
-  for (let i = 0; i < paragraphs.length; i++) {
-    const para = paragraphs[i];
+  for (let i = 0; i < merged.length; i++) {
+    const para = merged[i];
     // 生成中时，最后一个段落为 running 状态
-    const isLast = i === paragraphs.length - 1;
+    const isLast = i === merged.length - 1;
     const status: "running" | "completed" = isGenerating && isLast ? "running" : "completed";
 
     // v0.3.5: 提取真正的步骤标题，而非截断内容
@@ -164,40 +193,55 @@ function parseThinkingSteps(cot: string, isGenerating: boolean): ThinkingStep[] 
 /**
  * 打字机效果 Hook
  *
+ * v0.3.6: 重写为 requestAnimationFrame + 增量追赶快照模式
+ * 解决问题：旧版每次 fullText 变化都重建 setInterval，流式时定时器堆积导致 UI 卡顿
+ * 新版用 rAF 平滑追赶，单一定时器，性能显著提升
+ *
  * 在生成中时，逐字渲染文本。
  * 生成完成后，直接显示完整文本。
  */
 function useTypewriter(fullText: string, isGenerating: boolean, speed = 20): string {
   const [displayedText, setDisplayedText] = React.useState("");
+  const displayedRef = React.useRef("");
 
   React.useEffect(() => {
     if (!isGenerating) {
       // 生成完成，直接显示完整文本
+      displayedRef.current = fullText;
       setDisplayedText(fullText);
       return;
     }
 
-    // 生成中，逐字渲染
-    if (fullText.length <= displayedText.length) {
+    if (fullText.length <= displayedRef.current.length) {
       // 新文本比已显示的短或相等（不应该发生，但防御性处理）
+      displayedRef.current = fullText;
       setDisplayedText(fullText);
       return;
     }
 
-    // 从当前显示位置开始，逐字追加新内容
-    const timer = setInterval(() => {
-      setDisplayedText((prev) => {
-        if (prev.length >= fullText.length) {
-          clearInterval(timer);
-          return fullText;
-        }
-        // 每次追加 2-3 个字符，加快打字速度
-        const chunkSize = Math.min(3, fullText.length - prev.length);
-        return fullText.slice(0, prev.length + chunkSize);
-      });
-    }, speed);
+    // v0.3.6: 用 rAF 平滑追赶，不重建定时器
+    // speed 越小越快（控制每帧追加的字符数）
+    // v0.3.7: 差距过大时自适应加倍追赶，避免快速 API 滞后
+    let rafId: number;
+    const charsPerFrame = Math.max(1, Math.round(60 / speed));
 
-    return () => clearInterval(timer);
+    const tick = () => {
+      const current = displayedRef.current;
+      if (current.length >= fullText.length) return;
+      const remaining = fullText.length - current.length;
+      // 差距过大时加倍追赶，避免严重滞后
+      const adaptiveChunkSize = remaining > 100 ? charsPerFrame * 4 : charsPerFrame;
+      const chunkSize = Math.min(adaptiveChunkSize, remaining);
+      const next = fullText.slice(0, current.length + chunkSize);
+      displayedRef.current = next;
+      setDisplayedText(next);
+      if (next.length < fullText.length) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+    rafId = requestAnimationFrame(tick);
+
+    return () => cancelAnimationFrame(rafId);
   }, [fullText, isGenerating, speed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return displayedText;
@@ -306,7 +350,7 @@ function ThinkingNode({ step, index, isExpanded, onToggle }: ThinkingNodeProps) 
           >
             <div className="mt-1.5 rounded-md bg-muted/40 p-2 text-sm text-muted-foreground">
               {displayedContent ? (
-                <Markdown content={displayedContent} />
+                <Markdown content={displayedContent} isAnimating={isRunning} />
               ) : (
                 <span className="text-xs opacity-60">等待内容...</span>
               )}

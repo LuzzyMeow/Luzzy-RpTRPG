@@ -43,6 +43,12 @@
   @apply mt-4;
 }
 
+/* v0.3.7: 引号高亮 - 颜色由 CSS 变量 --luzzy-highlight-color 控制 */
+.markdown .luzzy-highlight {
+  color: var(--luzzy-highlight-color, inherit);
+  font-weight: 500;
+}
+
 /* Links */
 .markdown a {
   @apply text-primary underline underline-offset-4 hover:text-primary/80 transition-colors;

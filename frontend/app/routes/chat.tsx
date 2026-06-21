@@ -219,11 +219,14 @@ export default function ChatPage() {
       return;
     }
     // v0.3.5: 注入角色卡开场白
-    createSession(currentCharacter.uuid, currentCharacter.name, currentCharacter.firstMessage);
-    // 同步消息列表（开场白已由 createSession 预置）
-    const newSession = useAppStore.getState().sessions.find(
-      (s) => s.characterId === currentCharacter.uuid && s.messages.length > 0
+    // v0.3.7: 使用 createSession 返回的 session ID，避免 find 匹配到旧会话
+    const newSessionId = createSession(
+      currentCharacter.uuid,
+      currentCharacter.name,
+      currentCharacter.firstMessage,
     );
+    // 同步消息列表（开场白已由 createSession 预置）
+    const newSession = useAppStore.getState().sessions.find((s) => s.id === newSessionId);
     setMessages(newSession?.messages ?? []);
     setShowAllSessions(false);
     toast.success("已创建新会话");

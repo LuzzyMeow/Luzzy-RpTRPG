@@ -141,7 +141,7 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-**APK 输出**：`android/app/build/outputs/apk/debug/LUZZY-v0.3.5-debug.apk`
+**APK 输出**：`android/app/build/outputs/apk/debug/LUZZY-v0.3.7-debug.apk`
 
 ## 项目结构
 
@@ -176,6 +176,18 @@ RP-Hub/
 ```
 
 ## 近期更新
+
+### v0.3.7
+
+8 项 Bug 修复 + 4 项新增功能 + 5 项功能增强。核心修复：CoT Step 卡片不生效（parseThinkingSteps 双格式正则 + 节流阈值降低 + 闭合标签 8 变体）、流式输出未成功应用（isAnimating 传递 + 打字机自适应追赶 + CoT 期间气泡提示）、memory-recall 工具无效（chat-slice 预执行块）、角色卡导入乱码（decodeBase64Utf8）、新会话不跳转（使用 createSession 返回 ID）、Switch 动画拉伸、用户档案全屏崩溃、鹿溪 CoT 框架冗余；新增聊天引号高亮 + 高亮显示设置 + 会话删除按钮 + 删除确认弹窗 UI 优化；启动屏配色统一主题变量 + Anysearch 工具清理 + 嵌入供应商移除。
+
+详见 [CHANGELOG.md](./CHANGELOG.md)。
+
+### v0.3.6
+
+13 项 Bug 修复 + 1 项新增功能 + 1 项功能增强。核心修复：CoT 思考链不生效（COT_OUTPUT_PROTOCOL 注入 + parseThinkingSteps 重写 + useTypewriter rAF 优化）、流式输出节流优化（parseCot 50 字符阈值 + updateMessage 60ms 间隔）、工具强制模式对所有工具生效（force 模式预执行所有已启用工具）、翻译自定义按钮无效（isCustomMode 状态解耦）；任务书修复：关于页溢出/LOGO、消息按钮去中文、角色卡描述展开/详情、后台白屏、侧边栏安全区、弹窗键盘适配；翻译语言药丸按钮 + 独立自定义弹窗。
+
+详见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ### v0.3.5
 

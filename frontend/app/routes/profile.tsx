@@ -466,7 +466,8 @@ export default function ProfilePage() {
       </div>
 
       {/* 编辑弹窗 */}
-      <Dialog open={!!editing} onOpenChange={(open) => !open && handleCancel()}>
+      {/* v0.3.7: 全屏编辑器打开时关闭 Dialog，避免 z-index/focus 冲突导致崩溃 */}
+      <Dialog open={!!editing && !descFullscreenOpen} onOpenChange={(open) => !open && handleCancel()}>
         <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{isNew ? "新建档案" : "编辑档案"}</DialogTitle>

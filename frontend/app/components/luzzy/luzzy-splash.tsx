@@ -1,7 +1,8 @@
 /**
  * LUZZY 启动屏组件
  *
- * 简洁现代启动屏：液态玻璃质感 + LUZZY 文字 + 进度条动画
+ * v0.3.7: 配色统一为 APP 主题 CSS 变量，自动适配浅色/深色/多主题
+ * 简洁现代启动屏：液态玻璃质感 + LUZZY 文字字符级 stagger + 进度条 shimmer 动画
  * 首次进入会话时显示，约 2 秒后淡出
  * 支持 prefers-reduced-motion：缩短至 0.5s 并跳过进度条动画
  */
@@ -14,17 +15,20 @@ interface LuzzySplashProps {
   onComplete: () => void;
 }
 
-/** 微光粒子配置 */
+/** 微光粒子配置（v0.3.7: 增加大小变化与水平漂移） */
 const PARTICLES = [
-  { x: "15%", y: "20%", size: 4, delay: 0, duration: 3 },
-  { x: "80%", y: "15%", size: 3, delay: 0.5, duration: 4 },
-  { x: "25%", y: "70%", size: 5, delay: 1, duration: 3.5 },
-  { x: "70%", y: "75%", size: 3, delay: 1.5, duration: 4.5 },
-  { x: "50%", y: "10%", size: 2, delay: 0.3, duration: 3 },
-  { x: "10%", y: "50%", size: 4, delay: 0.8, duration: 4 },
-  { x: "90%", y: "50%", size: 3, delay: 1.2, duration: 3.5 },
-  { x: "40%", y: "85%", size: 2, delay: 0.6, duration: 4 },
+  { x: "15%", y: "20%", size: 4, delay: 0, duration: 3, drift: 20 },
+  { x: "80%", y: "15%", size: 3, delay: 0.5, duration: 4, drift: -15 },
+  { x: "25%", y: "70%", size: 5, delay: 1, duration: 3.5, drift: 25 },
+  { x: "70%", y: "75%", size: 3, delay: 1.5, duration: 4.5, drift: -20 },
+  { x: "50%", y: "10%", size: 2, delay: 0.3, duration: 3, drift: 15 },
+  { x: "10%", y: "50%", size: 4, delay: 0.8, duration: 4, drift: -10 },
+  { x: "90%", y: "50%", size: 3, delay: 1.2, duration: 3.5, drift: 20 },
+  { x: "40%", y: "85%", size: 2, delay: 0.6, duration: 4, drift: -25 },
 ];
+
+/** LUZZY 文字字符（用于字符级 stagger 动画） */
+const LUZZY_CHARS = ["L", "U", "Z", "Z", "Y"];
 
 export function LuzzySplash({ onComplete }: LuzzySplashProps) {
   const reduceMotion = useReducedMotion();
@@ -53,15 +57,15 @@ export function LuzzySplash({ onComplete }: LuzzySplashProps) {
     <AnimatePresence>
       {isVisible && (
         <motion.div
-          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900"
+          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-background"
           initial={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3, ease: "easeOut" }}
         >
-          {/* 背景光晕装饰 */}
+          {/* 背景光晕装饰（v0.3.7: 使用主题色变量） */}
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
-            <div className="absolute left-1/4 top-1/4 size-96 rounded-full bg-purple-500/10 blur-3xl" />
-            <div className="absolute bottom-1/4 right-1/4 size-96 rounded-full bg-indigo-500/10 blur-3xl" />
+            <div className="absolute left-1/4 top-1/4 size-96 rounded-full bg-primary/10 blur-3xl" />
+            <div className="absolute bottom-1/4 right-1/4 size-96 rounded-full bg-accent-foreground/10 blur-3xl" />
           </div>
 
           {/* 微光粒子效果（reduce-motion 时跳过） */}
@@ -70,7 +74,7 @@ export function LuzzySplash({ onComplete }: LuzzySplashProps) {
               {PARTICLES.map((p, i) => (
                 <motion.div
                   key={i}
-                  className="absolute rounded-full bg-white/40"
+                  className="absolute rounded-full bg-primary/40"
                   style={{
                     left: p.x,
                     top: p.y,
@@ -79,8 +83,9 @@ export function LuzzySplash({ onComplete }: LuzzySplashProps) {
                   }}
                   animate={{
                     y: [0, -30, 0],
+                    x: [0, p.drift, 0],
                     opacity: [0, 0.8, 0],
-                    scale: [0.5, 1, 0.5],
+                    scale: [0.5, 1.2, 0.5],
                   }}
                   transition={{
                     duration: p.duration,
@@ -93,9 +98,9 @@ export function LuzzySplash({ onComplete }: LuzzySplashProps) {
             </div>
           )}
 
-          {/* LUZZY 文字区域 */}
+          {/* LUZZY 文字区域（v0.3.7: 液态玻璃卡片 + 字符级 stagger） */}
           <motion.div
-            className="relative flex flex-col items-center"
+            className="relative flex flex-col items-center rounded-3xl border border-border/40 bg-card/30 px-8 py-6 backdrop-blur-2xl"
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{
@@ -107,7 +112,7 @@ export function LuzzySplash({ onComplete }: LuzzySplashProps) {
             {/* 呼吸光晕环（reduce-motion 时静态） */}
             {!reduceMotion && (
               <motion.div
-                className="absolute inset-0 -z-10 rounded-full bg-purple-400/20 blur-2xl"
+                className="absolute inset-0 -z-10 rounded-3xl bg-primary/20 blur-2xl"
                 animate={{
                   scale: [1, 1.3, 1],
                   opacity: [0.3, 0.6, 0.3],
@@ -119,23 +124,51 @@ export function LuzzySplash({ onComplete }: LuzzySplashProps) {
                 }}
               />
             )}
+            {/* 字符级 stagger 入场动画 */}
             <span
-              className="text-5xl font-bold tracking-[0.3em] text-white drop-shadow-[0_0_24px_rgba(233,213,255,0.4)]"
+              className="flex text-5xl font-bold tracking-[0.3em] text-foreground"
               style={{ fontFamily: "AlibabaPuHuiTi-3, sans-serif" }}
             >
-              LUZZY
+              {LUZZY_CHARS.map((char, i) => (
+                <motion.span
+                  key={i}
+                  initial={{ opacity: 0, y: 20, filter: "blur(8px)" }}
+                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  transition={{
+                    delay: 0.15 + i * 0.08,
+                    duration: 0.4,
+                    ease: [0.4, 0, 0.2, 1],
+                  }}
+                  style={{
+                    textShadow: "0 0 24px var(--primary)",
+                  }}
+                >
+                  {char}
+                </motion.span>
+              ))}
             </span>
           </motion.div>
 
           {/* 进度条（reduce-motion 时跳过） */}
           {!reduceMotion && (
-            <div className="relative mt-10 h-1 w-48 overflow-hidden rounded-full bg-white/10">
+            <div className="relative mt-10 h-1 w-48 overflow-hidden rounded-full bg-border/50">
               <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-purple-400 to-indigo-400 shadow-[0_0_12px_rgba(167,139,250,0.6)]"
+                className="relative h-full rounded-full bg-primary shadow-[0_0_12px_var(--primary)]"
                 initial={{ width: "0%" }}
                 animate={{ width: "100%" }}
                 transition={{ duration: 2, ease: "easeOut" }}
-              />
+              >
+                {/* shimmer 光泽流动 */}
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
+                  animate={{ x: ["-100%", "200%"] }}
+                  transition={{
+                    duration: 1.2,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                  }}
+                />
+              </motion.div>
             </div>
           )}
         </motion.div>

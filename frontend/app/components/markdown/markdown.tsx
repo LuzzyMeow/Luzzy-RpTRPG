@@ -19,6 +19,8 @@ import "streamdown/styles.css";
 const INLINE_LATEX_REGEX = /\\\((.+?)\\\)/g;
 const BLOCK_LATEX_REGEX = /\\\[(.+?)\\\]/gs;
 const CODE_BLOCK_REGEX = /```[\s\S]*?```|`[^`\n]*`/g;
+// v0.3.7: 中文引号高亮正则（"..." 形式）
+const QUOTE_HIGHLIGHT_REGEX = /\u201C([^\u201D]+)\u201D/g;
 
 // Preprocess markdown content
 function preProcess(content: string): string {
@@ -53,6 +55,18 @@ function preProcess(content: string): string {
     }
     return `$$${group1}$$`;
   });
+
+  // v0.3.7: 中文引号高亮，将 "..." 替换为 <span class="luzzy-highlight">...</span>
+  // 颜色由 CSS 变量 --luzzy-highlight-color 控制，未设置时使用 inherit（无高亮效果）
+  result = result.replace(
+    new RegExp(QUOTE_HIGHLIGHT_REGEX.source, "g"),
+    (match, group1, offset) => {
+      if (isInCodeBlock(offset)) {
+        return match;
+      }
+      return `\u201C<span class="luzzy-highlight">${group1}</span>\u201D`;
+    },
+  );
 
   return result;
 }

@@ -20,9 +20,11 @@ import type {
   RegexScriptGroup,
   MemorySettings,
   ActiveTool,
+  ActiveToolCall,
   VectorMemoryShard,
   ApiSettings,
   AgentStep,
+  MemoryRecall,
 } from "~/types/luzzy";
 import {
   buildContext,
@@ -52,7 +54,7 @@ import {
   executeActiveToolCall,
   filterToolsForCharacter,
 } from "~/services/toolService";
-import { loadVectorMemoryShards } from "~/services/memoryService";
+import { loadVectorMemoryShards, searchLongTermMemory } from "~/services/memoryService";
 import { BUILTIN_PRESET_DEFAULTS } from "~/services/presetContent";
 import { BUILTIN_PROVIDERS } from "~/stores/slices/settings-slice";
 import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
@@ -383,6 +385,12 @@ export const createChatSlice: StateCreator<
         const agentSteps: AgentStep[] = [];
         let thinkingStepAdded = false;
 
+        // v0.3.6: parseCot 调用节流，避免每个 chunk 都全量解析
+        // 仅在内容长度变化超过阈值或检测到标签闭合时才解析
+        let lastParseLength = 0;
+        let lastCotResult: ReturnType<typeof parseCot> | null = null;
+        let lastUpdateTick = 0;
+
         if (get().stream) {
           // === 流式请求 ===
           await sendStreamRequest({
@@ -426,8 +434,25 @@ export const createChatSlice: StateCreator<
                 set({ isThinking: false, isReceiving: true });
               }
 
-              // 解析 CoT 分离思考链和正文，实时更新消息
-              const cotResult = parseCot(accumulatedContent);
+              // v0.3.6: parseCot 调用节流
+              // 仅在内容长度变化超过阈值、检测到标签闭合、或首次解析时才执行
+              // v0.3.7: 阈值从 50 降至 10，提升流式思考卡片实时性
+              const lengthDelta = accumulatedContent.length - lastParseLength;
+              const closingTags = [
+                '</cot>', '</think>', '</thinking>', '</reasoning>',
+                '</thought>', '</thoughts>', '</reflection>', '</analysis>',
+              ];
+              const hasClosingTag = closingTags.some((tag) => accumulatedContent.includes(tag));
+              const shouldParse =
+                !lastCotResult ||
+                lengthDelta > 10 ||
+                hasClosingTag;
+
+              if (shouldParse) {
+                lastCotResult = parseCot(accumulatedContent);
+                lastParseLength = accumulatedContent.length;
+              }
+              const cotResult = lastCotResult!;
               const finalCot = (
                 accumulatedReasoning +
                 (cotResult.cot ? "\n" + cotResult.cot : "")
@@ -451,23 +476,29 @@ export const createChatSlice: StateCreator<
                 }
               }
 
-              // 实时 Token 统计估算（4 字符 ≈ 1 token）
-              const elapsedMs = Date.now() - requestStartTime;
-              const estimatedTokens = Math.ceil(accumulatedContent.length / 4);
-              const tokPerSec = elapsedMs > 0 ? (estimatedTokens / (elapsedMs / 1000)) : 0;
+              // v0.3.6: updateMessage 节流（最少 60ms 间隔），避免高频更新导致 UI 卡顿
+              // v0.3.7: 间隔从 60ms 降至 30ms，提升流式输出流畅度（约 33fps）
+              const now = Date.now();
+              if (now - lastUpdateTick >= 30 || hasClosingTag) {
+                lastUpdateTick = now;
+                // 实时 Token 统计估算（4 字符 ≈ 1 token）
+                const elapsedMs = now - requestStartTime;
+                const estimatedTokens = Math.ceil(accumulatedContent.length / 4);
+                const tokPerSec = elapsedMs > 0 ? (estimatedTokens / (elapsedMs / 1000)) : 0;
 
-              get().updateMessage(msgId, {
-                content: cotResult.main,
-                cot: finalCot,
-                loading: false,
-                tokenUsage: {
-                  promptTokens: 0,
-                  completionTokens: estimatedTokens,
-                  responseTimeMs: elapsedMs,
-                  tokPerSec: Math.round(tokPerSec * 10) / 10,
-                },
-                agentSteps: [...agentSteps],
-              });
+                get().updateMessage(msgId, {
+                  content: cotResult.main,
+                  cot: finalCot,
+                  loading: false,
+                  tokenUsage: {
+                    promptTokens: 0,
+                    completionTokens: estimatedTokens,
+                    responseTimeMs: elapsedMs,
+                    tokPerSec: Math.round(tokPerSec * 10) / 10,
+                  },
+                  agentSteps: [...agentSteps],
+                });
+              }
             },
           });
         } else {
@@ -573,6 +604,132 @@ export const createChatSlice: StateCreator<
       const contextMessages = messages.filter(
         (m) => m.id !== assistantMessageId,
       );
+
+      // v0.3.6: 提前加载 activeTools，供 force 模式预执行和工具调用循环共用
+      const activeToolsData = await getItem<ActiveTool[]>(
+        "activeTools",
+        "activeTools",
+      );
+      const activeTools = activeToolsData ?? [];
+
+      // v0.3.6 C4: force 模式预执行所有已启用工具
+      // 在初始 API 调用前，主动执行所有已启用的非 vector-memory 工具
+      // 将结果作为独立 user 消息注入上下文末尾，不破坏 KV 缓存命中率
+      if (toolGlobalSettings.mode === "force" && activeTools.length > 0) {
+        const characterUuid = currentCharacter?.uuid ?? null;
+        const filteredTools = filterToolsForCharacter(activeTools, characterUuid);
+        // 排除 vector 类型（已由 searchGlobalMemory 在 buildContext 中处理）
+        const enabledTools = filteredTools.filter(
+          (t) => t.enabled && t.type !== "vector",
+        );
+
+        if (enabledTools.length > 0) {
+          // 获取最近用户消息作为默认查询
+          const latestUserMsg = messages.filter((m) => m.role === "user").pop();
+          const defaultQuery = latestUserMsg?.content || "";
+
+          const forceResults: string[] = [];
+          for (const tool of enabledTools) {
+            if (abortController?.signal.aborted) break;
+            try {
+              const toolCall: ActiveToolCall = {
+                tool,
+                mode: "add",
+                callLabel: tool.callName || tool.name,
+                query: defaultQuery,
+                raw: "",
+                reason: "force mode pre-execution",
+              };
+              const result = await executeActiveToolCall(toolCall, {
+                messages: get().messages,
+                character: currentCharacter,
+                vectorMemoryShards,
+                worldInfoEntries,
+                tavilyApiKey: "",
+                mcpSessionIds: new Map(),
+                anysearchConfig: builtinToolConfigs.find((c) => c.type === "anysearch"),
+              });
+              if (result && result.trim()) {
+                forceResults.push(
+                  `<tool_result tool="${tool.name}" mode="force">\n${result}\n</tool_result>`,
+                );
+              }
+            } catch (e) {
+              console.warn(
+                `[ChatSlice] force 模式预执行工具 ${tool.name} 失败:`,
+                e,
+              );
+            }
+          }
+
+          if (forceResults.length > 0) {
+            // 作为独立 user 消息追加到上下文末尾（不持久化到 store）
+            contextMessages.push({
+              id: uuidv4(),
+              role: "user",
+              content: `<force_tool_results>\n${forceResults.join("\n\n")}\n</force_tool_results>`,
+              createdAt: Date.now(),
+            });
+          }
+        }
+      }
+
+      // v0.3.7: memory-recall 内置工具预执行
+      // memory-recall 是内置工具（存储在 builtinToolConfigs），不在 activeTools 中
+      // 需独立执行 searchLongTermMemory，将结果注入上下文并填充 message.memoryRecalls
+      const memoryRecallConfig = builtinToolConfigs.find(
+        (c) => c.type === "memory-recall",
+      );
+      if (
+        memoryRecallConfig?.enabled &&
+        currentCharacter?.uuid &&
+        memorySettings
+      ) {
+        const latestUserMsg = messages.filter((m) => m.role === "user").pop();
+        const recallQuery = latestUserMsg?.content || "";
+        if (recallQuery.trim()) {
+          try {
+            const recallTopK = memoryRecallConfig.resultCount || 8;
+            const recallResults = await searchLongTermMemory(
+              currentCharacter.uuid,
+              recallQuery,
+              recallTopK,
+              memorySettings,
+              settings,
+              allProviders,
+              get().apiProviderKeys,
+            );
+
+            if (recallResults.length > 0) {
+              // 填充 message.memoryRecalls 供 UI 显示
+              const memoryRecalls: MemoryRecall[] = recallResults.map((r) => ({
+                id: uuidv4(),
+                content: r.content,
+                score: r.score,
+                turn: r.turn ?? -1,
+              }));
+              get().updateMessage(assistantMessageId, { memoryRecalls });
+
+              // 将召回结果注入上下文（作为独立 user 消息，不破坏 KV 缓存）
+              const recallText = recallResults
+                .map(
+                  (r, i) =>
+                    `  <memory index="${i + 1}" turn="${r.turn ?? -1}" score="${r.score.toFixed(3)}">\n    ${r.content}\n  </memory>`,
+                )
+                .join("\n\n");
+              contextMessages.push({
+                id: uuidv4(),
+                role: "user",
+                content: `<memory_recall_result>\n${recallText}\n</memory_recall_result>`,
+                createdAt: Date.now(),
+              });
+            }
+          } catch (e) {
+            console.warn("[ChatSlice] memory-recall 预执行失败:", e);
+          }
+        }
+      }
+
       const { content: accumulatedContent, reasoning: accumulatedReasoning } =
         await callApiAndUpdate(assistantMessageId, contextMessages);
 
@@ -597,11 +754,7 @@ export const createChatSlice: StateCreator<
 
       // 9. 工具调用处理循环
       let currentAssistantId = assistantMessageId;
-      const activeToolsData = await getItem<ActiveTool[]>(
-        "activeTools",
-        "activeTools",
-      );
-      const activeTools = activeToolsData ?? [];
+      // v0.3.6: activeTools 已在初始 API 调用前加载，此处直接复用
 
       if (activeTools.length > 0) {
         const characterUuid = currentCharacter?.uuid ?? null;

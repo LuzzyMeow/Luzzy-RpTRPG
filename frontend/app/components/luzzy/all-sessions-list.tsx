@@ -382,6 +382,18 @@ function SessionSwipeItem({
             <span>{session.messages.length} 条消息</span>
           </div>
         </button>
+        {/* v0.3.7: 显式删除按钮，避免用户难以发现左滑删除 */}
+        <button
+          type="button"
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(session.id);
+          }}
+          aria-label="删除会话"
+        >
+          <IconTrash className="size-4" />
+        </button>
       </motion.div>
     </div>
   );

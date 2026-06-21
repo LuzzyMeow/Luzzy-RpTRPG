@@ -15,6 +15,13 @@ import { Input } from "~/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Badge } from "~/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
+import Markdown from "~/components/markdown/markdown";
 
 interface CharacterPickerProps {
   /** 角色卡列表 */
@@ -36,6 +43,23 @@ export function CharacterPicker({
 }: CharacterPickerProps) {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
+  // v0.3.6: 角色卡描述展开/收起状态（按 uuid 记录）
+  const [expandedCards, setExpandedCards] = React.useState<Set<string>>(new Set());
+  // v0.3.6: 详情弹窗
+  const [detailCharacter, setDetailCharacter] = React.useState<Character | null>(null);
+
+  /** 切换某张卡的展开状态 */
+  const toggleExpand = (uuid: string) => {
+    setExpandedCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(uuid)) {
+        next.delete(uuid);
+      } else {
+        next.add(uuid);
+      }
+      return next;
+    });
+  };
 
   // v0.3.5: 提取所有不重复标签
   const allTags = React.useMemo(() => {
@@ -155,8 +179,40 @@ export function CharacterPicker({
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{char.name}</div>
                   {char.description && (
-                    <div className="truncate text-xs text-muted-foreground">
-                      {char.description}
+                    <div className="mt-0.5">
+                      <div
+                        className={cn(
+                          "text-xs text-muted-foreground whitespace-pre-wrap",
+                          !expandedCards.has(char.uuid) && "line-clamp-3",
+                        )}
+                      >
+                        {char.description}
+                      </div>
+                      {/* v0.3.6: 展开/收起 + 详情按钮 */}
+                      {char.description.length > 60 && (
+                        <div className="mt-0.5 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpand(char.uuid);
+                            }}
+                            className="text-[10px] text-primary hover:underline"
+                          >
+                            {expandedCards.has(char.uuid) ? "收起" : "展开"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDetailCharacter(char);
+                            }}
+                            className="text-[10px] text-primary hover:underline"
+                          >
+                            详情
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                   {/* v0.3.5: 显示标签 */}
@@ -191,6 +247,36 @@ export function CharacterPicker({
           )}
         </div>
       </ScrollArea>
+
+      {/* v0.3.6: 角色卡详情弹窗 */}
+      <Dialog
+        open={!!detailCharacter}
+        onOpenChange={(o) => !o && setDetailCharacter(null)}
+      >
+        <DialogContent className="max-h-[80vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{detailCharacter?.name}</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh] pr-2">
+            {detailCharacter?.description && (
+              <Markdown content={detailCharacter.description} />
+            )}
+            {detailCharacter?.tags && detailCharacter.tags.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1">
+                {detailCharacter.tags.map((tag) => (
+                  <Badge
+                    key={tag}
+                    variant="outline"
+                    className="shrink-0 px-1 py-0 text-[10px] leading-tight"
+                  >
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

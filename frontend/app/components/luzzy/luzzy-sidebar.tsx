@@ -162,7 +162,7 @@ function MobileSidebar() {
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
             className="fixed inset-y-0 left-0 z-50 w-72 bg-sidebar shadow-xl"
           >
-            <div className="flex items-center justify-between border-b px-4 py-3">
+            <div className="flex items-center justify-between border-b px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
               <span className="text-lg font-bold">LUZZY</span>
               <Button
                 variant="ghost"
@@ -184,7 +184,7 @@ function MobileSidebar() {
 function DesktopSidebar() {
   return (
     <aside className="hidden w-60 shrink-0 border-r bg-sidebar md:block">
-      <div className="flex items-center border-b px-4 py-3">
+      <div className="flex items-center border-b px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <span className="text-lg font-bold">LUZZY</span>
       </div>
       <SidebarContent />

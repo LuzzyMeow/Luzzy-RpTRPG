@@ -76,52 +76,48 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       {children}
       <Dialog open={state.open} onOpenChange={(open) => !open && handleClose(false)}>
         <DialogContent showCloseButton={false} className="max-w-[calc(100%-2rem)] sm:max-w-md">
-          <DialogHeader>
-            <div className="flex items-start gap-3">
-              {state.showIcon && (
-                <motion.div
-                  initial={{ scale: 0, rotate: -10 }}
-                  animate={{ scale: 1, rotate: 0 }}
-                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                  className={`flex size-10 shrink-0 items-center justify-center rounded-full ${
-                    state.destructive
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-primary/10 text-primary"
-                  }`}
-                >
-                  {state.destructive ? (
-                    <IconTrash size={20} />
-                  ) : (
-                    <IconExclamation size={20} />
-                  )}
-                </motion.div>
-              )}
-              <div className="flex-1 space-y-1.5">
-                <DialogTitle className="text-base">{state.title}</DialogTitle>
-                <DialogDescription className="text-sm leading-relaxed whitespace-pre-wrap">
-                  {state.description}
-                </DialogDescription>
-              </div>
-            </div>
+          <DialogHeader className="flex flex-col items-center gap-2 text-center">
+            {state.showIcon && (
+              <motion.div
+                initial={{ scale: 0, rotate: -10 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                className={`flex size-10 shrink-0 items-center justify-center rounded-full ${
+                  state.destructive
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-primary/10 text-primary"
+                }`}
+              >
+                {state.destructive ? (
+                  <IconTrash size={20} />
+                ) : (
+                  <IconExclamation size={20} />
+                )}
+              </motion.div>
+            )}
+            <DialogTitle className="text-base">{state.title}</DialogTitle>
+            <DialogDescription className="text-left text-sm leading-relaxed">
+              {state.description}
+            </DialogDescription>
           </DialogHeader>
-          <div className="flex gap-2 pt-2">
+          <div className="flex justify-center gap-3 px-2 pt-2">
             <Button
               variant="outline"
-              className="flex-1"
+              className="w-full max-w-[10rem] gap-2 py-2.5"
               onClick={() => handleClose(false)}
             >
-              <IconClose size={16} className="mr-1.5" />
+              <IconClose size={16} />
               {state.cancelText}
             </Button>
             <Button
               variant={state.destructive ? "destructive" : "default"}
-              className="flex-1"
+              className="w-full max-w-[10rem] gap-2 py-2.5"
               onClick={() => handleClose(true)}
             >
               {state.destructive ? (
-                <IconTrash size={16} className="mr-1.5" />
+                <IconTrash size={16} />
               ) : (
-                <IconCheck size={16} className="mr-1.5" />
+                <IconCheck size={16} />
               )}
               {state.confirmText}
             </Button>
