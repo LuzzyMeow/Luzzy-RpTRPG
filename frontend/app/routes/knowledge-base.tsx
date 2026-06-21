@@ -556,7 +556,7 @@ export default function KnowledgeBasePage() {
           open={!!previewFile}
           onOpenChange={(o) => !o && setPreviewFile(null)}
         >
-          <DialogContent className="max-h-[90vh] sm:max-w-2xl">
+          <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-2xl">
             <DialogHeader>
               <DialogTitle className="truncate">
                 {previewFile?.name}
@@ -595,7 +595,7 @@ export default function KnowledgeBasePage() {
           open={!!newFileDialog}
           onOpenChange={(o) => !o && setNewFileDialog(null)}
         >
-          <DialogContent className="max-h-[90vh] sm:max-w-2xl">
+          <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-2xl">
             <DialogHeader>
               <DialogTitle>新建 Markdown 文件</DialogTitle>
               <DialogDescription>
@@ -887,7 +887,7 @@ export default function KnowledgeBasePage() {
         open={!!editingKb}
         onOpenChange={(o) => !o && setEditingKb(null)}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="min-w-0 overflow-hidden max-w-md">
           <DialogHeader>
             <DialogTitle>{isNewKb ? "新建知识库" : "编辑知识库"}</DialogTitle>
             <DialogDescription>
@@ -944,7 +944,7 @@ export default function KnowledgeBasePage() {
         open={!!showCharDialog}
         onOpenChange={(o) => !o && setShowCharDialog(null)}
       >
-        <DialogContent className="max-h-[80vh] sm:max-w-md">
+        <DialogContent className="max-h-[80vh] min-w-0 overflow-hidden max-w-md">
           <DialogHeader>
             <DialogTitle>角色卡绑定</DialogTitle>
             <DialogDescription>

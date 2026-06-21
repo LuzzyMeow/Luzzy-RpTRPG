@@ -51,7 +51,7 @@ export function CustomThemeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85svh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-h-[85svh] min-w-0 max-w-3xl overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>{t("custom_theme_dialog.title")}</DialogTitle>
           <DialogDescription>{t("custom_theme_dialog.description")}</DialogDescription>

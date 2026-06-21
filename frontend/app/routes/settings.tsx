@@ -1090,7 +1090,7 @@ export default function SettingsPage() {
 
       {/* v0.3.6 C6: 自定义语言输入弹窗 */}
       <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
-        <DialogContent className="max-w-[90vw]">
+        <DialogContent className="min-w-0 overflow-hidden max-w-xs">
           <DialogHeader>
             <DialogTitle>自定义目标语言</DialogTitle>
             <DialogDescription>
@@ -1102,6 +1102,7 @@ export default function SettingsPage() {
             onChange={(e) => setCustomLanguageDraft(e.target.value)}
             placeholder="请输入目标语言名称"
             maxLength={40}
+            className="max-w-full"
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -1130,7 +1131,7 @@ export default function SettingsPage() {
         open={!!newProvider}
         onOpenChange={(o) => !o && setNewProvider(null)}
       >
-        <DialogContent>
+        <DialogContent className="min-w-0 overflow-hidden max-w-sm">
           <DialogHeader>
             <DialogTitle>新增自定义供应商</DialogTitle>
             <DialogDescription>
@@ -1176,7 +1177,7 @@ export default function SettingsPage() {
                     setNewProvider({ ...newProvider, apiUrl: e.target.value })
                   }
                   placeholder="https://api.example.com/v1"
-                  className="font-mono text-xs"
+                  className="max-w-full break-all font-mono text-xs"
                   maxLength={500}
                 />
               </div>
@@ -1200,7 +1201,7 @@ export default function SettingsPage() {
         open={!!editingModel}
         onOpenChange={(o) => !o && setEditingModel(null)}
       >
-        <DialogContent className="max-h-[90vh] overflow-hidden">
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingModel?.isNew ? "添加模型" : "编辑模型"}
@@ -1228,6 +1229,7 @@ export default function SettingsPage() {
                       })
                     }
                     placeholder="deepseek-v4-pro"
+                    className="max-w-full"
                   />
                   <p className="text-xs text-muted-foreground">
                     实际请求 API 时使用的模型名称
@@ -1238,18 +1240,19 @@ export default function SettingsPage() {
                 <div className="grid min-w-0 gap-2">
                   <label className="text-sm font-medium">显示名称（可选）</label>
                   <Input
-                    value={editingModel.model.displayName ?? ""}
-                    onChange={(e) =>
-                      setEditingModel({
-                        ...editingModel,
-                        model: {
-                          ...editingModel.model,
-                          displayName: e.target.value,
-                        },
-                      })
-                    }
-                    placeholder="DeepSeek V4 Pro"
-                  />
+                  value={editingModel.model.displayName ?? ""}
+                  onChange={(e) =>
+                    setEditingModel({
+                      ...editingModel,
+                      model: {
+                        ...editingModel.model,
+                        displayName: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="DeepSeek V4 Pro"
+                  className="max-w-full"
+                />
                   <p className="text-xs text-muted-foreground">
                     仅用于前端显示，留空则使用模型 ID
                   </p>
@@ -1261,19 +1264,20 @@ export default function SettingsPage() {
                     上下文长度（可选）
                   </label>
                   <Input
-                    value={formatLength(editingModel.model.contextLength)}
-                    onChange={(e) => {
-                      const parsed = parseLength(e.target.value);
-                      setEditingModel({
-                        ...editingModel,
-                        model: {
-                          ...editingModel.model,
-                          contextLength: parsed,
-                        },
-                      });
-                    }}
-                    placeholder="128000 / 128k / 1m"
-                  />
+                  value={formatLength(editingModel.model.contextLength)}
+                  onChange={(e) => {
+                    const parsed = parseLength(e.target.value);
+                    setEditingModel({
+                      ...editingModel,
+                      model: {
+                        ...editingModel.model,
+                        contextLength: parsed,
+                      },
+                    });
+                  }}
+                  placeholder="128000 / 128k / 1m"
+                  className="max-w-full"
+                />
                   <p className="text-xs text-muted-foreground">
                     支持数字（1000000）或数字+单位（1000k / 1m）
                   </p>
@@ -1285,19 +1289,20 @@ export default function SettingsPage() {
                     输出长度（可选）
                   </label>
                   <Input
-                    value={formatLength(editingModel.model.outputLength)}
-                    onChange={(e) => {
-                      const parsed = parseLength(e.target.value);
-                      setEditingModel({
-                        ...editingModel,
-                        model: {
-                          ...editingModel.model,
-                          outputLength: parsed,
-                        },
-                      });
-                    }}
-                    placeholder="4096 / 4k"
-                  />
+                  value={formatLength(editingModel.model.outputLength)}
+                  onChange={(e) => {
+                    const parsed = parseLength(e.target.value);
+                    setEditingModel({
+                      ...editingModel,
+                      model: {
+                        ...editingModel.model,
+                        outputLength: parsed,
+                      },
+                    });
+                  }}
+                  placeholder="4096 / 4k"
+                  className="max-w-full"
+                />
                 </div>
 
                 {/* 历史消息数限制 */}

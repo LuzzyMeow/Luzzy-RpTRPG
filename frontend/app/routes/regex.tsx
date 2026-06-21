@@ -520,7 +520,7 @@ export default function RegexPage() {
 
       {/* 正则组编辑弹窗 */}
       <Dialog open={!!editingGroup} onOpenChange={(o) => !o && setEditingGroup(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+        <DialogContent className="max-h-[85vh] min-w-0 overflow-y-auto overflow-x-hidden max-w-3xl">
           <DialogHeader>
             <DialogTitle>{isNewGroup ? "新建正则组" : "编辑正则组"}</DialogTitle>
             <DialogDescription>
@@ -612,7 +612,7 @@ export default function RegexPage() {
 
       {/* 条目编辑弹窗 */}
       <Dialog open={!!editingEntry} onOpenChange={(o) => !o && setEditingEntry(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-y-auto overflow-x-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>{isNewEntry ? "新建条目" : "编辑条目"}</DialogTitle>
             <DialogDescription>

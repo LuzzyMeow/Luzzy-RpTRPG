@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.9
+
+### 🐛 Bug 修复
+
+- **弹窗 UI 全面修复（重做）**：以重构后的 `dialog.tsx` / `app.css` 为基础，统一全部 33 处 `DialogContent` 宽度规格，移除 `sm:max-w-*` 旧写法，补齐遗漏的 `min-w-0` / `overflow-hidden` / `max-w-*`。
+- **补齐遗漏弹窗**：`all-sessions-list.tsx` 重命名、`characters.tsx` 头像预览、`luzzy-confirm.tsx` 确认弹窗等补齐约束。
+- **弹窗内部防溢出**：所有输入框显式 `max-w-full`，长 URL / 路径输入加 `break-all`，flex 容器加 `min-w-0` / `flex-wrap`。
+
+### 🚀 功能增强
+
+- **版本号升级**：v0.3.8 → v0.3.9（package.json + build.gradle versionCode 17 + about.tsx）
+
 ## v0.3.8
 
 ### 🐛 Bug 修复

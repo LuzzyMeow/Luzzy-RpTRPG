@@ -1253,7 +1253,7 @@ export default function CharactersPage() {
 
       {/* 新建/编辑弹窗 */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-h-[85vh] min-w-0 overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[85vh] min-w-0 overflow-y-auto overflow-x-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>{isNew ? "新建角色卡" : "编辑角色卡"}</DialogTitle>
             <DialogDescription>
@@ -1269,6 +1269,7 @@ export default function CharactersPage() {
                   value={editing.name}
                   onChange={(e) => updateField("name", e.target.value)}
                   placeholder="角色名称"
+                  className="max-w-full"
                 />
               </div>
 
@@ -1320,6 +1321,7 @@ export default function CharactersPage() {
                   onChange={(e) => updateField("description", e.target.value)}
                   placeholder="角色的背景设定、性格特征、行为规范等"
                   rows={6}
+                  className="max-w-full"
                   style={detectNonCjkContent(editing.description) ? NON_CJK_FONT_STYLE : undefined}
                 />
               </div>
@@ -1442,6 +1444,7 @@ export default function CharactersPage() {
                   onChange={(e) => updateField("firstMessage", e.target.value)}
                   placeholder="角色的第一条消息（留空则不发送）"
                   rows={3}
+                  className="max-w-full"
                   style={detectNonCjkContent(editing.firstMessage) ? NON_CJK_FONT_STYLE : undefined}
                 />
               </div>
@@ -1461,6 +1464,7 @@ export default function CharactersPage() {
                     )
                   }
                   placeholder="标签1, 标签2"
+                  className="max-w-full"
                 />
               </div>
 
@@ -1472,6 +1476,7 @@ export default function CharactersPage() {
                     value={editing.creator}
                     onChange={(e) => updateField("creator", e.target.value)}
                     placeholder="创作者名称"
+                    className="max-w-full"
                   />
                 </div>
                 <div className="grid min-w-0 gap-2">
@@ -1480,6 +1485,7 @@ export default function CharactersPage() {
                     value={editing.characterVersion}
                     onChange={(e) => updateField("characterVersion", e.target.value)}
                     placeholder="1.0"
+                    className="max-w-full"
                   />
                 </div>
               </div>
@@ -1608,7 +1614,7 @@ export default function CharactersPage() {
       {/* v0.3.4: 全屏头像预览弹窗 */}
       <Dialog open={!!previewAvatar} onOpenChange={(o) => !o && setPreviewAvatar(null)}>
         <DialogContent
-          className="max-w-fit border-0 bg-black/90 p-0"
+          className="min-w-0 max-w-[calc(100%-2rem)] overflow-hidden border-0 bg-black/90 p-0"
           onClick={() => setPreviewAvatar(null)}
         >
           {previewAvatar && (

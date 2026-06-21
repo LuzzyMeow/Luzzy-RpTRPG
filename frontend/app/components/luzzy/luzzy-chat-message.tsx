@@ -615,7 +615,7 @@ export function LuzzyChatMessage({
 
       {/* 更多弹窗 */}
       <Dialog open={moreDialogOpen} onOpenChange={setMoreDialogOpen}>
-        <DialogContent className="max-w-[90vw]">
+        <DialogContent className="min-w-0 overflow-hidden max-w-xs">
           <DialogHeader>
             <DialogTitle>更多操作</DialogTitle>
           </DialogHeader>
@@ -699,7 +699,7 @@ export function LuzzyChatMessage({
 
       {/* 选择复制（原始文本）二级弹窗 */}
       <Dialog open={rawCopyDialogOpen} onOpenChange={setRawCopyDialogOpen}>
-        <DialogContent className="max-h-[80vh] max-w-[90vw]">
+        <DialogContent className="max-h-[80vh] min-w-0 overflow-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>原始文本</DialogTitle>
           </DialogHeader>

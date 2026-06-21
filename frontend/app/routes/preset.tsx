@@ -509,7 +509,7 @@ export default function PresetPage() {
 
       {/* 编辑弹窗 */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-h-[90vh] sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editing?.isBuiltin
@@ -532,6 +532,7 @@ export default function PresetPage() {
                         setEditing({ ...editing, name: e.target.value })
                       }
                       placeholder="预设名称"
+                      className="max-w-full"
                     />
                   </div>
                 )}
@@ -544,7 +545,7 @@ export default function PresetPage() {
                     }
                     placeholder="预设内容（系统提示）"
                     rows={16}
-                    className="font-mono text-xs"
+                    className="max-w-full font-mono text-xs"
                   />
                 </div>
               </div>
@@ -563,7 +564,7 @@ export default function PresetPage() {
 
       {/* 查看弹窗（Markdown 渲染 / 原始切换） */}
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
-        <DialogContent className="max-h-[90vh] sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {viewing?.name}
@@ -630,7 +631,7 @@ export default function PresetPage() {
                   <motion.div
                     key={viewMode}
                     {...fadeSlide}
-                    className="p-1"
+                    className="min-w-0 p-1"
                   >
                     {viewMode === "rendered" ? (
                       <Markdown content={viewing.content} />
@@ -657,7 +658,7 @@ export default function PresetPage() {
         open={!!showCharDialog}
         onOpenChange={(o) => !o && setShowCharDialog(null)}
       >
-        <DialogContent className="max-h-[80vh] sm:max-w-md">
+        <DialogContent className="max-h-[80vh] min-w-0 overflow-hidden max-w-md">
           <DialogHeader>
             <DialogTitle>角色卡绑定</DialogTitle>
             <DialogDescription>

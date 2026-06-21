@@ -54,25 +54,16 @@ function DialogContent({
   showCloseButton?: boolean
 }) {
   // v0.3.1: 弹窗输入法适配 — 监听 VisualViewport 变化，自适应弹窗高度
-  // v0.3.6: 增强 — 同时调整弹窗位置，避免键盘遮挡底部按钮
+  // v0.3.9: 仅限制最大高度，不再覆盖 transform，避免破坏居中定位；只作用于当前打开弹窗
   React.useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const onResize = () => {
       const viewport = window.visualViewport!;
-      const dialogs = document.querySelectorAll("[data-slot='dialog-content']");
-      const keyboardHeight = window.innerHeight - viewport.height;
+      const dialogs = document.querySelectorAll("[data-slot='dialog-content'][data-state='open']");
       dialogs.forEach((dialog) => {
         if (dialog instanceof HTMLElement) {
-          // 调整最大高度为可视区域的 90%
-          dialog.style.maxHeight = `${viewport.height * 0.9}px`;
-          // v0.3.6: 键盘弹起时上移弹窗，使其在可视区域内居中
-          // 默认 top:50% + translate-y:-50% 居中于整个窗口
-          // 键盘弹起后，需要上移 keyboardHeight/2 使其在可视区域居中
-          if (keyboardHeight > 10) {
-            dialog.style.transform = `translate(-50%, calc(-50% - ${keyboardHeight / 2}px))`;
-          } else {
-            dialog.style.transform = "translate(-50%, -50%)";
-          }
+          // 调整最大高度为可视区域的 90%，其余居中由 CSS 负责
+          dialog.style.maxHeight = `${Math.min(viewport.height * 0.9, window.innerHeight * 0.9)}px`;
         }
       });
     };
@@ -92,7 +83,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full min-w-0 max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto overflow-x-hidden rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 box-border flex min-w-0 w-[calc(100%-2rem)] max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col gap-4 overflow-y-auto overflow-x-hidden rounded-lg border p-6 shadow-lg duration-200 outline-none",
           className
         )}
         {...props}

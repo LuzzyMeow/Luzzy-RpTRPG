@@ -344,7 +344,7 @@ export function LuzzyShareDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="min-w-0 overflow-hidden max-w-2xl">
         <AnimatePresence mode="wait">
           {step === "format" ? (
             <motion.div key="format" {...springEnter}>
