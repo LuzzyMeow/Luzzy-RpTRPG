@@ -737,6 +737,7 @@
 
 /* v0.3.8: 修复 ScrollArea viewport 因 display:table 被长内容撑大导致横向溢出的问题 */
 /* v0.4.0: 修复 display:table 撑开高度导致 DialogFooter 被裁剪/重叠的问题 */
+/* v0.4.0-patch: display:table 的 max-height 在多数浏览器不生效，改为 display:block 彻底修复 */
 [data-radix-scroll-area-viewport] {
   width: 100%;
   max-width: 100%;
@@ -745,7 +746,10 @@
 }
 
 /* v0.4.0: 修复 radix ScrollArea Viewport 内部 display:table 包裹层撑开高度的问题 */
+/* v0.4.0-patch: display:table 会根据内容自动调整高度，忽略 max-height，导致 ScrollArea 撑开把 Footer 推到中间 */
 [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  width: 100%;
   max-height: 100%;
 }
 
