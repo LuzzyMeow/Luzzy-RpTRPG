@@ -111,6 +111,8 @@ export interface Character {
   scenario: string;
   firstMessage: string;
   mesExample: string;
+  /** 对话示例（结构化气泡样式，v0.3.1 新增） */
+  dialogueExamples?: Array<{ agent: string; user: string }>;
   alternateGreetings: string[];
   tags: string[];
   creator: string;
@@ -445,6 +447,8 @@ export interface ToolExecutionContext {
   worldInfoEntries: WorldInfoEntry[];
   tavilyApiKey?: string;
   mcpSessionIds: Map<string, string>;
+  /** anysearch 内置工具配置（含 API Token 与返回条数） */
+  anysearchConfig?: BuiltinToolConfig;
 }
 
 /** 世界书处理结果 */
@@ -642,6 +646,8 @@ export interface BuiltinToolConfig {
   searchGlobalMemory: boolean;
   /** 启用的角色卡 UUID 列表 */
   enabledForCharacters: string[];
+  /** anysearch API Token（可选，不填使用匿名免费配额） */
+  anysearchToken?: string;
 }
 
 // ============================================================================

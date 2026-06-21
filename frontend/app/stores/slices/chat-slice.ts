@@ -605,6 +605,7 @@ export const createChatSlice: StateCreator<
               worldInfoEntries,
               tavilyApiKey: "",
               mcpSessionIds: new Map(),
+              anysearchConfig: builtinToolConfigs.find((c) => c.type === "anysearch"),
             });
 
             // 标记 tool_call 步骤为已完成，添加 tool_result 步骤

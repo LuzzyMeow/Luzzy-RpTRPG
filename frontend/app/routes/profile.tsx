@@ -26,11 +26,14 @@ import {
   IconCheck,
   IconInfo,
   IconChevronRight,
+  IconExpand,
 } from "~/components/luzzy/luzzy-icons";
 
 import type { UserProfile } from "~/types/luzzy";
 import { useAppStore } from "~/stores";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
+import { LuzzyFullscreenEditor } from "~/components/luzzy/luzzy-fullscreen-editor";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
@@ -93,10 +96,12 @@ export default function ProfilePage() {
   const addProfile = useAppStore((s) => s.addProfile);
   const switchProfile = useAppStore((s) => s.switchProfile);
   const removeProfile = useAppStore((s) => s.removeProfile);
+  const confirm = useConfirm();
 
   // 编辑状态
   const [editing, setEditing] = React.useState<UserProfile | null>(null);
   const [isNew, setIsNew] = React.useState(false);
+  const [descFullscreenOpen, setDescFullscreenOpen] = React.useState(false);
   // 头像上传 input ref
   const avatarInputRef = React.useRef<HTMLInputElement>(null);
   // 导入描述 input ref
@@ -254,16 +259,21 @@ export default function ProfilePage() {
 
   /** 删除档案 */
   const handleDelete = React.useCallback(
-    (uuid: string, name: string) => {
+    async (uuid: string, name: string) => {
       if (userProfiles.length === 0) {
         toast.warning("至少保留一个档案");
         return;
       }
-      if (!confirm(`确定删除档案「${name}」吗？此操作不可撤销。`)) return;
+      const ok = await confirm({
+        title: "删除档案",
+        description: `确定删除档案「${name}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       removeProfile(uuid);
       toast.success("档案已删除");
     },
-    [removeProfile, userProfiles.length],
+    [removeProfile, userProfiles.length, confirm],
   );
 
   /** 更新编辑字段 */
@@ -442,7 +452,7 @@ export default function ProfilePage() {
 
       {/* 编辑弹窗 */}
       <Dialog open={!!editing} onOpenChange={(open) => !open && handleCancel()}>
-        <DialogContent className="max-h-[90vh] overflow-hidden">
+        <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{isNew ? "新建档案" : "编辑档案"}</DialogTitle>
             <DialogDescription>
@@ -515,6 +525,17 @@ export default function ProfilePage() {
                         variant="ghost"
                         size="sm"
                         className="h-7 px-2 text-xs"
+                        onClick={() => setDescFullscreenOpen(true)}
+                        title="全屏编辑"
+                        {...pressableSubtle}
+                      >
+                        <IconExpand className="mr-1 size-3.5" />
+                        全屏
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
                         onClick={triggerImportDesc}
                         title="从 .md 文件导入"
                       >
@@ -546,7 +567,8 @@ export default function ProfilePage() {
                       updateField("description", e.target.value)
                     }
                     placeholder="你的自我介绍、偏好、设定等（将注入到聊天中）"
-                    rows={8}
+                    rows={12}
+                    className="min-h-[200px]"
                   />
                   <p className="text-xs text-muted-foreground">
                     支持 Markdown 格式。导入/导出仅针对描述内容。
@@ -568,6 +590,17 @@ export default function ProfilePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 全屏编辑器 */}
+      {editing && (
+        <LuzzyFullscreenEditor
+          open={descFullscreenOpen}
+          onOpenChange={setDescFullscreenOpen}
+          value={editing.description}
+          onChange={(v) => updateField("description", v)}
+          onSend={() => setDescFullscreenOpen(false)}
+        />
+      )}
     </LuzzyLayout>
   );
 }

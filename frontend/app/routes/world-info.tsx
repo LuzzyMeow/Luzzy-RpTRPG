@@ -32,6 +32,7 @@ import {
   IconTag,
   IconExclamation,
 } from "~/components/luzzy/luzzy-icons";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 
 import type { WorldInfoEntry } from "~/types/luzzy";
 import { getItem, setItem } from "~/services/storage";
@@ -246,6 +247,7 @@ export default function WorldInfoPage() {
   const [isNewBook, setIsNewBook] = React.useState(false);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const confirm = useConfirm();
 
   /** 页面加载时从 IndexedDB 读取 */
   React.useEffect(() => {
@@ -357,12 +359,17 @@ export default function WorldInfoPage() {
 
   /** 删除世界书（含其下所有条目） */
   const handleDeleteBook = React.useCallback(
-    (bookId: string, bookName: string) => {
-      if (!confirm(`确定删除世界书「${bookName}」及其所有条目吗？`)) return;
+    async (bookId: string, bookName: string) => {
+      const ok = await confirm({
+        title: "操作确认",
+        description: `确定删除世界书「${bookName}」及其所有条目吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       updateEntries((prev) => prev.filter((e) => e.bookId !== bookId));
       toast.success("世界书已删除");
     },
-    [updateEntries],
+    [updateEntries, confirm],
   );
 
   /** 新建条目（指定世界书） */
@@ -409,13 +416,17 @@ export default function WorldInfoPage() {
 
   /** 删除条目 */
   const handleDeleteEntry = React.useCallback(
-    (e: WorldInfoEntry) => {
-      if (!confirm(`确定删除条目「${e.name || e.keys.join(", ") || "未命名"}」吗？`))
-        return;
+    async (e: WorldInfoEntry) => {
+      const ok = await confirm({
+        title: "操作确认",
+        description: `确定删除条目「${e.name || e.keys.join(", ") || "未命名"}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       updateEntries((prev) => prev.filter((item) => item.id !== e.id));
       toast.success("已删除");
     },
-    [updateEntries],
+    [updateEntries, confirm],
   );
 
   /** 编辑表单字段更新 */
@@ -569,7 +580,7 @@ export default function WorldInfoPage() {
                 className="absolute right-1 top-1/2 size-7 -translate-y-1/2"
                 onClick={() => setSearchQuery("")}
               >
-                <IconClose className="size-3.5" />
+                <IconClose className="size-4" />
               </Button>
             )}
           </div>
@@ -660,7 +671,7 @@ export default function WorldInfoPage() {
                               title="新建条目"
                               {...pressableSubtle}
                             >
-                              <IconPlus className="size-3.5" />
+                              <IconPlus className="size-4" />
                             </Button>
                             <Button
                               variant="ghost"
@@ -670,7 +681,7 @@ export default function WorldInfoPage() {
                               title="重命名"
                               {...pressableSubtle}
                             >
-                              <IconEdit className="size-3.5" />
+                              <IconEdit className="size-4" />
                             </Button>
                             <Button
                               variant="ghost"
@@ -680,7 +691,7 @@ export default function WorldInfoPage() {
                               title="导出"
                               {...pressableSubtle}
                             >
-                              <IconExport className="size-3.5" />
+                              <IconExport className="size-4" />
                             </Button>
                             <Button
                               variant="ghost"
@@ -692,7 +703,7 @@ export default function WorldInfoPage() {
                               title="删除世界书"
                               {...pressableSubtle}
                             >
-                              <IconTrash className="size-3.5" />
+                              <IconTrash className="size-4" />
                             </Button>
                           </div>
                         </div>
@@ -845,7 +856,7 @@ export default function WorldInfoPage() {
                                               onClick={() => handleEditEntry(e)}
                                               {...pressableSubtle}
                                             >
-                                              <IconEdit className="size-3.5" />
+                                              <IconEdit className="size-4" />
                                             </Button>
                                             <Button
                                               variant="ghost"
@@ -854,7 +865,7 @@ export default function WorldInfoPage() {
                                               onClick={() => handleDeleteEntry(e)}
                                               {...pressableSubtle}
                                             >
-                                              <IconTrash className="size-3.5" />
+                                              <IconTrash className="size-4" />
                                             </Button>
                                           </div>
                                         </div>
@@ -1075,7 +1086,7 @@ export default function WorldInfoPage() {
                 </div>
 
                 {/* 注入位置与深度 */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4">
                   <div className="grid gap-2">
                     <label className="text-sm font-medium">注入位置</label>
                     <Select
@@ -1109,7 +1120,7 @@ export default function WorldInfoPage() {
                 </div>
 
                 {/* 顺序与插入顺序 */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4">
                   <div className="grid gap-2">
                     <label className="text-sm font-medium">顺序</label>
                     <Input

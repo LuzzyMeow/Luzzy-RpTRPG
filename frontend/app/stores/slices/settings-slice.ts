@@ -99,6 +99,7 @@ export const DEFAULT_BUILTIN_TOOL_CONFIGS: BuiltinToolConfig[] = [
     resultCount: 8,
     searchGlobalMemory: false,
     enabledForCharacters: [],
+    anysearchToken: "",
   },
 ];
 
@@ -354,9 +355,16 @@ export const createSettingsSlice: StateCreator<
     }),
 
   setProviderKey: (id, key) =>
-    set((state) => ({
-      apiProviderKeys: { ...state.apiProviderKeys, [id]: key },
-    })),
+    set((state) => {
+      const updates: Partial<SettingsSlice> = {
+        apiProviderKeys: { ...state.apiProviderKeys, [id]: key },
+      };
+      // 当修改的是当前选中供应商时,同步更新全局 apiKey
+      if (id === state.apiProviderId) {
+        updates.apiKey = key;
+      }
+      return updates;
+    }),
 
   getAllProviders: () => {
     const overrides = get().builtinThinkingDepthOverrides;

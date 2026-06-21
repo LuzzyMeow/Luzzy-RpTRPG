@@ -20,6 +20,7 @@ import type {
   ActiveToolType,
   ActiveToolCall,
   ActiveToolUi,
+  BuiltinToolConfig,
   ChatMessage,
   McpSubTool,
   ToolExecutionContext,
@@ -46,6 +47,9 @@ const ACTIVE_TOOL_MAX_RESULT_COUNT = 12;
 const TAVILY_SEARCH_ENDPOINT = 'https://api.tavily.com/search';
 const TAVILY_EXTRACT_ENDPOINT = 'https://api.tavily.com/extract';
 const TAVILY_SEARCH_DEPTH = 'advanced';
+
+/** Anysearch 搜索端点 */
+const ANYSEARCH_SEARCH_ENDPOINT = 'https://api.anysearch.com/v1/search';
 
 /** 支持文本读取的文件扩展名（用于 skill_readfile） */
 const SKILL_FILE_TEXT_EXTENSIONS = [
@@ -138,6 +142,19 @@ const isWebActiveTool = (tool: ActiveTool): boolean => {
   return (
     base === 'tool_web' ||
     /tavily|联网搜索/i.test(String(tool.name || ''))
+  );
+};
+
+/**
+ * 判断是否为 Anysearch 联网搜索工具
+ *
+ * 优先于 Web（Tavily）判断，避免 anysearch 工具被误识别为 Tavily 工具。
+ */
+const isAnysearchActiveTool = (tool: ActiveTool): boolean => {
+  const base = normalizeActiveToolCallName(tool.callName || '');
+  return (
+    base === 'tool_anysearch' ||
+    /anysearch/i.test(String(tool.name || ''))
   );
 };
 
@@ -785,6 +802,84 @@ const executeWebSearch = async (
 };
 
 /**
+ * 执行 Anysearch 联网搜索
+ *
+ * 调用 Anysearch API（POST /v1/search），支持匿名访问（免费配额）与 Bearer Token 认证（付费配额）。
+ * 响应解析兼容 { results: [...] } 与裸数组两种结构，提取 title / url / content 字段。
+ *
+ * @param query - 搜索查询
+ * @param config - anysearch 内置工具配置（含 token 与 resultCount）
+ * @param limit - 返回条数上限（回退值）
+ * @param signal - 中止信号（可选）
+ * @returns 格式化的搜索结果上下文字符串
+ */
+const executeAnysearchSearch = async (
+  query: string,
+  config: BuiltinToolConfig | undefined,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<string> => {
+  const cleanQuery = trimText(query, 800);
+  if (!cleanQuery) {
+    return '<active_tool_result status="empty" web_mode="anysearch">Anysearch 搜索查询为空。</active_tool_result>';
+  }
+
+  const token = String(config?.anysearchToken || '').trim();
+  const maxResults = Math.max(
+    ACTIVE_TOOL_MIN_RESULT_COUNT,
+    Math.min(ACTIVE_TOOL_MAX_RESULT_COUNT, Number(config?.resultCount) || limit || ACTIVE_TOOL_DEFAULT_RESULT_COUNT),
+  );
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(ANYSEARCH_SEARCH_ENDPOINT, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ query: cleanQuery, max_results: maxResults }),
+      signal,
+    });
+  } catch (e) {
+    throw new Error(`Anysearch 请求失败：${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Anysearch API Token 无效，请检查工具设置。');
+    if (response.status === 429) throw new Error('Anysearch 请求太频繁或额度不足，请稍后再试。');
+    throw new Error(`Anysearch 搜索失败：HTTP ${response.status}`);
+  }
+
+  // 兼容 { results: [...] } 与裸数组两种响应结构
+  const results = (
+    Array.isArray(data.results)
+      ? data.results
+      : Array.isArray(data)
+        ? data
+        : []
+  ).slice(0, maxResults) as Array<Record<string, unknown>>;
+
+  if (results.length === 0) {
+    return '<active_tool_result status="empty" web_mode="anysearch">联网搜索没有找到可用网页结果。</active_tool_result>';
+  }
+
+  const formatted = results
+    .map((item, index) => {
+      const title = String(item.title || item.name || '未命名网页').trim();
+      const url = String(item.url || item.link || '').trim();
+      const content = trimText(String(item.content || item.snippet || item.summary || ''), 1800);
+      return `  <web_source index="${index + 1}" title="${escapeXml(title)}" url="${escapeXml(url)}">\n    <content>\n      ${escapeXml(content)}\n    </content>\n  </web_source>`;
+    })
+    .join('\n\n');
+
+  return `<active_tool_result status="ok" type="web_search" web_mode="anysearch">\n${formatted}\n</active_tool_result>`;
+};
+
+/**
  * 执行世界书检索
  *
  * 支持三种操作：
@@ -973,6 +1068,11 @@ export const executeActiveToolCall = async (
   // 关键词搜索
   if (isKeywordActiveTool(tool)) {
     return executeKeywordSearch(query, context.messages, limit);
+  }
+
+  // anysearch 搜索（优先于 Web 判断，避免被误识别为 Tavily 工具）
+  if (isAnysearchActiveTool(tool)) {
+    return executeAnysearchSearch(query, context.anysearchConfig, limit);
   }
 
   // Web 搜索

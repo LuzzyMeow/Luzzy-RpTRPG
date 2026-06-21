@@ -7,13 +7,16 @@
 
 import * as React from "react";
 import type { Route } from "./+types/chat";
+import { useNavigate } from "react-router";
+import { motion, AnimatePresence } from "motion/react";
 import {
   IconPlus,
   IconMenu,
   IconGrid,
   IconMessage,
   IconUser,
-  IconTrash,
+  IconExclamation,
+  IconSettings,
 } from "~/components/luzzy/luzzy-icons";
 
 import { useAppStore } from "~/stores";
@@ -23,6 +26,9 @@ import { LuzzyChatInput } from "~/components/luzzy/luzzy-chat-input";
 import { CharacterPicker } from "~/components/luzzy/character-picker";
 import { SessionList } from "~/components/luzzy/session-list";
 import { AllSessionsList } from "~/components/luzzy/all-sessions-list";
+import { useIsMobile } from "~/hooks/use-mobile";
+import { useStickToBottom } from "use-stick-to-bottom";
+import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
@@ -38,9 +44,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "~/components/ui/sheet";
-import { useIsMobile } from "~/hooks/use-mobile";
-import { useStickToBottom } from "use-stick-to-bottom";
-import { toast } from "sonner";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "聊天 - LUZZY" }];
@@ -48,9 +51,11 @@ export function meta(_: Route.MetaArgs) {
 
 export default function ChatPage() {
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
   const [showCharacterPicker, setShowCharacterPicker] = React.useState(false);
   const [showSessionList, setShowSessionList] = React.useState(false);
   const [showAllSessions, setShowAllSessions] = React.useState(false);
+  const [showApiConfigWarning, setShowApiConfigWarning] = React.useState(false);
 
   // Store 数据
   const messages = useAppStore((s) => s.messages);
@@ -61,6 +66,8 @@ export default function ChatPage() {
   const inputDraft = useAppStore((s) => s.inputDraft);
   const sessions = useAppStore((s) => s.sessions);
   const currentSessionId = useAppStore((s) => s.currentSessionId);
+  const apiUrl = useAppStore((s) => s.apiUrl);
+  const apiKey = useAppStore((s) => s.apiKey);
 
   // Store actions
   const setInputDraft = useAppStore((s) => s.setInputDraft);
@@ -68,7 +75,6 @@ export default function ChatPage() {
   const stopGenerating = useAppStore((s) => s.stopGenerating);
   const regenerate = useAppStore((s) => s.regenerate);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
-  const clearMessages = useAppStore((s) => s.clearMessages);
   const setCurrentCharacter = useAppStore((s) => s.setCurrentCharacter);
   const setCurrentCharacterUuid = useAppStore((s) => s.setCurrentCharacterUuid);
   const loadChatHistory = useAppStore((s) => s.loadChatHistory);
@@ -131,6 +137,10 @@ export default function ChatPage() {
       toast.warning("请先选择角色卡");
       return;
     }
+    if (!apiUrl || !apiKey) {
+      setShowApiConfigWarning(true);
+      return;
+    }
     setInputDraft("");
     await sendMessage(content);
     // 发送后保存到当前会话
@@ -139,7 +149,7 @@ export default function ChatPage() {
       useAppStore.getState().setSessionMessages(currentSessionId, latestMessages);
       void saveSessions();
     }
-  }, [inputDraft, isGenerating, currentCharacter, sendMessage, setInputDraft, currentSessionId, saveSessions]);
+  }, [inputDraft, isGenerating, currentCharacter, apiUrl, apiKey, sendMessage, setInputDraft, currentSessionId, saveSessions]);
 
   /** 复制消息 */
   const handleCopy = React.useCallback((msg: { content: string }) => {
@@ -160,15 +170,6 @@ export default function ChatPage() {
     if (isGenerating) return;
     await regenerate();
   }, [isGenerating, regenerate]);
-
-  /** 清空消息 */
-  const handleClear = React.useCallback(() => {
-    if (messages.length === 0) return;
-    if (confirm("确定要清空所有消息吗？")) {
-      clearMessages();
-      toast.success("已清空消息");
-    }
-  }, [messages.length, clearMessages]);
 
   /** 新建会话 */
   const handleCreateSession = React.useCallback(() => {
@@ -360,15 +361,6 @@ export default function ChatPage() {
             >
               <IconGrid className="size-4" />
             </Button>
-            {/* 清空消息 */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleClear}
-              title="清空消息"
-            >
-              <IconTrash className="size-4" />
-            </Button>
           </>
         }
       >
@@ -422,6 +414,47 @@ export default function ChatPage() {
               </div>
             </div>
 
+            {/* API 未配置提示卡片 */}
+            <AnimatePresence>
+              {showApiConfigWarning && (
+                <motion.div
+                  className="absolute inset-0 z-20 flex items-center justify-center bg-background/60 backdrop-blur-sm"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  onClick={() => setShowApiConfigWarning(false)}
+                >
+                  <motion.div
+                    className="flex flex-col items-center gap-4 rounded-2xl border border-border/30 bg-card p-8 shadow-2xl"
+                    initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex size-14 items-center justify-center rounded-full bg-amber-500/15">
+                      <IconExclamation className="size-7 text-amber-600" />
+                    </div>
+                    <div className="flex flex-col items-center gap-1 text-center">
+                      <p className="text-base font-semibold">API 地址或密钥未配置</p>
+                      <p className="text-sm text-muted-foreground">请先前往设置页面完成 API 配置</p>
+                    </div>
+                    <Button
+                      onClick={() => {
+                        setShowApiConfigWarning(false);
+                        navigate("/settings");
+                      }}
+                      className="gap-2"
+                    >
+                      <IconSettings className="size-4" />
+                      前往设置
+                    </Button>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* 输入框 */}
             <LuzzyChatInput
               value={inputDraft}
@@ -430,7 +463,12 @@ export default function ChatPage() {
               onStop={stopGenerating}
               isGenerating={isGenerating}
               showScrollToBottom={!isAtBottom}
-              onScrollToBottom={() => scrollToBottom()}
+              onScrollToBottom={() => {
+                const el = scrollRef.current;
+                if (el) {
+                  el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+                }
+              }}
             />
           </div>
         </div>

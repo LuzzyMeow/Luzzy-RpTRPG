@@ -396,9 +396,9 @@ export const REMOVED_BUILTIN_PRESET_NAMES = [
 
 /** 内置预设默认列表 */
 export const BUILTIN_PRESET_DEFAULTS = [
-  { name: LUZZY_PRESET_NAME, role: 'system' as const, content: LUZZY_PRESET_CONTENT },
-  { name: SECOND_PERSON_PRESET_NAME, role: 'system' as const, content: SECOND_PERSON_PRESET_CONTENT },
-  { name: THIRD_PERSON_PRESET_NAME, role: 'system' as const, content: THIRD_PERSON_PRESET_CONTENT },
+  { name: LUZZY_PRESET_NAME, role: 'system' as const, content: LUZZY_PRESET_CONTENT, enabled: true },
+  { name: SECOND_PERSON_PRESET_NAME, role: 'system' as const, content: SECOND_PERSON_PRESET_CONTENT, enabled: true },
+  { name: THIRD_PERSON_PRESET_NAME, role: 'system' as const, content: THIRD_PERSON_PRESET_CONTENT, enabled: false },
 ];
 
 /** 内置预设名称集合 */

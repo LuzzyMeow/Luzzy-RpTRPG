@@ -23,12 +23,15 @@ import {
   IconCheck,
   IconClose,
   IconInfo,
+  IconExpand,
 } from "~/components/luzzy/luzzy-icons";
 
 import type { UiTemplate } from "~/types/luzzy";
 import { getItem, setItem } from "~/services/storage";
 import { useAppStore } from "~/stores";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
+import { LuzzyFullscreenEditor } from "~/components/luzzy/luzzy-fullscreen-editor";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
@@ -97,6 +100,7 @@ function createEmptyTemplate(): UiTemplate {
 
 export default function UiTemplatePage() {
   const characters = useAppStore((s) => s.characters);
+  const confirm = useConfirm();
 
   const [templates, setTemplates] = React.useState<UiTemplate[]>([]);
   const [loaded, setLoaded] = React.useState(false);
@@ -106,6 +110,7 @@ export default function UiTemplatePage() {
     null,
   );
   const [viewing, setViewing] = React.useState<UiTemplate | null>(null);
+  const [fullscreenOpen, setFullscreenOpen] = React.useState(false);
 
   /** 页面加载时从 storage 读取 */
   React.useEffect(() => {
@@ -182,12 +187,17 @@ export default function UiTemplatePage() {
 
   /** 删除 */
   const handleDelete = React.useCallback(
-    (t: UiTemplate) => {
-      if (!confirm(`确定删除模板「${t.name}」吗？`)) return;
+    async (t: UiTemplate) => {
+      const ok = await confirm({
+        title: "删除模板",
+        description: `确定删除模板「${t.name}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       updateTemplates((prev) => prev.filter((item) => item.id !== t.id));
       toast.success("已删除");
     },
-    [updateTemplates],
+    [updateTemplates, confirm],
   );
 
   /** 切换启用状态 */
@@ -380,7 +390,7 @@ export default function UiTemplatePage() {
 
       {/* 新建/编辑弹窗 */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-h-[90vh] sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{isNew ? "新建模板" : "编辑模板"}</DialogTitle>
             <DialogDescription>
@@ -434,11 +444,24 @@ export default function UiTemplatePage() {
                   </div>
                 </div>
                 <div className="grid gap-2">
-                  <label className="text-sm font-medium">
-                    内容（支持{" "}
-                    {INJECTION_TYPE_LABELS[editing.injectionType ?? "markdown"]}{" "}
-                    语法）
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">
+                      内容（支持{" "}
+                      {INJECTION_TYPE_LABELS[editing.injectionType ?? "markdown"]}{" "}
+                      语法）
+                    </label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setFullscreenOpen(true)}
+                      title="全屏编辑"
+                      {...pressableSubtle}
+                    >
+                      <IconExpand className="mr-1 size-3.5" />
+                      全屏
+                    </Button>
+                  </div>
                   <Textarea
                     value={editing.content}
                     onChange={(e) => updateField("content", e.target.value)}
@@ -449,8 +472,8 @@ export default function UiTemplatePage() {
                           ? "<!-- 例如：<div class='bg-overlay'>...</div> -->"
                           : "例如：# 标题\n\n正文内容..."
                     }
-                    rows={12}
-                    className="font-mono text-xs"
+                    rows={16}
+                    className="min-h-[300px] font-mono text-xs"
                   />
                 </div>
               </div>
@@ -520,6 +543,17 @@ export default function UiTemplatePage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* 全屏编辑器 */}
+      {editing && (
+        <LuzzyFullscreenEditor
+          open={fullscreenOpen}
+          onOpenChange={setFullscreenOpen}
+          value={editing.content}
+          onChange={(v) => updateField("content", v)}
+          onSend={() => setFullscreenOpen(false)}
+        />
+      )}
     </LuzzyLayout>
   );
 }

@@ -70,6 +70,7 @@ import {
   fadeSlide,
 } from "~/lib/motion-presets";
 import { toast } from "sonner";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "设置 - LUZZY" }];
@@ -115,6 +116,7 @@ export default function SettingsPage() {
   const customRequestBody = useAppStore((s) => s.customRequestBody);
   const apiProviderId = useAppStore((s) => s.apiProviderId);
   const customApiProviders = useAppStore((s) => s.customApiProviders);
+  const apiProviderKeys = useAppStore((s) => s.apiProviderKeys);
 
   // Store actions
   const setApiUrl = useAppStore((s) => s.setApiUrl);
@@ -137,6 +139,7 @@ export default function SettingsPage() {
 
   // 主题（仅外观模式）
   const { theme, setTheme } = useTheme();
+  const confirm = useConfirm();
 
   // 新增供应商弹窗
   const [newProvider, setNewProvider] = React.useState<ApiProvider | null>(
@@ -266,22 +269,32 @@ export default function SettingsPage() {
 
   /** 删除模型 */
   const handleDeleteModel = React.useCallback(
-    (modelId: string, modelName: string) => {
-      if (!confirm(`确定删除模型「${modelName}」吗？`)) return;
+    async (modelId: string, modelName: string) => {
+      const ok = await confirm({
+        title: "删除模型",
+        description: `确定删除模型「${modelName}」吗？`,
+        destructive: true,
+      });
+      if (!ok) return;
       removeModelFromProvider(apiProviderId, modelId);
       toast.success("模型已删除");
     },
-    [apiProviderId, removeModelFromProvider],
+    [apiProviderId, removeModelFromProvider, confirm],
   );
 
   /** 删除供应商 */
   const handleRemoveProvider = React.useCallback(
-    (id: string, name: string) => {
-      if (!confirm(`删除供应商「${name}」？相关配置将丢失。`)) return;
+    async (id: string, name: string) => {
+      const ok = await confirm({
+        title: "删除供应商",
+        description: `删除供应商「${name}」？相关配置将丢失。`,
+        destructive: true,
+      });
+      if (!ok) return;
       void removeCustomProvider(id);
       toast.success("已删除");
     },
-    [removeCustomProvider],
+    [removeCustomProvider, confirm],
   );
 
   return (
@@ -319,7 +332,7 @@ export default function SettingsPage() {
                       }
                       {...pressableSubtle}
                     >
-                      <IconPlus className="mr-1 size-3.5" />
+                      <IconPlus className="mr-1 size-4" />
                       新增
                     </Button>
                   </div>
@@ -379,7 +392,7 @@ export default function SettingsPage() {
                       <label className="text-sm font-medium">API Key</label>
                       <Input
                         type="password"
-                        value={apiKey}
+                        value={apiProviderKeys[apiProviderId] ?? apiKey}
                         onChange={(e) =>
                           setProviderKey(apiProviderId, e.target.value)
                         }
@@ -450,7 +463,7 @@ export default function SettingsPage() {
                           size="sm"
                           onClick={handleValidateCustomBody}
                         >
-                          <IconCheck className="mr-1 size-3.5" />
+                          <IconCheck className="mr-1 size-4" />
                           校验
                         </Button>
                       </div>
@@ -487,7 +500,7 @@ export default function SettingsPage() {
                             size="sm"
                             onClick={handleNewModel}
                           >
-                            <IconPlus className="mr-1 size-3.5" />
+                            <IconPlus className="mr-1 size-4" />
                             添加模型
                           </Button>
                         )}
@@ -553,28 +566,28 @@ export default function SettingsPage() {
                                   </div>
                                 </div>
                                 {!isCurrentBuiltin && (
-                                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                  <div className="flex shrink-0 items-center gap-1">
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="size-7"
+                                      className="size-8"
                                       onClick={() => handleEditModel(m)}
                                       title="编辑"
                                       {...pressableSubtle}
                                     >
-                                      <IconToolKit className="size-3.5" />
+                                      <IconToolKit className="size-4" />
                                     </Button>
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="size-7 text-destructive"
+                                      className="size-8 text-destructive"
                                       onClick={() =>
                                         handleDeleteModel(m.id, m.name)
                                       }
                                       title="删除"
                                       {...pressableSubtle}
                                     >
-                                      <IconTrash className="size-3.5" />
+                                      <IconTrash className="size-4" />
                                     </Button>
                                   </div>
                                 )}
@@ -610,12 +623,12 @@ export default function SettingsPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="size-7 text-destructive opacity-0 transition-opacity group-hover:opacity-100"
+                            className="size-8 text-destructive"
                             onClick={() => handleRemoveProvider(p.id, p.name)}
                             title="删除"
                             {...pressableSubtle}
                           >
-                            <IconTrash className="size-3.5" />
+                            <IconTrash className="size-4" />
                           </Button>
                         </div>
                       ))}
@@ -760,7 +773,7 @@ export default function SettingsPage() {
                         },
                       })
                     }
-                    placeholder="doubao-pro / gpt-4o / ..."
+                    placeholder="deepseek-v4-pro"
                   />
                 </div>
 

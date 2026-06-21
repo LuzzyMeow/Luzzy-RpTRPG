@@ -30,6 +30,7 @@ import type {
 } from "~/types/luzzy";
 import { getItem, setItem } from "~/services/storage";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
@@ -209,6 +210,7 @@ export default function RegexPage() {
   const [isNewEntry, setIsNewEntry] = React.useState(false);
   const [testText, setTestText] = React.useState("");
   const [showRegexHelper, setShowRegexHelper] = React.useState(false);
+  const confirm = useConfirm();
 
   /** 页面加载时从 storage 读取 */
   React.useEffect(() => {
@@ -266,13 +268,18 @@ export default function RegexPage() {
   /** 删除组 */
   const handleDeleteGroup = React.useCallback(
     async (g: RegexScriptGroup) => {
-      if (!confirm(`确定删除正则组「${g.name}」吗？`)) return;
+      const ok = await confirm({
+        title: "删除正则组",
+        description: `确定删除正则组「${g.name}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       const next = groups.filter((x) => x.id !== g.id);
       setGroups(next);
       await persist(next);
       toast.success("已删除");
     },
-    [groups, persist],
+    [groups, persist, confirm],
   );
 
   /** 切换组启用/禁用 */
@@ -319,15 +326,20 @@ export default function RegexPage() {
 
   /** 组内：删除条目 */
   const handleDeleteEntry = React.useCallback(
-    (index: number) => {
+    async (index: number) => {
       if (!editingGroup) return;
-      if (!confirm(`确定删除条目「${editingGroup.entries[index]?.name}」吗？`)) return;
+      const ok = await confirm({
+        title: "删除正则条目",
+        description: `确定删除条目「${editingGroup.entries[index]?.name}」吗？此操作不可撤销。`,
+        destructive: true,
+      });
+      if (!ok) return;
       setEditingGroup({
         ...editingGroup,
         entries: editingGroup.entries.filter((_, i) => i !== index),
       });
     },
-    [editingGroup],
+    [editingGroup, confirm],
   );
 
   /** 组内：切换条目启用 */
@@ -486,7 +498,7 @@ export default function RegexPage() {
                           className="size-8 p-0"
                           onClick={() => handleEditGroup(g)}
                         >
-                          <IconEdit className="size-3.5" />
+                          <IconEdit className="size-4" />
                         </Button>
                         <Button
                           variant="ghost"
@@ -494,7 +506,7 @@ export default function RegexPage() {
                           className="size-8 p-0 text-destructive"
                           onClick={() => void handleDeleteGroup(g)}
                         >
-                          <IconTrash className="size-3.5" />
+                          <IconTrash className="size-4" />
                         </Button>
                       </div>
                     </Card>
@@ -532,7 +544,7 @@ export default function RegexPage() {
                 <div className="flex items-center justify-between">
                   <label className="text-sm font-medium">组内条目</label>
                   <Button variant="outline" size="sm" onClick={handleNewEntry}>
-                    <IconPlus className="mr-1 size-3.5" />
+                    <IconPlus className="mr-1 size-4" />
                     添加条目
                   </Button>
                 </div>
@@ -572,7 +584,7 @@ export default function RegexPage() {
                           className="size-7 p-0"
                           onClick={() => handleEditEntry(entry, idx)}
                         >
-                          <IconEdit className="size-3.5" />
+                          <IconEdit className="size-4" />
                         </Button>
                         <Button
                           variant="ghost"
@@ -580,7 +592,7 @@ export default function RegexPage() {
                           className="size-7 p-0 text-destructive"
                           onClick={() => handleDeleteEntry(idx)}
                         >
-                          <IconTrash className="size-3.5" />
+                          <IconTrash className="size-4" />
                         </Button>
                       </div>
                     ))}
@@ -629,7 +641,7 @@ export default function RegexPage() {
                     className="h-7 text-xs"
                     onClick={() => setShowRegexHelper(true)}
                   >
-                    <IconWand className="mr-1 size-3" />
+                    <IconWand className="mr-1 size-4" />
                     正则助手
                   </Button>
                 </div>

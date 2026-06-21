@@ -35,6 +35,7 @@ import {
   DialogDescription,
 } from "~/components/ui/dialog";
 import { springEnter, pressableSubtle } from "~/lib/motion-presets";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 
 interface AllSessionsListProps {
   /** 所有会话列表 */
@@ -108,6 +109,7 @@ export function AllSessionsList({
   );
   const [renamingSession, setRenamingSession] = React.useState<Session | null>(null);
   const [renameTitle, setRenameTitle] = React.useState("");
+  const confirm = useConfirm();
 
   /** 过滤后的会话 */
   const filteredSessions = React.useMemo(() => {
@@ -268,8 +270,13 @@ export function AllSessionsList({
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            onClick={() => {
-                              if (confirm("确定要删除此会话吗？")) {
+                            onClick={async () => {
+                              const ok = await confirm({
+                                title: "操作确认",
+                                description: `确定删除会话「${session.title || "未命名"}」吗？此操作不可撤销。`,
+                                destructive: true,
+                              });
+                              if (ok) {
                                 onDeleteSession(session.id);
                               }
                             }}

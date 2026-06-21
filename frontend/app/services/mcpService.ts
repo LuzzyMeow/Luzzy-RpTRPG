@@ -566,3 +566,140 @@ export const extractMcpFromRemoteArgs = (
   if (!url) return null;
   return { url, headers };
 };
+
+// ============================================================================
+// MCP 导入配置解析（多服务器版本）
+// ============================================================================
+
+/** parseMcpImportJsonMulti 返回结果 */
+export interface McpImportMultiResult {
+  /** 解析出的 HTTP transport 配置列表 */
+  configs: McpImportConfig[];
+  /** 被跳过的 stdio 服务器名称列表（纯本地命令，无 mcp-remote 桥接） */
+  stdioSkipped: string[];
+}
+
+/**
+ * 从 JSON 文本解析 MCP 导入配置（支持多服务器）
+ *
+ * 支持以下格式：
+ * 1. 扁平格式：{ url, headers, protocolVersion, name? }
+ * 2. 简写格式：{ name, url, ... } 或 { name, mcpServerUrl, ... }
+ * 3. mcpServers 嵌套格式（Claude Desktop / Cursor 通用）：
+ *    { mcpServers: { <name>: { url, ... } | { command, args } } }
+ *
+ * 对于 mcpServers 格式，遍历每个 server 创建对应配置：
+ * - HTTP transport（有 url 字段）：直接提取
+ * - stdio + mcp-remote 桥接：通过 extractMcpFromRemoteArgs 提取 HTTP URL
+ * - 纯 stdio（有 command/args 但无 url 且非 mcp-remote）：跳过并记录到 stdioSkipped
+ *
+ * @param jsonText - JSON 文本
+ * @returns 包含 configs 数组和 stdioSkipped 名称数组的对象
+ * @throws JSON 无效、格式不支持时抛出错误
+ */
+export const parseMcpImportJsonMulti = (
+  jsonText: string,
+): McpImportMultiResult => {
+  const text = String(jsonText || '').trim();
+  if (!text) throw new Error('JSON 不能为空');
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`JSON 无效: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('必须是 JSON 对象');
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const configs: McpImportConfig[] = [];
+  const stdioSkipped: string[] = [];
+
+  // mcpServers 嵌套格式（Claude Desktop / Cursor）
+  if (
+    obj.mcpServers &&
+    typeof obj.mcpServers === 'object' &&
+    !Array.isArray(obj.mcpServers)
+  ) {
+    const servers = obj.mcpServers as Record<string, unknown>;
+    const serverNames = Object.keys(servers);
+    if (serverNames.length === 0) {
+      throw new Error('mcpServers 为空');
+    }
+
+    for (const serverName of serverNames) {
+      const server = servers[serverName] as Record<string, unknown> | undefined;
+      if (!server || typeof server !== 'object') {
+        throw new Error(`mcpServers.${serverName} 不是有效对象`);
+      }
+
+      // 情况 A：HTTP transport（直接有 url 字段）
+      if (typeof server.url === 'string') {
+        const url = String(server.url).trim();
+        if (!url) continue;
+        const headers =
+          server.headers &&
+          typeof server.headers === 'object' &&
+          !Array.isArray(server.headers)
+            ? (server.headers as Record<string, string>)
+            : {};
+        configs.push({
+          name: serverName,
+          url,
+          headers,
+          protocolVersion:
+            typeof server.protocolVersion === 'string'
+              ? server.protocolVersion
+              : undefined,
+        });
+      }
+      // 情况 B：stdio transport + mcp-remote 桥接
+      else if (server.command && Array.isArray(server.args)) {
+        const extracted = extractMcpFromRemoteArgs(
+          (server.args as unknown[]).map((a) => String(a ?? '')),
+        );
+        if (extracted) {
+          configs.push({
+            name: serverName,
+            url: extracted.url,
+            headers: extracted.headers,
+          });
+        } else {
+          // 纯 stdio 格式（无 mcp-remote 桥接），不支持
+          stdioSkipped.push(serverName);
+        }
+      } else {
+        throw new Error(
+          `mcpServers.${serverName} 缺少 url 字段或 command+args`,
+        );
+      }
+    }
+
+    return { configs, stdioSkipped };
+  }
+
+  // 扁平格式 / 简写格式：{ url } | { mcpServerUrl } | { name, url }
+  const url = String(obj.url || obj.mcpServerUrl || '').trim();
+  if (!url) {
+    throw new Error('缺少 url 字段');
+  }
+  const name = String(obj.name || '').trim();
+  const headers =
+    obj.headers &&
+    typeof obj.headers === 'object' &&
+    !Array.isArray(obj.headers)
+      ? (obj.headers as Record<string, string>)
+      : {};
+  configs.push({
+    name,
+    url,
+    headers,
+    protocolVersion:
+      typeof obj.protocolVersion === 'string' ? obj.protocolVersion : undefined,
+  });
+
+  return { configs, stdioSkipped };
+};

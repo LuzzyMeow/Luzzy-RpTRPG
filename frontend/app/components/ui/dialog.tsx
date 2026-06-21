@@ -53,6 +53,27 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  // v0.3.1: 弹窗输入法适配 — 监听 VisualViewport 变化，自适应弹窗高度
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const onResize = () => {
+      const dialogs = document.querySelectorAll("[data-slot='dialog-content']");
+      dialogs.forEach((dialog) => {
+        if (dialog instanceof HTMLElement) {
+          dialog.style.maxHeight = `${window.visualViewport!.height * 0.9}px`;
+        }
+      });
+    };
+    window.visualViewport.addEventListener("resize", onResize);
+    window.visualViewport.addEventListener("scroll", onResize);
+    // 初始触发一次
+    onResize();
+    return () => {
+      window.visualViewport?.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("scroll", onResize);
+    };
+  }, []);
+
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
