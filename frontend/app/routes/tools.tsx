@@ -585,7 +585,7 @@ function SkillTab() {
 
       {/* 编辑/新建弹窗 */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[85vh] min-w-0 overflow-y-auto overflow-x-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>{isNew ? "新建技能" : "编辑技能"}</DialogTitle>
             <DialogDescription>
@@ -624,6 +624,7 @@ function SkillTab() {
                     value={githubUrl}
                     onChange={(e) => setGithubUrl(e.target.value)}
                     placeholder="https://github.com/user/skill-repo"
+                    className="max-w-full break-all font-mono text-xs"
                   />
                   <p className="text-xs text-muted-foreground">
                     输入仓库 URL，系统将自动拉取 SKILL.md 并解析名称与描述。
@@ -674,7 +675,7 @@ function SkillTab() {
                     onChange={(e) => setSkillContent(e.target.value)}
                     placeholder="# 技能名称&#10;> 技能描述&#10;&#10;技能内容..."
                     rows={8}
-                    className="font-mono text-xs"
+                    className="max-w-full font-mono text-xs"
                   />
                 </div>
               )}
@@ -688,6 +689,7 @@ function SkillTab() {
                       value={editing.name}
                       onChange={(e) => updateField("name", e.target.value)}
                       placeholder="技能名称"
+                      className="max-w-full"
                     />
                   </div>
                   <div className="grid gap-2">
@@ -697,13 +699,14 @@ function SkillTab() {
                       onChange={(e) => updateField("description", e.target.value)}
                       placeholder="技能描述"
                       rows={2}
+                      className="max-w-full"
                     />
                   </div>
 
                   {/* 标签 */}
                   <div className="grid gap-2">
                     <label className="text-sm font-medium">标签</label>
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <Input
                         value={tagInput}
                         onChange={(e) => setTagInput(e.target.value)}
@@ -714,6 +717,7 @@ function SkillTab() {
                           }
                         }}
                         placeholder="输入标签后回车"
+                        className="max-w-full"
                       />
                       <Button size="sm" variant="outline" onClick={handleAddTag}>
                         <IconTag className="size-4" />
@@ -1168,7 +1172,7 @@ function McpTab() {
 
       {/* 编辑弹窗 */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[85vh] min-w-0 overflow-y-auto overflow-x-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>{isNew ? "新建 MCP 工具" : "编辑 MCP 工具"}</DialogTitle>
             <DialogDescription>配置 HTTP MCP 服务器</DialogDescription>
@@ -1181,16 +1185,17 @@ function McpTab() {
                   value={editing.name}
                   onChange={(e) => updateField("name", e.target.value)}
                   placeholder="工具名称"
+                  className="max-w-full"
                 />
               </div>
               <div className="grid gap-2">
                 <label className="text-sm font-medium">MCP 服务器 URL</label>
-                <div className="flex gap-2">
+                <div className="flex min-w-0 gap-2">
                   <Input
                     value={editing.mcpServerUrl ?? ""}
                     onChange={(e) => updateField("mcpServerUrl", e.target.value)}
                     placeholder="https://..."
-                    className="flex-1"
+                    className="flex-1 max-w-full break-all font-mono text-xs"
                   />
                   {/* v0.3.0 新增：测试连接按钮 */}
                   <Button
@@ -1253,6 +1258,7 @@ function McpTab() {
                   value={editing.mcpServerName ?? ""}
                   onChange={(e) => updateField("mcpServerName", e.target.value)}
                   placeholder="服务器标识"
+                  className="max-w-full"
                 />
               </div>
               <div className="grid gap-2">
@@ -1262,6 +1268,7 @@ function McpTab() {
                   onChange={(e) => updateField("description", e.target.value)}
                   placeholder="工具描述（给 AI 看）"
                   rows={2}
+                  className="max-w-full"
                 />
               </div>
               <div className="grid gap-2">
@@ -1328,7 +1335,7 @@ function McpTab() {
 
       {/* JSON 导入弹窗 */}
       <Dialog open={showJsonImport} onOpenChange={setShowJsonImport}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="min-w-0 overflow-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>JSON 导入 MCP 工具</DialogTitle>
             <DialogDescription>
@@ -1340,7 +1347,7 @@ function McpTab() {
             onChange={(e) => setJsonInput(e.target.value)}
             placeholder={'{\n  "mcpServers": {\n    "github": { "url": "https://..." }\n  }\n}'}
             rows={8}
-            className="font-mono text-xs"
+            className="max-w-full font-mono text-xs"
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowJsonImport(false)}>
@@ -1625,7 +1632,7 @@ function BuiltinToolsTab() {
         open={!!editingType}
         onOpenChange={(o) => !o && setEditingType(null)}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="min-w-0 overflow-hidden max-w-md">
           <DialogHeader>
             <DialogTitle>
               角色卡绑定 -{" "}

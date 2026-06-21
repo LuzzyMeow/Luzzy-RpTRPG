@@ -390,7 +390,7 @@ export default function UiTemplatePage() {
 
       {/* 新建/编辑弹窗 */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-h-[90vh] sm:max-w-3xl">
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-3xl">
           <DialogHeader>
             <DialogTitle>{isNew ? "新建模板" : "编辑模板"}</DialogTitle>
             <DialogDescription>
@@ -493,7 +493,7 @@ export default function UiTemplatePage() {
 
       {/* 预览弹窗 */}
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
-        <DialogContent className="max-h-[90vh] sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {viewing?.name}
@@ -526,7 +526,7 @@ export default function UiTemplatePage() {
         open={!!showCharDialog}
         onOpenChange={(o) => !o && setShowCharDialog(null)}
       >
-        <DialogContent className="max-h-[80vh] sm:max-w-md">
+        <DialogContent className="max-h-[80vh] min-w-0 overflow-hidden max-w-md">
           <DialogHeader>
             <DialogTitle>角色卡绑定</DialogTitle>
             <DialogDescription>

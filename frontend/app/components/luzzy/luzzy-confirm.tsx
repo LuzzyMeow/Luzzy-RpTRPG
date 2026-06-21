@@ -75,7 +75,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     <ConfirmContext.Provider value={{ confirm }}>
       {children}
       <Dialog open={state.open} onOpenChange={(open) => !open && handleClose(false)}>
-        <DialogContent showCloseButton={false} className="max-w-[calc(100%-2rem)] sm:max-w-md">
+        <DialogContent showCloseButton={false} className="min-w-0 overflow-hidden max-w-sm">
           <DialogHeader className="flex flex-col items-center gap-2 text-center">
             {state.showIcon && (
               <motion.div

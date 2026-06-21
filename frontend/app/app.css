@@ -742,13 +742,14 @@
 }
 
 /* v0.3.1: 弹窗输入法适配 — 移动端弹窗高度自适应，避免输入法弹出时显示 bug */
-/* v0.3.8: 将 width 改为 max-width，避免窄内容弹窗被强制撑满，同时保留不超出屏幕的限制 */
+/* v0.3.9: 弹窗宽度由基础组件统一控制，此处仅保留高度/overflow/box-sizing 保护 */
 @media (max-width: 768px) {
   [data-slot="dialog-content"] {
     max-height: 100dvh !important;
     height: auto;
     max-width: calc(100% - 2rem) !important;
-    width: auto !important;
-    min-width: 0 !important;
+    box-sizing: border-box;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
   }
 }

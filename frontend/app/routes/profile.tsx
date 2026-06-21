@@ -468,7 +468,7 @@ export default function ProfilePage() {
       {/* 编辑弹窗 */}
       {/* v0.3.7: 全屏编辑器打开时关闭 Dialog，避免 z-index/focus 冲突导致崩溃 */}
       <Dialog open={!!editing && !descFullscreenOpen} onOpenChange={(open) => !open && handleCancel()}>
-        <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>{isNew ? "新建档案" : "编辑档案"}</DialogTitle>
             <DialogDescription>
@@ -482,7 +482,7 @@ export default function ProfilePage() {
                 {/* 头像上传 */}
                 <div className="grid gap-2">
                   <label className="text-sm font-medium">头像</label>
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <Avatar className="size-16 shrink-0 rounded-lg">
                       <AvatarImage
                         src={editing.avatar}
@@ -529,6 +529,7 @@ export default function ProfilePage() {
                     value={editing.name}
                     onChange={(e) => updateField("name", e.target.value)}
                     placeholder="你的名称（将注入到聊天中）"
+                    className="max-w-full"
                   />
                 </div>
 
@@ -536,7 +537,7 @@ export default function ProfilePage() {
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium">描述</label>
-                    <div className="flex items-center gap-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -584,7 +585,7 @@ export default function ProfilePage() {
                     }
                     placeholder="你的自我介绍、偏好、设定等（将注入到聊天中）"
                     rows={12}
-                    className="min-h-[200px]"
+                    className="max-w-full min-h-[200px]"
                   />
                   <p className="text-xs text-muted-foreground">
                     支持 Markdown 格式。导入/导出仅针对描述内容。

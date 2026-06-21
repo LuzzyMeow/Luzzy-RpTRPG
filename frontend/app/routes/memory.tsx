@@ -1333,7 +1333,7 @@ function SkillEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="min-w-0 overflow-hidden max-w-md">
         <DialogHeader>
           <DialogTitle>
             {isAddingNew ? "新增策略" : "编辑策略"}

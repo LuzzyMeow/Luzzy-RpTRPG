@@ -99,7 +99,7 @@ export default function TrpgPage() {
 
       {/* TRPG 模式说明弹窗 */}
       <Dialog open={showNotice} onOpenChange={setShowNotice}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="min-w-0 overflow-hidden max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <motion.span

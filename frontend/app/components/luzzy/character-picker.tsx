@@ -253,7 +253,7 @@ export function CharacterPicker({
         open={!!detailCharacter}
         onOpenChange={(o) => !o && setDetailCharacter(null)}
       >
-        <DialogContent className="max-h-[80vh] overflow-hidden">
+        <DialogContent className="max-h-[80vh] min-w-0 overflow-hidden max-w-2xl">
           <DialogHeader>
             <DialogTitle>{detailCharacter?.name}</DialogTitle>
           </DialogHeader>
