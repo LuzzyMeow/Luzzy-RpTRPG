@@ -10,6 +10,7 @@
  * - memory: 记忆操作（v0.4.1 新增）
  * - world: 世界书操作（v0.4.1 新增）
  * - tool: 工具调用详情（v0.4.1 新增）
+ * - stream: 流式输出诊断（v0.4.6 新增）
  *
  * 存储路径：/Documents/LUZZY/logs/YYYYMMDD.log
  * 每次启动创建/追加当日 log 文件，启动时清理 3 天前的 log 文件
@@ -18,7 +19,8 @@
  */
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-type LogCategory = 'app' | 'agent' | 'api' | 'user' | 'chat' | 'memory' | 'world' | 'tool';
+type LogCategory = 'app' | 'agent' | 'api' | 'user' | 'chat' | 'memory' | 'world' | 'tool' | 'stream';
+export type { LogLevel, LogCategory };
 
 interface LogEntry {
   timestamp: string;
@@ -26,6 +28,7 @@ interface LogEntry {
   category: LogCategory;
   message: string;
 }
+export type { LogEntry };
 
 /** 日志级别优先级 */
 const LEVEL_PRIORITY: Record<LogLevel, number> = {

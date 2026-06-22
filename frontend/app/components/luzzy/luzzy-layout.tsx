@@ -21,6 +21,8 @@ interface LuzzyLayoutProps {
   actions?: React.ReactNode;
   /** 是否显示侧边栏（默认 true） */
   showSidebar?: boolean;
+  /** 顶部 AppHeader 额外样式 */
+  headerClassName?: string;
   /** 主内容区额外样式 */
   contentClassName?: string;
 }
@@ -30,14 +32,19 @@ function AppHeader({
   title,
   actions,
   onMenuClick,
+  className,
 }: {
   title?: string;
   actions?: React.ReactNode;
   onMenuClick?: () => void;
+  className?: string;
 }) {
   return (
     <header
-      className="relative flex shrink-0 items-center gap-2 border-b border-border/20 bg-background/40 px-4 backdrop-blur-xl backdrop-saturate-150"
+      className={cn(
+        "relative flex shrink-0 items-center gap-2 border-b border-border/20 bg-background/40 px-4 backdrop-blur-xl backdrop-saturate-150",
+        className,
+      )}
       style={{
         paddingTop: "env(safe-area-inset-top)",
         height: "calc(2.75rem + env(safe-area-inset-top))",
@@ -56,7 +63,7 @@ function AppHeader({
       </Button>
       {/* 标题 */}
       {title && (
-        <h1 className="flex-1 truncate text-base font-semibold">{title}</h1>
+        <h1 className="flex-1 truncate text-base font-semibold drop-shadow-sm">{title}</h1>
       )}
       {/* 右侧操作区 */}
       {actions && <div className="flex items-center gap-1">{actions}</div>}
@@ -70,6 +77,7 @@ export function LuzzyLayout({
   title,
   actions,
   showSidebar = true,
+  headerClassName,
   contentClassName,
 }: LuzzyLayoutProps) {
   const toggleSideMenu = useUIStore((state) => state.toggleSideMenu);
@@ -81,7 +89,12 @@ export function LuzzyLayout({
 
       {/* 主内容区 */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <AppHeader title={title} actions={actions} onMenuClick={toggleSideMenu} />
+        <AppHeader
+          title={title}
+          actions={actions}
+          onMenuClick={toggleSideMenu}
+          className={headerClassName}
+        />
         <main
           className={cn(
             "flex-1 overflow-hidden min-h-0 min-w-0",

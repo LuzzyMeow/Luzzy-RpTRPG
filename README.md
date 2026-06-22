@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 <img src="frontend/public/icons/icon-192.png" width="120" height="120" alt="LUZZY Logo" />
 
@@ -8,7 +8,7 @@
 > 
 > *Every conversation feels like opening a fresh role-playing novel.*
 
-[![Version](https://img.shields.io/badge/version-v0.4.6-9d4edd?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.5.0-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -38,7 +38,7 @@
 
 | 💬 沉浸式聊天 | 🎭 角色卡生态 | 🧠 长期记忆 | 🛠️ 工具系统 |
 |:---:|:---:|:---:|:---:|
-| CoT 思考链可视化<br>流式输出 · 翻译 · 重试分支<br>全屏 Markdown 编辑器 | SillyTavern PNG 导入/导出<br>世界书 · 正则脚本 · 收藏<br>滑动操作 · 头像预览 | ACE 三步循环记忆<br>向量相似度检索<br>嵌入去重与评分淘汰 | MCP / SKILL 扩展<br>内置记忆/搜索工具<br>多工具全局模式 |
+| CoT 思考链可视化（卡片化节点）<br>聊天页玻璃拟态沉浸背景<br>流式输出 · 翻译 · 重试分支 | SillyTavern PNG 导入/导出<br>世界书 · 正则脚本 · 收藏<br>滑动操作 · 头像预览 | ACE 三步循环记忆<br>向量相似度检索<br>嵌入去重与评分淘汰 | MCP / SKILL 扩展<br>内置记忆/搜索工具<br>多工具全局模式 |
 
 </div>
 
@@ -114,7 +114,7 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.4.6-debug.apk`
+📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.5.0-debug.apk`
 
 ---
 
@@ -142,6 +142,12 @@ RP-Hub/
 ---
 
 ## 📰 最新动态 · What's New
+
+### v0.5.0
+
+思考链卡片 UI 完全重构：二级节点改为独立玻璃卡片，工具调用与结果合并为单个节点，生成中节点脉冲高亮；修复工具卡片初始宽度收缩问题。聊天页顶部/底部升级为高级透明玻璃拟态，在保留自定义背景隐约可见的同时，功能按钮通过半透明胶囊容器保持清晰可点。
+
+> Thinking chain cards fully rebuilt: secondary nodes become standalone glass cards, tool calls and results merge into single nodes, running nodes pulse-highlight; fixed initial tool-card width shrink. Chat page header/footer upgraded to advanced transparent glassmorphism, keeping custom backgrounds faintly visible while ensuring all action buttons remain clearly visible via semi-transparent capsule containers.
 
 ### v0.4.6
 

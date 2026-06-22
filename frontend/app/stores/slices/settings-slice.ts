@@ -159,7 +159,7 @@ export const DEFAULT_BUILTIN_TOOL_CONFIGS: BuiltinToolConfig[] = [
   },
   {
     type: "world-recall", // v0.4.3 新增:世界书召回（嵌入模型）
-    enabled: false, // 默认关闭，需配置嵌入模型
+    enabled: true, // v0.5.0: 默认开启
     resultCount: 8,
     searchGlobalMemory: false,
     enabledForCharacters: [],

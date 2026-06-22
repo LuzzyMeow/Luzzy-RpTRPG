@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.5.0
+
+### 🎨 思考链 UI 完全重构（重点）
+
+- **卡片化设计**：`luzzy-thinking-timeline.tsx` 将所有二级节点改为独立卡片：`rounded-lg` + `bg-card/60` + `backdrop-blur-sm` + 阴影，节点之间用细线连接，生成中节点带 `border-primary/30` 高亮与脉冲状态图标
+- **工具调用合并**：新增 `CombinedToolStep` 类型与 `mergeAgentSteps` 逻辑，把相邻的 `tool_call` 与 `tool_result` 合并为单个节点卡片；调用参数、执行结果、错误信息分块显示（蓝/绿/红三色区分）
+- **工具卡片宽度修复**：为 `motion.div` 与外层容器添加 `w-full`，解决 Framer Motion `layout` 动画在初始阶段按内容 intrinsic 宽度收缩的问题
+- **展开/收起优化**：`luzzy-chat-message.tsx` 中 CotCard 生成完成后自动收起；一级思考卡片使用 glassmorphism 风格（`rounded-xl` + `bg-card/50` + `backdrop-blur-md`），显示步骤数徽章与最后一步预览
+
+### 🌈 聊天页玻璃拟态沉浸体验
+
+- **顶部标题栏透明化**：`chat.tsx` 给 `LuzzyLayout` 传入 `headerClassName`：`bg-gradient-to-b from-background/80 via-background/45 to-transparent`，顶部功能按钮用圆角胶囊容器（`bg-background/40 backdrop-blur-md`）包裹，标题加 `drop-shadow-sm`
+- **底部输入区透明化**：`luzzy-chat-input.tsx` 改为 `bg-gradient-to-t from-background/85 via-background/55 to-transparent`，所有 ghost 按钮加 `rounded-full bg-background/30 hover:bg-background/50` 确保在复杂自定义背景下依然清晰可见
+- **可读性保证**：发送按钮保持实心，文字与图标均保留足够对比度，背景图片只是隐约可见而不会让功能按键不可见
+
+### 🔧 工具系统深度修复（本 session 重点）
+
+- **记忆召回修正确数据源**：`memory-recall` 预执行从搜索空库 `longTermMemory` 改为搜索会话级向量记忆分片 `searchVectorMemoryWithScore`，使用最新用户消息自动匹配历史对话轮次。移除对 `longTermMemoryCharacterIds` 的依赖，改为检查 `memorySettings.embeddingModel`
+- **世界书召回默认开启**：`world-recall` 的 `DEFAULT_BUILTIN_TOOL_CONFIGS` 中 `enabled: false` → `true`，首次启动即为开启状态
+- **关键词检索数据源统一**：`executeToolByName` 中 keyword-search 优先搜索 `vectorMemoryShards`（会话级记忆），无分片时回退到原始 `get().messages`，与预执行路径保持一致
+- **工具描述全面重写**：`BUILTIN_TOOL_INFO` 中 6 个内置工具的描述增加具体使用场景和参数说明（如 `vector-memory`：当需要回忆之前对话的细节时调用；`keyword-search`：当需要查找特定关键词出现过的对话时使用），`memory-recall` 标记为被动触发不暴露给 AI
+- **重复召回去重**：移除 `buildContext` 3.7 节中重复的 `searchVectorMemory` 调用（已由 memory-recall 预执行覆盖），减少双倍嵌入 API 消耗
+- **MemoryRecallsCard 去重**：记忆召回结果统一在时间线内用 ToolNode 展示，不再重复渲染独立卡片
+
+### 👤 用户档案生效（重点）
+
+- **档案注入 API 请求**：`chat-slice.ts` `callApiAndUpdate` 中 `user: DEFAULT_USER` 改为从 store 动态读取当前激活的用户档案（`activeProfileId` → `userProfiles` → 回退 `user` → 最终回退 `DEFAULT_USER`）。用户填写的 name 和 description 现在会出现在每次 API 请求的 `[User Info]` 区块中
+
+### 🚀 流式输出精修
+
+- **parseCot 流式不提取未闭合标签**：`parseCot` 新增 `includeUnclosed` 参数（默认 `true`），流式 `onChunk` 中传 `false`，仅提取已闭合 `<cot>...</cot>` 标签内容；最终态兜底 `includeUnclosed=true` 不丢未闭合内容
+- **正文推理模型兼容**：phase="main" 时 `chunk.reasoningContent` 也计入 `accumulatedContent`，解决 DeepSeek-R1/doubao-thinking 等模型正文输出在 reasoning 字段导致的空白问题
+- **agentSteps 继承**：请求 2 的 `thinkingStepAdded` 从 `hasExistingThinking` 初始化，不再重置为 `false`，避免请求 2 的 reasoning 输出追加重复的 thinking 步骤
+
+### 📊 日志系统全面升级
+
+- **流式诊断日志**：`chat-slice.ts` 新增 5 处流式关键路径日志（chunk 大小、updateMessage 参数、请求完成状态、请求前后 agentSteps 对比），logger 新增 `stream` 类别
+- **记忆全链路日志**：`memoryService.ts` 6 处 `console.log` 升级为 `logger`，覆盖 `buildVectorMemory` 入口/跳过/完成、`searchVectorMemory` 入口/完成、`loadVectorMemoryShards`、`saveVectorMemoryShards`
+- **工具预执行跳过原因日志**：`memory-recall` 和 `keyword-search` 在条件不满足时输出具体跳过原因（enabled/memorySettings/shards 状态）
+- **About 页日志查看器增强**：分类 Tab 筛选（全部/流式/API/工具/记忆/聊天/Agent）、级别过滤（debug/info/warn/error）、实时自动刷新开关（500ms）、最多 1000 条、点击展开完整详情、一键复制筛选后日志
+- **日志导出分享**：新增分享按钮，导出全部日志为 JSON（含版本号和时间戳），Android 唤出系统分享面板，Web 自动下载文件
+
+### 🏗️ 版本号
+
+- v0.4.6 → v0.5.0（package.json + frontend/package.json + build.gradle versionCode 25 + about.tsx）
+
 ## v0.4.6
 
 ### 🔧 工具系统修复（重点）

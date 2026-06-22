@@ -469,14 +469,16 @@ export default function ChatPage() {
     <>
       <LuzzyLayout
         title={currentCharacter.name}
+        headerClassName="border-b border-border/15 bg-gradient-to-b from-background/80 via-background/45 to-transparent"
         actions={
-          <>
+          <div className="flex items-center gap-0.5 rounded-full border border-border/10 bg-background/40 px-1 py-0.5 backdrop-blur-md">
             {/* v0.3.5: 快捷切换角色 */}
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setShowCharacterPicker(true)}
               title="切换角色"
+              className="size-8 rounded-full hover:bg-background/50"
             >
               <IconUserGroup className="size-4" />
             </Button>
@@ -486,6 +488,7 @@ export default function ChatPage() {
               size="icon"
               onClick={handleCreateSession}
               title="新建会话"
+              className="size-8 rounded-full hover:bg-background/50"
             >
               <IconPlus className="size-4" />
             </Button>
@@ -495,6 +498,7 @@ export default function ChatPage() {
               size="icon"
               onClick={() => setShowSessionList(true)}
               title="当前会话列表"
+              className="size-8 rounded-full hover:bg-background/50"
             >
               <IconMenu className="size-4" />
             </Button>
@@ -504,10 +508,11 @@ export default function ChatPage() {
               size="icon"
               onClick={() => setShowAllSessions(true)}
               title="所有会话列表"
+              className="size-8 rounded-full hover:bg-background/50"
             >
               <IconGrid className="size-4" />
             </Button>
-          </>
+          </div>
         }
       >
         <div className="flex h-full">

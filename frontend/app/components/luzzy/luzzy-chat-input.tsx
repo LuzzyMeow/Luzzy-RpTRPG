@@ -217,7 +217,10 @@ export function LuzzyChatInput({
     <>
       <div
         ref={containerRef}
-        className={cn("border-t bg-background/80 backdrop-blur-xl", className)}
+        className={cn(
+          "border-t border-border/15 bg-gradient-to-t from-background/85 via-background/55 to-transparent backdrop-blur-xl backdrop-saturate-150",
+          className,
+        )}
         style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
       >
         {/* 第一排：文本输入框（内嵌全屏按钮） + 发送按钮 */}
@@ -239,7 +242,7 @@ export function LuzzyChatInput({
               onClick={() => setShowFullscreen(true)}
               disabled={disabled}
               title="全屏编辑"
-              className="absolute top-1/2 right-2 size-9 -translate-y-1/2"
+              className="absolute top-1/2 right-2 size-9 -translate-y-1/2 rounded-full bg-background/40 hover:bg-background/60"
               {...pressableSubtle}
             >
               <IconExpand className="size-5" />
@@ -270,6 +273,7 @@ export function LuzzyChatInput({
               onClick={() => setShowModelPicker(true)}
               disabled={disabled}
               title="切换模型"
+              className="rounded-full bg-background/30 hover:bg-background/50"
               {...pressableSubtle}
             >
               <IconToolKit className="size-5" />
@@ -280,7 +284,10 @@ export function LuzzyChatInput({
               onClick={() => !thinkingDepthLockedByJson && setShowThinkingDepth(true)}
               disabled={disabled || thinkingDepthLockedByJson}
               title={thinkingDepthLockedByJson ? "思考深度已在请求体内设置" : "思考深度"}
-              className={cn(thinkingDepthLockedByJson && "opacity-40")}
+              className={cn(
+                "rounded-full bg-background/30 hover:bg-background/50",
+                thinkingDepthLockedByJson && "opacity-40",
+              )}
               {...pressableSubtle}
             >
               <IconLight className="size-5" />
@@ -306,6 +313,7 @@ export function LuzzyChatInput({
               onClick={() => setShowPlusMenu(true)}
               disabled={disabled || isGenerating}
               title="更多"
+              className="rounded-full bg-background/30 hover:bg-background/50"
               {...pressableSubtle}
             >
               <IconPlus className="size-5" />

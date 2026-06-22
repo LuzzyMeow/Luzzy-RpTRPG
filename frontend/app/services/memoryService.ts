@@ -15,6 +15,8 @@
  * 从旧 Vue 3 app.js 迁移，改为纯函数风格，状态由 zustand store 管理。
  */
 
+import { logger } from "~/services/logger";
+
 import type {
   ChatMessage,
   Character,
@@ -403,6 +405,7 @@ export const getEmbedding = async (
 ): Promise<number[]> => {
   const model = (settings.embeddingModel || '').trim();
   console.log('[Memory] getEmbedding 调用:', { model: settings.embeddingModel, textLength: text.length });
+  logger.debug("memory", `getEmbedding: 模型=${settings.embeddingModel} 文本长度=${text.length}`);
 
   // 缓存命中短路：相同文本+模型直接返回缓存的向量
   if (model) {
@@ -502,8 +505,11 @@ export const buildVectorMemory = async (
   providerKeys: Record<string, string>,
 ): Promise<VectorMemoryShard[]> => {
   // 无嵌入模型时跳过向量记忆构建（系统自动判断启用状态）
-  if (!settings.embeddingModel) return [];
-  console.log('[Memory] buildVectorMemory 启动:', { messageCount: messages.length, model: settings.embeddingModel });
+  if (!settings.embeddingModel) {
+    logger.debug("memory", "buildVectorMemory 跳过（无嵌入模型）");
+    return [];
+  }
+  logger.info("memory", `buildVectorMemory 启动: 消息数=${messages.length} 模型=${settings.embeddingModel}`);
 
   // 过滤掉开场白（如果角色卡有开场白且首条消息匹配）
   let filteredMessages = messages;
@@ -515,7 +521,11 @@ export const buildVectorMemory = async (
   }
 
   const turns = groupMessagesByTurn(filteredMessages);
-  if (turns.length === 0) return [];
+  if (turns.length === 0) {
+    logger.debug("memory", "buildVectorMemory 跳过（无轮次）");
+    return [];
+  }
+  logger.debug("memory", `buildVectorMemory: ${turns.length} 轮次, 分${Math.ceil(turns.length / MEMORY_VECTOR_BATCH_SIZE)} 批请求嵌入`);
 
   const shards: VectorMemoryShard[] = [];
 
@@ -541,6 +551,7 @@ export const buildVectorMemory = async (
   }
 
   console.log('[Memory] buildVectorMemory 完成:', { shardCount: shards.length });
+  logger.info("memory", `buildVectorMemory 完成: 创建 ${shards.length} 个分片`);
   return shards;
 };
 
@@ -567,6 +578,7 @@ export const searchVectorMemory = async (
   providerKeys: Record<string, string>,
 ): Promise<VectorMemoryShard[]> => {
   console.log('[Memory] searchVectorMemory 启动:', { query, shardCount: shards.length, topK: settings.vectorTopK });
+  logger.info("memory", `searchVectorMemory: 查询="${query.slice(0,50)}" 分片数=${shards.length} topK=${settings.vectorTopK}`);
   const scored = await searchVectorMemoryWithScore(
     query,
     shards,
@@ -577,6 +589,7 @@ export const searchVectorMemory = async (
   );
   const results = scored.map((item) => item.shard);
   console.log('[Memory] searchVectorMemory 完成:', { resultCount: results.length });
+  logger.info("memory", `searchVectorMemory 完成: 找到 ${results.length} 条结果`);
   return results;
 };
 
@@ -685,6 +698,8 @@ export const loadVectorMemoryShards = async (
     ? `${VECTOR_MEMORY_STORAGE_KEY_PREFIX}${characterUuid}_${sessionId}`
     : `${VECTOR_MEMORY_STORAGE_KEY_PREFIX}${characterUuid}`;
   const data = await getItem<VectorMemoryShard[]>('memory', key);
+  const count = data?.length ?? 0;
+  logger.debug("memory", `loadVectorMemoryShards: key=${key} 分片数=${count}`);
   return data ?? [];
 };
 
@@ -708,6 +723,7 @@ export const saveVectorMemoryShards = async (
   const key = sessionId
     ? `${VECTOR_MEMORY_STORAGE_KEY_PREFIX}${characterUuid}_${sessionId}`
     : `${VECTOR_MEMORY_STORAGE_KEY_PREFIX}${characterUuid}`;
+  logger.info("memory", `saveVectorMemoryShards: key=${key} 分片数=${shards.length}`);
   await setItem('memory', key, shards);
 };
 

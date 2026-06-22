@@ -103,9 +103,7 @@ export default function Markdown({
   const workbench = useOptionalWorkbench();
   // LUZZY 的 SettingsSlice 扁平结构无 displaySetting，使用默认值（showLineNumbers/codeBlockAutoWrap 均为 false）
   const displaySetting: { showLineNumbers?: boolean; codeBlockAutoWrap?: boolean } = {};
-  // v0.4.6: useDeferredValue 背压机制，避免高频流式更新导致 Markdown 渲染卡顿
-  const deferredContent = React.useDeferredValue(content);
-  const processedContent = React.useMemo(() => preProcess(deferredContent), [deferredContent]);
+  const processedContent = React.useMemo(() => preProcess(content), [content]);
   const handlePreviewCode = React.useCallback(
     (language: string, code: string) => {
       if (!allowCodePreview || !workbench) return;
@@ -134,6 +132,7 @@ export default function Markdown({
         rehypePlugins={[rehypeKatex, rehypeRaw]}
         plugins={{ cjk: cjk }}
         isAnimating={isAnimating}
+        animated={isAnimating ? { animation: "fadeIn", sep: "word", duration: 150 } : false}
         controls={{code: false, mermaid: false}}
         components={{
           pre: ({ children }) => <>{children}</>,

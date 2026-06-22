@@ -56,7 +56,7 @@ import {
   executeActiveToolCall,
   filterToolsForCharacter,
 } from "~/services/toolService";
-import { loadVectorMemoryShards, searchLongTermMemory, searchVectorMemory, getEmbedding, cosineSimilarity } from "~/services/memoryService";
+import { loadVectorMemoryShards, searchVectorMemory, searchVectorMemoryWithScore, getEmbedding, cosineSimilarity } from "~/services/memoryService";
 import { BUILTIN_PRESET_DEFAULTS } from "~/services/presetContent";
 import { BUILTIN_PROVIDERS } from "~/stores/slices/settings-slice";
 import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
@@ -92,7 +92,7 @@ const getDefaultPresets = (): Preset[] => {
  * 默认记忆设置（未配置时使用）
  */
 const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
-  enabled: false,
+  enabled: true,
   embeddingModel: "",
   embeddingApiProviderId: "",
   maxMemories: 100,
@@ -243,7 +243,7 @@ export const createChatSlice: StateCreator<
         getItem<GlobalMemory>("memory", "global_memory"),
         getItem<RegexScriptGroup[]>("regexScripts", "regexGroups"),
         getItem<RegexScript[]>("regexScripts", "regexScripts"),
-        getItem<MemorySettings>("settings", "memorySettings"),
+        getItem<MemorySettings>("memory", "memorySettings"),
         currentCharacter
           ? loadVectorMemoryShards(currentCharacter.uuid, currentSessionId ?? undefined)
           : Promise.resolve<VectorMemoryShard[]>([]),
@@ -270,6 +270,7 @@ export const createChatSlice: StateCreator<
       }
       const memorySettings = memorySettingsData ?? DEFAULT_MEMORY_SETTINGS;
       const vectorMemoryShards = vectorMemoryShardsData ?? [];
+      logger.debug("memory", `向量记忆分片加载: ${vectorMemoryShards.length} 个`);
 
       // v0.3.0 新增：从 store 读取内置工具配置，判断是否启用全局记忆检索
       const builtinToolConfigs = get().builtinToolConfigs;
@@ -367,10 +368,19 @@ export const createChatSlice: StateCreator<
         skipToolsInjection: boolean = false, // v0.4.6: 续写请求时不注入 tools
       ): Promise<{ content: string; reasoning: string; cot: string; toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> }> => {
         // 构建 API 上下文
+        // v0.5.0: 从 store 读取当前激活的用户档案，覆写默认空档案
+        const activeUser = (() => {
+          const st = get();
+          if (st.activeProfileId) {
+            const profile = (st.userProfiles ?? []).find(p => p.uuid === st.activeProfileId);
+            if (profile?.name?.trim() || profile?.description?.trim()) return profile;
+          }
+          return (st.user?.name?.trim() || st.user?.description?.trim()) ? st.user : DEFAULT_USER;
+        })();
         const { apiMessages: rawApiMessages, appliedSkillIds: ctxAppliedSkillIds } = await buildContext({
           messages: contextMsgs,
           character: currentCharacter,
-          user: DEFAULT_USER,
+          user: activeUser,
           presets,
           worldInfoEntries,
           globalMemory,
@@ -527,7 +537,9 @@ export const createChatSlice: StateCreator<
         // 避免第二次请求(callApiAndUpdate)覆盖第一次请求已写入的 force 预执行/记忆召回步骤
         const existingMsg = get().messages.find(m => m.id === msgId);
         const agentSteps: AgentStep[] = existingMsg?.agentSteps ? [...existingMsg.agentSteps] : [];
-        let thinkingStepAdded = false;
+        // v0.4.6: 继承已有消息的 thinking 状态，避免请求2重复添加 thinking step
+        const hasExistingThinking = agentSteps.some(s => s.type === "thinking");
+        let thinkingStepAdded = hasExistingThinking;
         // v0.4.4: 累积原生 tool_calls（流式增量合并）
         const accumulatedToolCalls: Array<{
           id: string;
@@ -582,6 +594,16 @@ export const createChatSlice: StateCreator<
                 accumulatedContent += chunk.content;
                 set({ isThinking: false, isReceiving: true });
               }
+              // v0.4.6: phase="main" 时，reasoning_content 也计入正文
+              // DeepSeek-R1 等模型在第二次请求仍输出 reasoning 而非 content
+              if (phase === "main" && chunk.reasoningContent) {
+                accumulatedContent += chunk.reasoningContent;
+              }
+
+              // v0.4.6: 流式诊断日志
+              if (chunk.content || chunk.reasoningContent) {
+                logger.debug("stream", `chunk: content+${chunk.content.length} reasoning+${chunk.reasoningContent.length} 累计${accumulatedContent.length}`);
+              }
 
               // v0.4.4: 累积原生 tool_calls（流式增量合并）
               if (chunk.toolCalls && chunk.toolCalls.length > 0) {
@@ -619,7 +641,8 @@ export const createChatSlice: StateCreator<
                 hasClosingTag;
 
               if (shouldParse) {
-                lastCotResult = parseCot(accumulatedContent, false);
+                // v0.4.6: 流式过程中不提取未闭合标签内容，仅依赖已闭合的 <cot>...</cot> 块
+                lastCotResult = parseCot(accumulatedContent, false, false);
                 lastParseLength = accumulatedContent.length;
               }
               const cotResult = lastCotResult!;
@@ -652,7 +675,10 @@ export const createChatSlice: StateCreator<
               // v0.3.7: 间隔从 60ms 降至 30ms，提升流式输出流畅度（约 33fps）
               // v0.4.1: 降至 16ms(约 60fps),实现逐字流式输出
               const now = Date.now();
-              if (now - lastUpdateTick >= 16 || hasClosingTag) {
+              // v0.4.6: 流式诊断日志（记录每次 updateMessage 调用）
+              const willUpdate = (now - lastUpdateTick >= 16 || hasClosingTag);
+              if (willUpdate) {
+                logger.debug("stream", `update: phase=${phase} cot=${finalCot.length}chars content=${(cotResult?.main || "").length}chars steps=${agentSteps.length}`);
                 lastUpdateTick = now;
                 // 实时 Token 统计估算（4 字符 ≈ 1 token）
                 const elapsedMs = now - requestStartTime;
@@ -844,6 +870,8 @@ export const createChatSlice: StateCreator<
           accumulatedReasoning +
           (finalCotResult.cot ? "\n" + finalCotResult.cot : "")
         ).trim();
+        // v0.4.6: 流式诊断日志（记录请求完成状态）
+        logger.info("stream", `请求完成: phase=${phase} 总字符=${accumulatedContent.length} cot=${finalCotCombined.length}chars steps=${agentSteps.length} toolCalls=${accumulatedToolCalls.length}`);
         // v0.4.4: 返回 toolCalls 字段,供外层工具调用循环使用
         return { content: accumulatedContent, reasoning: accumulatedReasoning, cot: finalCotCombined, toolCalls: accumulatedToolCalls };
       };
@@ -985,26 +1013,19 @@ export const createChatSlice: StateCreator<
       }
 
       // v0.3.7: memory-recall 内置工具预执行
-      // memory-recall 是内置工具（存储在 builtinToolConfigs），不在 activeTools 中
-      // 需独立执行 searchLongTermMemory，将结果注入上下文并填充 message.memoryRecalls
-      // v0.4.1-fix: 添加 agentSteps 和 toolCalls,显示为二级思考卡片
-      // v0.4.4: 支持按角色卡启用长期记忆(longTermMemoryCharacterIds 为空表示对所有角色卡启用)
+      // v0.4.6: 改为搜索会话级向量记忆分片（searchVectorMemory），不再搜索空库 longTermMemory
+      // 被动触发：用最新 user 消息匹配向量分片，召回完整轮次内容
       const memoryRecallConfig = builtinToolConfigs.find(
         (c) => c.type === "memory-recall",
       );
-      const longTermMemoryEnabledForCharacter = (() => {
-        const ids = memorySettings?.longTermMemoryCharacterIds;
-        if (!ids || ids.length === 0) return true; // 空列表:所有角色卡启用
-        return currentCharacter ? ids.includes(currentCharacter.uuid) : false;
-      })();
       if (
         memoryRecallConfig?.enabled &&
         currentCharacter?.uuid &&
-        memorySettings &&
-        longTermMemoryEnabledForCharacter
+        memorySettings?.embeddingModel &&
+        vectorMemoryShards.length > 0
       ) {
         // v0.4.3: 日志记录记忆召回工具执行
-        logger.info("memory", `记忆召回工具启动（topK=${memoryRecallConfig.resultCount ?? 8}）`);
+        logger.info("memory", `记忆召回预执行启动（topK=${memoryRecallConfig.resultCount ?? 8}）`);
         const latestUserMsg = messages.filter((m) => m.role === "user").pop();
         const recallQuery = latestUserMsg?.content || "";
         if (recallQuery.trim()) {
@@ -1019,21 +1040,23 @@ export const createChatSlice: StateCreator<
           };
           try {
             const recallTopK = memoryRecallConfig.resultCount || 8;
-            const recallResults = await searchLongTermMemory(
-              currentCharacter.uuid,
+            // v0.4.6: 改为搜索会话级向量记忆分片（带分数）
+            const scoredResults = await searchVectorMemoryWithScore(
               recallQuery,
-              recallTopK,
+              vectorMemoryShards,
               memorySettings,
               settings,
               allProviders,
               get().apiProviderKeys,
             );
+            const recallResults = scoredResults.slice(0, recallTopK);
+            logger.info("memory", `记忆召回完成: 找到 ${recallResults.length} 条（topK=${recallTopK}）`);
 
             // v0.4.1-fix: 标记 tool_call 完成,添加 tool_result 步骤
             recallCallStep.status = "completed";
             recallCallStep.endedAt = Date.now();
             const recallResultText = recallResults.length > 0
-              ? recallResults.map((r) => `[score=${r.score.toFixed(3)}] ${r.content}`).join('\n\n')
+              ? recallResults.map((r) => `[score=${r.score.toFixed(3)}] ${r.shard.content}`).join('\n\n')
               : "(无匹配记忆)";
             const recallResultStep: AgentStep = {
               id: uuidv4(),
@@ -1060,9 +1083,9 @@ export const createChatSlice: StateCreator<
               // 填充 message.memoryRecalls 供 UI 显示
               const memoryRecalls: MemoryRecall[] = recallResults.map((r) => ({
                 id: uuidv4(),
-                content: r.content,
+                content: r.shard.content,
                 score: r.score,
-                turn: r.turn ?? -1,
+                turn: r.shard.turn ?? -1,
               }));
               get().updateMessage(assistantMessageId, { memoryRecalls });
 
@@ -1070,7 +1093,7 @@ export const createChatSlice: StateCreator<
               const recallText = recallResults
                 .map(
                   (r, i) =>
-                    `  <memory index="${i + 1}" turn="${r.turn ?? -1}" score="${r.score.toFixed(3)}">\n    ${r.content}\n  </memory>`,
+                    `  <memory index="${i + 1}" turn="${r.shard.turn ?? -1}" score="${r.score.toFixed(3)}">\n    ${r.shard.content}\n  </memory>`,
                 )
                 .join("\n\n");
               contextMessages.push({
@@ -1124,6 +1147,8 @@ export const createChatSlice: StateCreator<
             });
           }
         }
+      } else if (memoryRecallConfig?.enabled) {
+        logger.debug("memory", `memory-recall 跳过: enabled=${memoryRecallConfig?.enabled} char=${!!currentCharacter?.uuid} memSettings=${!!memorySettings}`);
       }
 
       // v0.4.1-fix: vector-memory 内置工具预执行(force 模式下主动召回向量记忆)
@@ -1358,6 +1383,8 @@ export const createChatSlice: StateCreator<
             });
           }
         }
+      } else if (keywordSearchConfig?.enabled) {
+        logger.debug("tool", `keyword-search 跳过: enabled=${keywordSearchConfig?.enabled} memoryEnabled=${memorySettings?.enabled} shards=${vectorMemoryShards.length}`);
       }
 
       // v0.4.3: world-recall 内置工具预执行（基于嵌入模型召回世界书内容）
@@ -1635,6 +1662,11 @@ export const createChatSlice: StateCreator<
       // 第二次请求: 基于 CoT 输出正文(正文气泡 + 头脑风暴节点)
       // KV 缓存保护: 两次请求前缀完全一致,第二次仅在 messages 末尾追加
       // v0.4.1-fix: 使用 callApiWithRetry 包装,自动处理 429 错误重试
+      // v0.4.6: 流式诊断日志（记录请求1开始前状态）
+      {
+        const msg = get().messages.find(m => m.id === assistantMessageId);
+        logger.info("stream", `请求1开始前: agentSteps数=${msg?.agentSteps?.length ?? 0}（force预执行后）`);
+      }
       logger.info("api", "API 请求阶段1: CoT 思考链生成");
       const { content: cotRawContent, reasoning: cotReasoning, cot: cotContent } =
         await callApiWithRetry(assistantMessageId, contextMessages, "cot");
@@ -1652,10 +1684,17 @@ export const createChatSlice: StateCreator<
       // 检查是否已被用户取消
       if (abortController?.signal.aborted) return;
 
+      // v0.4.6: 流式诊断日志（记录请求2开始前状态）
+      {
+        const msg = get().messages.find(m => m.id === assistantMessageId);
+        logger.info("stream", `请求2开始前: agentSteps数=${msg?.agentSteps?.length ?? 0} cot长度=${(msg?.cot ?? "").length}`);
+      }
+
       // 第二次请求: 基于 CoT 输出正文
       logger.info("api", "API 请求阶段2: 正文生成");
       const { content: accumulatedContent, reasoning: accumulatedReasoning, toolCalls: nativeToolCallsFromMain } =
         await callApiWithRetry(assistantMessageId, contextMessages, "main", cotContent);
+      console.log('[Phase main result]', accumulatedContent.slice(0, 100));
       logger.info("api", `API 响应阶段2: 正文完成（字符数=${accumulatedContent.length}）`);
       logger.info("chat", `消息接收完成（CoT=${cotContent.length}字符，正文=${accumulatedContent.length}字符）`);
 
@@ -1722,13 +1761,12 @@ export const createChatSlice: StateCreator<
         );
         if (builtinConfig) {
           const limit = builtinConfig.resultCount || 8;
-          // memory-recall: 调用 searchLongTermMemory
-          if (toolName === "memory-recall" && currentCharacter?.uuid && memorySettings) {
+          // v0.4.6: memory-recall 改为搜索会话向量记忆
+          if (toolName === "memory-recall" && vectorMemoryShards.length > 0 && memorySettings) {
             const results = await executeWithTimeout(() =>
-              searchLongTermMemory(
-                currentCharacter.uuid,
+              searchVectorMemory(
                 query,
-                limit,
+                vectorMemoryShards,
                 memorySettings,
                 settings,
                 allProviders,
@@ -1746,11 +1784,14 @@ export const createChatSlice: StateCreator<
             if (results.length === 0) return "<builtin_tool_result status='empty'>未找到相关向量记忆。</builtin_tool_result>";
             return results.map((r, i) => `  <memory index="${i + 1}" turn="${r.turn}">\n    ${r.content}\n  </memory>`).join('\n\n');
           }
-          // keyword-search: 从 messages 中搜索
+          // keyword-search: 优先搜索向量记忆分片，无分片时回退到原始消息
           if (toolName === "keyword-search") {
             const lowerQuery = query.toLowerCase();
-            const matched = get().messages
-              .filter((m) => m.content && m.content.toLowerCase().includes(lowerQuery))
+            const source = vectorMemoryShards.length > 0
+              ? vectorMemoryShards.map(s => ({ content: s.content, role: 'assistant' as const }))
+              : get().messages.map(m => ({ content: m.content, role: m.role }));
+            const matched = source
+              .filter((item) => item.content && item.content.toLowerCase().includes(lowerQuery))
               .slice(-limit);
             if (matched.length === 0) return "<builtin_tool_result status='empty'>未找到匹配的消息。</builtin_tool_result>";
             return matched.map((m, i) => `  <message index="${i + 1}" role="${m.role}">\n    ${m.content.slice(0, 500)}\n  </message>`).join('\n\n');

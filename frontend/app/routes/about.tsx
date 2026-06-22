@@ -1,36 +1,101 @@
 /**
- * 关于页面（v0.3.0 新增）
+ * 关于页面（v0.3.0 新增，v0.4.6 日志系统增强）
  *
  * 显示应用信息：LOGO、版本号、系统信息、日志路径
+ * 日志查看增强：
+ * - 分类 Tab 筛选（全部 / 流式 / API / 工具 / 记忆 等）
+ * - 日志级别过滤（debug / info / warn / error）
+ * - 实时自动刷新（每 500ms）
+ * - 最多显示 1000 条
+ * - 点击条目展开完整内容
  */
 
 import * as React from "react";
 import type { Route } from "./+types/about";
-import { motion } from "motion/react";
-import { IconInfo, IconLink, IconCopyEdit } from "~/components/luzzy/luzzy-icons";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  IconInfo,
+  IconLink,
+  IconCopyEdit,
+  IconArrowDown,
+  IconSearch,
+  IconShare,
+} from "~/components/luzzy/luzzy-icons";
 
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
+import { Badge } from "~/components/ui/badge";
+import { Switch } from "~/components/ui/switch";
 import { toast } from "sonner";
 import { copyTextToClipboard } from "~/lib/clipboard";
-import { getLogFilePath, getBufferedLogs, logger } from "~/services/logger";
+import {
+  getLogFilePath,
+  getBufferedLogs,
+  logger,
+  type LogEntry,
+  type LogCategory,
+  type LogLevel,
+} from "~/services/logger";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "关于 - LUZZY" }];
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.4.6";
+const APP_VERSION = "v0.5.0";
+
+/** 日志分类 Tab 配置 */
+const CATEGORY_TABS: { key: LogCategory | "all"; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "stream", label: "流式" },
+  { key: "api", label: "API" },
+  { key: "tool", label: "工具" },
+  { key: "memory", label: "记忆" },
+  { key: "chat", label: "聊天" },
+  { key: "agent", label: "Agent" },
+];
+
+/** 日志级别选项 */
+const LEVEL_OPTIONS: { key: LogLevel | "all"; label: string }[] = [
+  { key: "all", label: "全部级别" },
+  { key: "debug", label: "Debug" },
+  { key: "info", label: "Info" },
+  { key: "warn", label: "Warn" },
+  { key: "error", label: "Error" },
+];
+
+/** 日志级别对应颜色 */
+const LEVEL_COLORS: Record<LogLevel, string> = {
+  debug: "text-muted-foreground",
+  info: "text-blue-600 dark:text-blue-400",
+  warn: "text-amber-600 dark:text-amber-400",
+  error: "text-red-600 dark:text-red-400",
+};
+
+/** 格式化单条日志为文本 */
+function formatLogEntry(entry: LogEntry): string {
+  return `[${entry.timestamp}] [${entry.level.toUpperCase()}] [${entry.category}] ${entry.message}`;
+}
 
 export default function AboutPage() {
   const [systemInfo, setSystemInfo] = React.useState<Record<string, string>>({});
   const [logPath, setLogPath] = React.useState<string | null>(null);
-  const [recentLogs, setRecentLogs] = React.useState<string[]>([]);
+  const [allLogs, setAllLogs] = React.useState<LogEntry[]>([]);
+  const [categoryFilter, setCategoryFilter] = React.useState<LogCategory | "all">("all");
+  const [levelFilter, setLevelFilter] = React.useState<LogLevel | "all">("all");
+  const [autoRefresh, setAutoRefresh] = React.useState(true);
+  const [expandedId, setExpandedId] = React.useState<number | null>(null);
+  const refreshTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /** 刷新日志列表 */
+  const refreshLogs = React.useCallback(() => {
+    const logs = getBufferedLogs();
+    setAllLogs([...logs]);
+  }, []);
 
   React.useEffect(() => {
     void (async () => {
-      // v0.3.2: logger 已由 root.tsx 全局初始化，此处无需重复调用
       logger.info("user", "进入关于页");
 
       // 获取系统信息
@@ -42,11 +107,10 @@ export default function AboutPage() {
       info["屏幕分辨率"] = `${window.screen.width} × ${window.screen.height}`;
       info["视口大小"] = `${window.innerWidth} × ${window.innerHeight}`;
 
-      // 尝试获取原生设备信息(方案 D:使用 NativeBridge 替代 @capacitor/device)
       try {
         const { getDeviceInfo } = await import("~/services/nativeBridge");
         const deviceInfo = await getDeviceInfo();
-        if (deviceInfo.platform !== 'web') {
+        if (deviceInfo.platform !== "web") {
           info["操作系统"] = deviceInfo.platform;
           info["系统版本"] = deviceInfo.osVersion;
           info["设备型号"] = deviceInfo.model;
@@ -65,28 +129,102 @@ export default function AboutPage() {
       const path = await getLogFilePath();
       setLogPath(path);
 
-      // 获取最近日志
-      const logs = getBufferedLogs();
-      // v0.4.1: 增加显示条数到 200,覆盖更多调试场景
-      setRecentLogs(logs.slice(-200).map((l) => `[${l.timestamp}] [${l.level.toUpperCase()}] [${l.category}] ${l.message}`));
+      // 初始加载日志
+      refreshLogs();
     })();
-  }, []);
+  }, [refreshLogs]);
 
-  /** v0.4.1: 一键复制最近日志到剪贴板 */
+  // 自动刷新
+  React.useEffect(() => {
+    if (autoRefresh) {
+      refreshTimerRef.current = setInterval(refreshLogs, 500);
+    } else {
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    }
+    return () => {
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    };
+  }, [autoRefresh, refreshLogs]);
+
+  // 筛选日志
+  const filteredLogs = React.useMemo(() => {
+    let logs = allLogs;
+    if (categoryFilter !== "all") {
+      logs = logs.filter((l) => l.category === categoryFilter);
+    }
+    if (levelFilter !== "all") {
+      logs = logs.filter((l) => l.level === levelFilter);
+    }
+    // 最多显示 1000 条，从末尾截取（最新的在最后）
+    return logs.slice(-1000);
+  }, [allLogs, categoryFilter, levelFilter]);
+
+  // 格式化后的文本（用于复制）
+  const formattedLogsText = React.useMemo(
+    () => filteredLogs.map(formatLogEntry).join("\n"),
+    [filteredLogs],
+  );
+
+  /** 一键复制日志 */
   const handleCopyLogs = React.useCallback(async () => {
-    if (recentLogs.length === 0) {
+    if (filteredLogs.length === 0) {
       toast.warning("暂无日志可复制");
       return;
     }
     try {
-      await copyTextToClipboard(recentLogs.join('\n'));
-      toast.success(`已复制 ${recentLogs.length} 条日志到剪贴板`);
+      await copyTextToClipboard(formattedLogsText);
+      toast.success(`已复制 ${filteredLogs.length} 条日志到剪贴板`);
     } catch {
       toast.error("复制失败");
     }
-  }, [recentLogs]);
+  }, [filteredLogs, formattedLogsText]);
 
-  /** 复制日志路径到剪贴板 */
+  /** 导出全部日志为 JSON 并分享 */
+  const handleExportLogs = React.useCallback(async () => {
+    if (allLogs.length === 0) {
+      toast.warning("暂无日志可导出");
+      return;
+    }
+    try {
+      const exportData = {
+        version: APP_VERSION,
+        exportedAt: new Date().toISOString(),
+        totalCount: allLogs.length,
+        logs: allLogs,
+      };
+      const jsonStr = JSON.stringify(exportData, null, 2);
+      const filename = `LUZZY-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+
+      // 尝试原生分享
+      try {
+        const { writeFile, shareFile, mkdir } = await import("~/services/nativeBridge");
+        await mkdir("DOCUMENTS", "exports", true).catch(() => {});
+        const base64 = btoa(unescape(encodeURIComponent(jsonStr)));
+        const result = await writeFile("DOCUMENTS", `exports/${filename}`, base64, true);
+        if (result.uri) {
+          shareFile(result.uri, filename, "分享 LUZZY 日志");
+          toast.success(`已导出 ${allLogs.length} 条日志`);
+          return;
+        }
+      } catch {
+        // 原生分享不可用，回退
+      }
+
+      // Web 回退：下载文件
+      const blob = new Blob([jsonStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`已导出 ${allLogs.length} 条日志`);
+    } catch (e) {
+      toast.error("导出失败：" + (e instanceof Error ? e.message : String(e)));
+    }
+  }, [allLogs]);
+
+  /** 复制日志路径 */
   const handleCopyLogPath = React.useCallback(async () => {
     if (!logPath) {
       toast.warning("日志路径不可用（Web 环境）");
@@ -100,9 +238,13 @@ export default function AboutPage() {
     }
   }, [logPath]);
 
+  /** 切换条目展开 */
+  const toggleExpand = React.useCallback((idx: number) => {
+    setExpandedId((prev) => (prev === idx ? null : idx));
+  }, []);
+
   return (
     <LuzzyLayout title="关于">
-      {/* v0.4.0: 替换 radix ScrollArea 为原生 div，修复 Viewport display:table 导致的宽度溢出 */}
       <div className="h-full w-full overflow-y-auto overflow-x-hidden">
         <div className="mx-auto w-full min-w-0 max-w-2xl space-y-6 overflow-x-hidden p-4">
           {/* LOGO 和版本信息 */}
@@ -184,53 +326,164 @@ export default function AboutPage() {
                   <IconCopyEdit className="size-4" />
                 </Button>
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                日志文件按日期存储，仅保留近 3 天。点击复制按钮可复制路径
-              </p>
             </Card>
           </motion.div>
 
-          {/* 最近日志 */}
-          {recentLogs.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="min-w-0"
-            >
-              <Card className="min-w-0 overflow-hidden p-4">
-                {/* v0.4.1: 标题栏增加一键复制按钮 */}
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <IconInfo className="size-4 shrink-0 text-primary" />
-                    <h2 className="text-sm font-semibold">最近日志（{recentLogs.length} 条）</h2>
+          {/* 日志查看器 */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="min-w-0"
+          >
+            <Card className="min-w-0 overflow-hidden p-4">
+              {/* 标题栏 */}
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <IconSearch className="size-4 shrink-0 text-primary" />
+                  <h2 className="text-sm font-semibold">
+                    日志查看器（{filteredLogs.length}/{allLogs.length} 条）
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* 自动刷新开关 */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-muted-foreground">实时</span>
+                    <Switch
+                      checked={autoRefresh}
+                      onCheckedChange={setAutoRefresh}
+                      className="scale-75"
+                    />
                   </div>
                   <Button
                     variant="outline"
                     size="icon"
                     className="shrink-0"
                     onClick={handleCopyLogs}
-                    title="一键复制日志"
+                    title="一键复制筛选后日志"
                   >
                     <IconCopyEdit className="size-4" />
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={handleExportLogs}
+                    title="导出全部日志 JSON 并分享"
+                  >
+                    <IconShare className="size-4" />
+                  </Button>
                 </div>
-                <div className="max-h-[300px] overflow-auto rounded-md border bg-muted/30">
-                  <div className="space-y-0.5 p-2">
-                    {recentLogs.map((line, i) => (
-                      <p
-                        key={i}
-                        className="whitespace-pre-wrap break-all font-mono text-xs leading-relaxed"
-                        style={{ wordBreak: "break-all", overflowWrap: "anywhere" }}
-                      >
-                        {line}
-                      </p>
-                    ))}
+              </div>
+
+              {/* 分类 Tab */}
+              <div className="mb-2 flex flex-wrap gap-1">
+                {CATEGORY_TABS.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setCategoryFilter(tab.key)}
+                    className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                      categoryFilter === tab.key
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 级别过滤 */}
+              <div className="mb-3 flex flex-wrap gap-1">
+                {LEVEL_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setLevelFilter(opt.key)}
+                    className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                      levelFilter === opt.key
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 日志列表 */}
+              <div className="max-h-[600px] overflow-auto rounded-md border bg-muted/30">
+                {filteredLogs.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-muted-foreground">
+                    暂无匹配日志。去聊一句触发流式诊断吧。
                   </div>
-                </div>
-              </Card>
-            </motion.div>
-          )}
+                ) : (
+                  <div className="space-y-0">
+                    {filteredLogs.map((entry, idx) => {
+                      const isExpanded = expandedId === idx;
+                      const colorClass = LEVEL_COLORS[entry.level];
+                      return (
+                        <div
+                          key={`${entry.timestamp}-${idx}`}
+                          className="border-b border-border/20 last:border-0"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => toggleExpand(idx)}
+                            className="flex w-full min-w-0 items-center gap-1.5 px-2 py-1 text-left hover:bg-muted/50 transition-colors"
+                          >
+                            <motion.div
+                              animate={{ rotate: isExpanded ? 0 : -90 }}
+                              transition={{ duration: 0.15 }}
+                            >
+                              <IconArrowDown className="size-2.5 shrink-0 text-muted-foreground" />
+                            </motion.div>
+                            <span className="shrink-0 text-[10px] text-muted-foreground font-mono">
+                              {entry.timestamp.slice(-12)}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 px-1 py-0 text-[9px] leading-none"
+                            >
+                              {entry.category}
+                            </Badge>
+                            <span
+                              className={`min-w-0 flex-1 truncate text-[11px] font-mono leading-relaxed ${colorClass}`}
+                            >
+                              {entry.message}
+                            </span>
+                          </button>
+                          <AnimatePresence initial={false}>
+                            {isExpanded && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: "auto", opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.15 }}
+                                className="overflow-hidden"
+                              >
+                                <div className="border-t border-border/20 bg-muted/20 px-6 py-2">
+                                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-muted-foreground">
+                                    <span>时间: {entry.timestamp}</span>
+                                    <span>级别: {entry.level.toUpperCase()}</span>
+                                    <span>分类: {entry.category}</span>
+                                  </div>
+                                  <pre className="mt-1.5 whitespace-pre-wrap break-all text-[11px] font-mono leading-relaxed">
+                                    {entry.message}
+                                  </pre>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </Card>
+          </motion.div>
 
           {/* 版权信息 */}
           <motion.div

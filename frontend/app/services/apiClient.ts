@@ -787,6 +787,7 @@ const sendStreamRequestViaXHR = (
           continue; // 非 JSON，忽略（可能是注释行或心跳）
         }
         try {
+          console.log('[SSE chunk]', Date.now(), JSON.stringify(parsed).slice(0, 80));
           onChunk(dataStr, parsed);
         } catch (e) {
           // onChunk 抛出错误（如 API 错误），中止请求并 reject
@@ -921,6 +922,7 @@ const sendStreamRequestViaFetch = async (
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
@@ -1010,6 +1012,7 @@ const sendStreamRequestViaFetch = async (
           const parsed = JSON.parse(dataStr) as Record<string, unknown>;
           const apiError = extractApiErrorMessage(parsed, response.status);
           if (apiError) throw new ApiError(apiError);
+          console.log('[SSE chunk]', Date.now(), JSON.stringify(parsed).slice(0, 80));
           onChunk(dataStr, parsed);
         } catch (e) {
           if (e instanceof ApiError) throw e;

@@ -29,7 +29,6 @@ import {
   IconChevronRight,
   IconLight,
   IconArrowDown,
-  IconArrowUp,
   IconPlay,
 } from "~/components/luzzy/luzzy-icons";
 
@@ -123,7 +122,7 @@ function MemoryRecallsCard({ recalls }: { recalls: MemoryRecall[] }) {
   );
 }
 
-/** 思考链（CoT）可折叠卡片（v0.3.4: Timeline 节点 UI 重构） */
+/** 思考链（CoT）可折叠卡片（v0.4.6-UI 重构：glassmorphism 一级卡片） */
 function CotCard({
   cot,
   isGenerating,
@@ -133,38 +132,123 @@ function CotCard({
   isGenerating: boolean;
   agentSteps?: import("~/types/luzzy").AgentStep[];
 }) {
-  // v0.4.3: 生成中默认展开,生成完成后保持展开(仅用户手动点击才收起)
+  // v0.4.6: 生成中默认展开，生成完成后自动收起
   const [expanded, setExpanded] = React.useState(true);
 
-  /** 用户点击切换 */
-  const handleToggle = () => {
-    setExpanded((prev) => !prev);
-  };
+  React.useEffect(() => {
+    if (!isGenerating) {
+      setExpanded(false);
+    }
+  }, [isGenerating]);
 
-  // 截断预览（收起时显示前 80 字符）
-  const preview = cot.length > 80 ? cot.slice(0, 80) + "..." : cot;
+  const handleToggle = () => setExpanded((prev) => !prev);
+
+  // 步骤计数：优先取 agentSteps 中的非 thinking 步骤 + CoT 中的思考步骤
+  const toolStepCount = React.useMemo(
+    () => (agentSteps?.filter((s) => s.type !== "thinking").length ?? 0),
+    [agentSteps],
+  );
+  const thinkingStepCount = React.useMemo(() => {
+    if (!cot.trim()) return 0;
+    const markers = cot.match(/\*\*\s*Step\s*\d+|【\s*Step\s*\d+/gi);
+    return markers ? markers.length : 1;
+  }, [cot]);
+
+  // 收起时预览最后一条非空步骤标题
+  const preview = React.useMemo(() => {
+    const nonToolAgentSteps = agentSteps?.filter((s) => s.type === "thinking" && s.content?.trim()) ?? [];
+    const lastThinking = nonToolAgentSteps.at(-1);
+    if (lastThinking?.content) {
+      return lastThinking.content.slice(0, 60) + (lastThinking.content.length > 60 ? "..." : "");
+    }
+    const lastCot = cot.trim();
+    if (!lastCot) return "";
+    return lastCot.length > 60 ? lastCot.slice(0, 60) + "..." : lastCot;
+  }, [agentSteps, cot]);
 
   return (
-    <div className="w-full rounded-md border border-muted bg-muted/30 text-sm">
+    <div
+      className={cn(
+        "w-full overflow-hidden rounded-xl border bg-card/50 text-sm shadow-sm backdrop-blur-md transition-colors",
+        isGenerating
+          ? "border-primary/25 bg-primary/[0.02]"
+          : "border-border/60 bg-muted/20",
+      )}
+    >
       <button
         type="button"
-        className="flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/50"
+        className={cn(
+          "flex w-full min-w-0 items-center gap-2.5 px-3 py-2 text-left transition-colors",
+          isGenerating ? "hover:bg-primary/[0.03]" : "hover:bg-muted/40",
+        )}
         onClick={handleToggle}
         aria-expanded={expanded}
       >
-        <IconLight className="size-3.5 shrink-0" />
-        <span className="shrink-0">{isGenerating ? "思考中..." : "思考过程"}</span>
-        {!expanded && !isGenerating && (
-          <span className="ml-1 min-w-0 flex-1 truncate text-[11px] opacity-60">{preview}</span>
-        )}
-        <span className="ml-auto shrink-0">
-          {expanded ? (
-            <IconArrowUp className="size-3.5" />
-          ) : (
-            <IconArrowDown className="size-3.5" />
+        {/* 发光图标 */}
+        <div className="relative shrink-0">
+          {isGenerating && (
+            <span className="absolute -inset-1 animate-pulse rounded-full bg-primary/20 blur-[3px]" />
           )}
+          <div
+            className={cn(
+              "relative flex size-6 items-center justify-center rounded-full ring-1",
+              isGenerating
+                ? "bg-primary/15 ring-primary/30"
+                : "bg-muted ring-border",
+            )}
+          >
+            <IconLight
+              className={cn(
+                "size-3.5",
+                isGenerating ? "text-primary" : "text-muted-foreground",
+              )}
+            />
+          </div>
+        </div>
+
+        {/* 标题 */}
+        <span
+          className={cn(
+            "shrink-0 text-xs font-medium",
+            isGenerating ? "text-primary" : "text-muted-foreground",
+          )}
+        >
+          {isGenerating ? "思考中" : "思考链"}
+        </span>
+
+        {/* 步骤数徽章 */}
+        {(toolStepCount > 0 || thinkingStepCount > 0) && (
+          <div className="flex shrink-0 items-center gap-1">
+            {toolStepCount > 0 && (
+              <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600/80 dark:text-blue-400/80">
+                {toolStepCount} 工具
+              </span>
+            )}
+            {thinkingStepCount > 0 && (
+              <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600/80 dark:text-amber-400/80">
+                {thinkingStepCount} 步骤
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 收起时的预览 */}
+        {!expanded && !isGenerating && preview && (
+          <span className="ml-1 min-w-0 flex-1 truncate text-[11px] text-muted-foreground/60">
+            {preview}
+          </span>
+        )}
+
+        <span className="ml-auto shrink-0 text-muted-foreground/60">
+          <motion.div
+            animate={{ rotate: expanded ? 180 : 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <IconArrowDown className="size-3.5" />
+          </motion.div>
         </span>
       </button>
+
       <AnimatePresence initial={false}>
         {expanded && (
           <motion.div
@@ -173,16 +257,16 @@ function CotCard({
             animate={{
               height: "auto",
               opacity: 1,
-              transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+              transition: { duration: 0.25, ease: [0.4, 0, 0.2, 1] },
             }}
             exit={{
               height: 0,
               opacity: 0,
-              transition: { duration: 0.15, ease: [0.4, 0, 0.2, 1] },
+              transition: { duration: 0.18, ease: [0.4, 0, 0.2, 1] },
             }}
             className="overflow-hidden"
           >
-            <div className="border-t border-muted">
+            <div className="min-w-0 border-t border-border/50 px-1 pb-1 pt-1">
               <LuzzyThinkingTimeline
                 cot={cot}
                 isGenerating={isGenerating}
@@ -415,9 +499,12 @@ export function LuzzyChatMessage({
         )}
 
         {/* 记忆召回 */}
+        {/* v0.4.6: 记忆召回结果已合并到时间线 ToolNode 中展示，不再重复渲染 MemoryRecallsCard */}
+        {/*
         {!isUser && message.memoryRecalls && message.memoryRecalls.length > 0 && (
           <MemoryRecallsCard recalls={message.memoryRecalls} />
         )}
+        */}
 
         {/* 消息正文 */}
         <div

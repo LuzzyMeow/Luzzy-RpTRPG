@@ -108,7 +108,7 @@ const parseCotCache = new Map<string, CotParseResult>();
  * @param useCache - 是否使用缓存（流式场景设为 false），默认 true
  * @returns 解析结果 { cot, main, sys, isFinished }
  */
-export const parseCot = (content: string, useCache = true): CotParseResult => {
+export const parseCot = (content: string, useCache = true, includeUnclosed = true): CotParseResult => {
   if (!content) return { cot: '', main: '', sys: '', isFinished: false };
   if (useCache && parseCotCache.has(content)) {
     return parseCotCache.get(content)!;
@@ -143,6 +143,8 @@ export const parseCot = (content: string, useCache = true): CotParseResult => {
   });
 
   // Pass 2: 处理"未闭合的最后一个开标签"（流式过程中的常态）
+  // v0.4.6: includeUnclosed=false 时跳过，仅依赖 Pass 1 的已闭合标签提取
+  if (includeUnclosed) {
   // 寻找 mainContent 中最后一个 `<tag>` 出现位置，且其后没有对应的 `</tag>`
   // 例：`正文前缀<think>思考中...` → cot=`思考中...`，main=`正文前缀`
   // 反例：`正文中提到<think>字样后还有大量正文` 在闭合 `</think>` 缺失下不应吞掉正文
@@ -172,6 +174,7 @@ export const parseCot = (content: string, useCache = true): CotParseResult => {
       mainContent = mainContent.slice(0, lastOpenMatch.index);
     }
   }
+  } // v0.4.6: includeUnclosed guard
 
   // 提取末尾的系统指令
   let sys = '';

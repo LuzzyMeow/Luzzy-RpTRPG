@@ -29,7 +29,6 @@ import type {
 import { parseCot } from '~/services/markdownService';
 import {
   buildVectorMemory,
-  searchVectorMemory,
   loadVectorMemoryShards,
   saveVectorMemoryShards,
   compressContext,
@@ -176,7 +175,7 @@ const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
 }> = {
   'memory-recall': {
     callLabel: 'memory-recall',
-    description: '召回历史记忆，按相关度排序返回',
+    description: '【被动触发】使用嵌入模型自动召回会话中与用户消息相关的历史对话轮次，按相似度排序返回。不需手动调用。',
     parameters: {
       type: 'object',
       properties: { query: { type: 'string', description: '记忆召回的查询关键词' } },
@@ -185,7 +184,7 @@ const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
   },
   'vector-memory': {
     callLabel: 'vector-memory',
-    description: '使用嵌入模型在向量记忆分片中语义检索',
+    description: '在当前会话的向量记忆中语义检索。当你需要回忆之前对话的细节、查找已讨论过的内容时调用。参数 query 为自然语言查询（如"之前提到的那个城堡叫什么"）。',
     parameters: {
       type: 'object',
       properties: { query: { type: 'string', description: '向量记忆语义检索的查询内容' } },
@@ -194,7 +193,7 @@ const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
   },
   'keyword-search': {
     callLabel: 'keyword-search',
-    description: '在聊天消息中按关键词搜索匹配内容',
+    description: '在当前会话中按关键词搜索聊天消息。当你需要查找包含特定词汇的历史对话时调用。参数 query 为关键词。',
     parameters: {
       type: 'object',
       properties: { query: { type: 'string', description: '关键词搜索的查询内容' } },
@@ -203,7 +202,7 @@ const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
   },
   'world-recall': {
     callLabel: 'world-recall',
-    description: '基于嵌入模型召回当前角色卡绑定的世界书内容',
+    description: '在世界书中语义检索世界观设定。当需要查找角色卡绑定的世界观、场景、NPC 等设定信息时调用。需要嵌入模型已配置。参数 query 为自然语言查询。',
     parameters: {
       type: 'object',
       properties: { query: { type: 'string', description: '世界书语义检索的查询内容' } },
@@ -212,7 +211,7 @@ const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
   },
   'world-search': {
     callLabel: 'world-search',
-    description: '在世界书中按关键词检索（无需嵌入模型）',
+    description: '在世界书中按关键词检索（无需嵌入模型）。参数 query 为关键词，可选 keys 按条目 keys 筛选。',
     parameters: {
       type: 'object',
       properties: {
@@ -224,7 +223,7 @@ const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
   },
   'anysearch': {
     callLabel: 'anysearch',
-    description: '联网搜索外部信息，获取实时数据',
+    description: '联网搜索外部实时信息。当需要查找实时数据、最新资讯、事实核查时调用。参数 query 为搜索查询内容。',
     parameters: {
       type: 'object',
       properties: { query: { type: 'string', description: '联网搜索的查询内容' } },
@@ -252,8 +251,9 @@ function buildToolDescriptions(
     '可用工具列表（在思考链 Step 内使用 <callLabel:query> 格式调用）：',
   ];
 
-  // v0.4.6: 内置工具
+  // v0.4.6: 内置工具（跳过 memory-recall，它被动触发不暴露给 AI）
   for (const c of enabledBuiltin) {
+    if (c.type === 'memory-recall') continue; // 被动触发，不让 AI 调用
     const info = BUILTIN_TOOL_INFO[c.type];
     if (info) {
       lines.push(`- ${info.callLabel}: ${info.description}（返回 ${c.resultCount} 条结果）`);
@@ -496,11 +496,11 @@ export const buildContext = async (
     globalMemory,
     settings,
     apiProviders,
-    apiProviderKeys,
+    apiProviderKeys: _apiProviderKeys,
     vectorMemoryShards,
     memorySettings,
     sessionId,
-    searchGlobalMemory = false,
+    searchGlobalMemory: _searchGlobalMemory = false,
   } = params;
 
   // 1. 过滤启用的世界书条目
@@ -617,78 +617,9 @@ export const buildContext = async (
   }
 
   // 3.7 向量记忆召回
-  // v0.4.4: 判断条件改为基于 embeddingModel（与阶段二记忆机制重构一致）
-  if (memorySettings?.embeddingModel && vectorMemoryShards && vectorMemoryShards.length > 0) {
-    const latestUserMessage = [...messages]
-      .reverse()
-      .find((m) => m.role === 'user');
-    if (latestUserMessage && latestUserMessage.content.trim()) {
-      try {
-        const recalledShards = await searchVectorMemory(
-          latestUserMessage.content,
-          vectorMemoryShards,
-          memorySettings,
-          settings,
-          apiProviders,
-          apiProviderKeys,
-        );
-
-        // v0.3.0 新增：若启用全局记忆检索，将全局记忆内容作为特殊召回项
-        // 通过关键词匹配判断是否相关（全局记忆无嵌入向量，使用关键词匹配）
-        // v0.3.0 ACE: 优先搜索 ACE Skillbook active 策略，回退到旧全局记忆
-        const globalRecallItems: Array<{ content: string; turn: number }> = [];
-        if (searchGlobalMemory) {
-          const queryLower = latestUserMessage.content.toLowerCase();
-          const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 1);
-
-          if (aceMemoryText) {
-            // ACE 模式：逐条策略关键词匹配
-            try {
-              const skillbook = await loadSkillbook();
-              const activeSkills = getActiveSkills(skillbook);
-              for (const skill of activeSkills) {
-                const skillLower = skill.content.toLowerCase();
-                const isMatch = queryWords.some((w) => skillLower.includes(w));
-                if (isMatch) {
-                  globalRecallItems.push({
-                    content: `[${skill.category}] ${skill.content}`,
-                    turn: -1, // -1 表示全局记忆
-                  });
-                }
-              }
-            } catch {
-              // Skillbook 加载失败不阻塞
-            }
-          } else if (globalMemory?.content?.trim()) {
-            // 旧模式：全局记忆整体关键词匹配
-            const globalLower = globalMemory.content.toLowerCase();
-            const isMatch = queryWords.some((w) => globalLower.includes(w));
-            if (isMatch) {
-              globalRecallItems.push({
-                content: globalMemory.content.trim(),
-                turn: -1, // -1 表示全局记忆
-              });
-            }
-          }
-        }
-
-        const allRecalled = [...recalledShards, ...globalRecallItems];
-        if (allRecalled.length > 0) {
-          const recallText = allRecalled
-            .map(
-              (s, i) =>
-                `  <memory index="${i + 1}" turn="${s.turn}">\n    ${s.content}\n  </memory>`,
-            )
-            .join('\n\n');
-          systemPromptParts.push(
-            `<memory_recall>\n${recallText}\n</memory_recall>`,
-          );
-        }
-      } catch (e) {
-        console.warn('[ChatService] 向量记忆召回失败:', e);
-      }
-    }
-  }
+  // v0.4.6: 已由 memory-recall 预执行（chat-slice.ts）处理——
+  //   搜索会话向量分片 → agentSteps（UI 可见）→ 注入 contextMessages
+  //   此处不再重复搜索，避免双倍嵌入 API 消耗
 
   // 3.x CoT 输出协议指令（v0.3.6 新增）
   // 独立追加，不修改 presetContent.ts 中的 NSFW 预设内容
