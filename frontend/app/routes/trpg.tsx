@@ -14,7 +14,6 @@
 
 import * as React from "react";
 import type { Route } from "./+types/trpg";
-import { motion } from "motion/react";
 import { IconLink, IconInfo } from "~/components/luzzy/luzzy-icons";
 
 import { useAppStore } from "~/stores";
@@ -99,29 +98,18 @@ export default function TrpgPage() {
 
       {/* TRPG 模式说明弹窗 */}
       <Dialog open={showNotice} onOpenChange={setShowNotice}>
-        <DialogContent className="min-w-0 overflow-hidden max-w-md flex flex-col gap-0 max-h-[85vh]">
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-md flex flex-col gap-0">
           <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
-              <motion.span
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.1 }}
-              >
-                <IconInfo className="size-5 text-primary" />
-              </motion.span>
+              <IconInfo className="size-5 text-primary" />
               TRPG 模式说明
             </DialogTitle>
             <DialogDescription>
               了解 TRPG 模式如何配置 API 服务
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 min-h-0 max-h-[65vh] pr-2">
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15 }}
-              className="space-y-3 py-2 pr-2 text-sm leading-relaxed"
-            >
+          <ScrollArea className="flex-1 min-h-0 max-h-[65vh]">
+            <div className="space-y-3 py-2 pr-2 text-sm leading-relaxed">
               {/* v0.4.2: 重写说明弹窗,明确支持三种 API 配置场景 */}
               <div className="rounded-lg border border-border/50 bg-muted/30 p-3">
                 <p className="font-medium text-foreground">工作原理</p>
@@ -206,7 +194,7 @@ export default function TrpgPage() {
                   注意：Android WebView 内 iframe 默认走本地代理；若供应商支持 CORS，可在 TRPG 网页内直接配置真实地址绕过代理。
                 </p>
               </div>
-            </motion.div>
+            </div>
           </ScrollArea>
           <DialogFooter className="gap-2 sm:gap-2 shrink-0">
             <Button variant="outline" onClick={handleDismissForever}>
