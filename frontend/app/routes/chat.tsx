@@ -92,6 +92,8 @@ export default function ChatPage() {
   const sendMessage = useAppStore((s) => s.sendMessage);
   const stopGenerating = useAppStore((s) => s.stopGenerating);
   const regenerate = useAppStore((s) => s.regenerate);
+  // v0.4.6: 继续剧情
+  const continueStory = useAppStore((s) => s.continueStory);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
   const setCurrentCharacter = useAppStore((s) => s.setCurrentCharacter);
   const setCurrentCharacterUuid = useAppStore((s) => s.setCurrentCharacterUuid);
@@ -274,6 +276,12 @@ export default function ChatPage() {
     if (isGenerating) return;
     await regenerate();
   }, [isGenerating, regenerate]);
+
+  /** v0.4.6: 继续剧情 */
+  const handleContinueStory = React.useCallback(async () => {
+    if (isGenerating) return;
+    await continueStory();
+  }, [isGenerating, continueStory]);
 
   /** 新建会话 */
   const handleCreateSession = React.useCallback(() => {
@@ -575,6 +583,7 @@ export default function ChatPage() {
                         onShare={handleShare}
                         onCreateBranch={handleCreateBranch}
                         onSwitchRetryVersion={handleSwitchRetryVersion}
+                        onContinueStory={msg.role === "assistant" ? handleContinueStory : undefined}
                       />
                     </div>
                   ))}

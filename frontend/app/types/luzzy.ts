@@ -38,6 +38,12 @@ export interface ChatMessage {
   tokenUsage?: TokenUsage;
   /** Agent 执行步骤（思考/工具调用/记忆注入等） */
   agentSteps?: AgentStep[];
+  /** v0.4.6: 工具结果消息元数据（用于 buildContext 识别 tool 消息） */
+  metadata?: {
+    toolCallId?: string;
+    toolName?: string;
+    isToolResult?: boolean;
+  };
 }
 
 /** Token 使用统计 */
@@ -264,6 +270,8 @@ export interface WorldInfoEntry {
   useRegex?: boolean;
   /** 是否选择性模式（需同时匹配关键词与次要关键词） */
   selective?: boolean;
+  /** v0.4.6: 世界书条目的嵌入向量（用于 world-recall 语义检索） */
+  embedding?: number[];
 }
 
 /** 正则脚本（v0.2.0 旧结构，保留用于迁移） */

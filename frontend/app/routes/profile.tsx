@@ -65,6 +65,8 @@ import {
   fadeSlide,
 } from "~/lib/motion-presets";
 import { toast } from "sonner";
+// v0.4.6: 添加原生平台分享支持
+import { isNativePlatform, writeFile, mkdir, shareFile } from "~/services/nativeBridge";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "用户档案 - LUZZY" }];
@@ -222,10 +224,30 @@ export default function ProfilePage() {
     }
     const fileName = `${editing.name || "user"}-description.md`;
     const blob = new Blob([editing.description], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
 
     try {
-      // 优先尝试系统分享（移动端）
+      // v0.4.6: 原生平台优先使用 NativeBridge 写入文件 + 唤起系统分享
+      if (isNativePlatform()) {
+        const arrayBuffer = await blob.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        let binary = '';
+        for (let i = 0; i < uint8Array.length; i++) {
+          binary += String.fromCharCode(uint8Array[i]);
+        }
+        const base64Data = btoa(binary);
+        await mkdir("EXTERNAL", "LUZZY", true).catch(() => {});
+        const { uri } = await writeFile("EXTERNAL", `LUZZY/${fileName}`, base64Data, true);
+        if (uri) {
+          await shareFile(uri, fileName, `分享 ${fileName}`);
+          toast.success(`已保存并打开分享：${fileName}`);
+        } else {
+          toast.error("导出失败:无法创建文件");
+        }
+        return;
+      }
+
+      // Web 平台:优先尝试系统分享
+      const url = URL.createObjectURL(blob);
       if (navigator.share && navigator.canShare) {
         const file = new File([blob], fileName, { type: "text/markdown" });
         if (navigator.canShare({ files: [file] })) {
@@ -246,13 +268,12 @@ export default function ProfilePage() {
       a.click();
       document.body.removeChild(a);
       toast.success(`已导出：${fileName}`);
+      URL.revokeObjectURL(url);
     } catch (err) {
       // 用户取消分享不算错误
       if ((err as Error).name !== "AbortError") {
         toast.error("导出失败：" + (err as Error).message);
       }
-    } finally {
-      URL.revokeObjectURL(url);
     }
   }, [editing]);
 

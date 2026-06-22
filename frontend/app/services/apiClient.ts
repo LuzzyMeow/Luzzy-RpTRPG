@@ -439,6 +439,59 @@ export const validateCustomRequestBody = (
  * 根据工具类型返回对应的参数 schema
  */
 export const buildToolSchema = (toolType: string): Record<string, unknown> => {
+  // v0.4.6: 内置工具的 JSON Schema 映射
+  const builtinSchemas: Record<string, Record<string, unknown>> = {
+    'memory-recall': {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '记忆召回的查询关键词' },
+      },
+      required: ['query'],
+    },
+    'vector-memory': {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '向量记忆语义检索的查询内容' },
+      },
+      required: ['query'],
+    },
+    'keyword-search': {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '关键词搜索的查询内容' },
+      },
+      required: ['query'],
+    },
+    'world-recall': {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '世界书语义检索的查询内容' },
+      },
+      required: ['query'],
+    },
+    'world-search': {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '世界书关键词搜索的查询内容' },
+        keys: { type: 'string', description: '可选的世界书条目 keys 筛选（逗号分隔）' },
+      },
+      required: ['query'],
+    },
+    'anysearch': {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '联网搜索的查询内容' },
+      },
+      required: ['query'],
+    },
+  };
+
+  // v0.4.6: 优先返回内置工具的 schema
+  if (builtinSchemas[toolType]) {
+    return builtinSchemas[toolType];
+  }
+
+  // 用户工具的默认 schema
   const baseSchema = {
     type: 'object',
     properties: {
@@ -450,7 +503,7 @@ export const buildToolSchema = (toolType: string): Record<string, unknown> => {
     required: ['query'],
   };
 
-  // world-search 支持额外的 keys 参数
+  // world-search 支持额外的 keys 参数（兼容旧逻辑）
   if (toolType === 'world-search') {
     return {
       ...baseSchema,

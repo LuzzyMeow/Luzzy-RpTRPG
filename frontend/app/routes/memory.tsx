@@ -295,7 +295,8 @@ function MemorySettingsCard({
   onUpdate,
   onSave,
 }: MemorySettingsCardProps) {
-  const [expanded, setExpanded] = React.useState(false);
+  // v0.4.6: 记忆设置卡片默认展开,用户首次进入页面即可看到所有设置项
+  const [expanded, setExpanded] = React.useState(true);
   // v0.3.3: 保存按钮加载状态动画
   const [saving, setSaving] = React.useState(false);
   const hasEmbeddingModel = Boolean(settings.embeddingModel?.trim());
@@ -352,7 +353,7 @@ function MemorySettingsCard({
               </div>
 
               {/* 嵌入模型（v0.3.4: 改为下拉框+手动输入） */}
-              <div className="grid gap-2">
+              <div className="grid gap-2 min-w-0">
                 <label className="text-sm font-medium">嵌入模型</label>
                 {(() => {
                   // v0.3.4: 从所有供应商中筛选 supportsEmbedding=true 的模型
@@ -380,7 +381,8 @@ function MemorySettingsCard({
                           }
                         }}
                       >
-                        <SelectTrigger>
+                        {/* v0.4.6: w-full + min-w-0 避免长模型名/供应商名撑爆父容器导致页面横向溢出 */}
+                        <SelectTrigger className="w-full min-w-0">
                           <SelectValue placeholder="选择嵌入模型或手动输入" />
                         </SelectTrigger>
                         <SelectContent>
@@ -399,6 +401,7 @@ function MemorySettingsCard({
                       </Select>
                       {isManual && (
                         <Input
+                          className="w-full min-w-0"
                           value={settings.embeddingModel}
                           onChange={(e) =>
                             onUpdate("embeddingModel", e.target.value)

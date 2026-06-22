@@ -30,6 +30,7 @@ import {
   IconLight,
   IconArrowDown,
   IconArrowUp,
+  IconPlay,
 } from "~/components/luzzy/luzzy-icons";
 
 import type { ChatMessage, MemoryRecall } from "~/types/luzzy";
@@ -85,6 +86,8 @@ interface LuzzyChatMessageProps {
   retryVersionCount?: number;
   /** 当前重试版本索引 */
   retryCurrentIndex?: number;
+  /** v0.4.6: 继续剧情回调（仅 AI 消息显示） */
+  onContinueStory?: (message: ChatMessage) => void;
 }
 
 /** 记忆召回折叠区 */
@@ -311,6 +314,7 @@ export function LuzzyChatMessage({
   onSwitchRetryVersion,
   retryVersionCount,
   retryCurrentIndex,
+  onContinueStory,
 }: LuzzyChatMessageProps) {
   const isUser = message.role === "user";
   const isLoading = message.loading && !message.content;
@@ -479,7 +483,7 @@ export function LuzzyChatMessage({
             isUser ? "flex-row-reverse" : "flex-row",
           )}
         >
-          {/* 附着操作按钮组：复制/重试/翻译/更多 */}
+          {/* 附着操作按钮组：复制/重试/翻译/继续剧情/更多 */}
           <ActionButton
             icon={IconCopyEdit}
             label="复制"
@@ -498,6 +502,15 @@ export function LuzzyChatMessage({
             disabled={isGenerating || hasTranslation || translating}
             spinning={translating}
           />
+          {/* v0.4.6: 继续剧情按钮 - 仅 AI 消息显示 */}
+          {!isUser && onContinueStory && (
+            <ActionButton
+              icon={IconPlay}
+              label="继续剧情"
+              onClick={() => onContinueStory(message)}
+              disabled={isGenerating}
+            />
+          )}
           <ActionButton
             icon={IconMenu}
             label="更多"

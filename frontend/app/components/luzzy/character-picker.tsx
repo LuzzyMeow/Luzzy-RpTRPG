@@ -7,7 +7,7 @@
 
 import * as React from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { IconSearch, IconUser } from "~/components/luzzy/luzzy-icons";
+import { IconSearch, IconUser, IconArrowDown, IconArrowUp, IconInfo } from "~/components/luzzy/luzzy-icons";
 
 import type { Character } from "~/types/luzzy";
 import { cn } from "~/lib/utils";
@@ -190,17 +190,22 @@ export function CharacterPicker({
                       >
                         {char.description}
                       </div>
-                      {/* v0.3.6: 展开/收起 + 详情按钮 */}
-                      {char.description.length > 60 && (
-                        <div className="mt-0.5 flex items-center gap-2">
+                      {/* v0.4.6: 展开/收起 + 详情按钮 — 带图标和视觉边界，鹿溪角色禁用 */}
+                      {char.description.length > 60 && char.creator !== "LUZZY" && (
+                        <div className="mt-1 flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleExpand(char.uuid);
                             }}
-                            className="text-[10px] text-primary hover:underline"
+                            className="flex items-center gap-0.5 rounded-md border border-border/50 bg-muted/50 px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:bg-muted"
                           >
+                            {expandedCards.has(char.uuid) ? (
+                              <IconArrowUp size={10} className="shrink-0" />
+                            ) : (
+                              <IconArrowDown size={10} className="shrink-0" />
+                            )}
                             {expandedCards.has(char.uuid) ? "收起" : "展开"}
                           </button>
                           <button
@@ -209,8 +214,9 @@ export function CharacterPicker({
                               e.stopPropagation();
                               setDetailCharacter(char);
                             }}
-                            className="text-[10px] text-primary hover:underline"
+                            className="flex items-center gap-0.5 rounded-md border border-border/50 bg-muted/50 px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:bg-muted"
                           >
+                            <IconInfo size={10} className="shrink-0" />
                             详情
                           </button>
                         </div>

@@ -18,20 +18,21 @@
   @apply scroll-m-20 text-2xl font-semibold tracking-tight border-b border-border pb-2 mt-8 mb-4 first:mt-0;
 }
 
+/* v0.4.6: 为 h3-h6 添加 first:mt-0，使首个标题无顶部间距 */
 .markdown h3 {
-  @apply scroll-m-20 text-xl font-semibold tracking-tight mt-6 mb-3;
+  @apply scroll-m-20 text-xl font-semibold tracking-tight mt-6 mb-3 first:mt-0;
 }
 
 .markdown h4 {
-  @apply scroll-m-20 text-lg font-semibold tracking-tight mt-6 mb-2;
+  @apply scroll-m-20 text-lg font-semibold tracking-tight mt-6 mb-2 first:mt-0;
 }
 
 .markdown h5 {
-  @apply scroll-m-20 text-base font-semibold tracking-tight mt-4 mb-2;
+  @apply scroll-m-20 text-base font-semibold tracking-tight mt-4 mb-2 first:mt-0;
 }
 
 .markdown h6 {
-  @apply scroll-m-20 text-sm font-semibold tracking-tight mt-4 mb-2 text-muted-foreground;
+  @apply scroll-m-20 text-sm font-semibold tracking-tight mt-4 mb-2 text-muted-foreground first:mt-0;
 }
 
 /* Paragraphs */

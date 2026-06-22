@@ -40,7 +40,8 @@ import { toast } from "sonner";
 import type { Session, ChatMessage } from "~/types/luzzy";
 import { useAppStore } from "~/stores/app-store";
 // v0.4.5: 方案 D - 使用 NativeBridge 替代 Capacitor Filesystem
-import { isNativePlatform, writeFile, mkdir } from "~/services/nativeBridge";
+// v0.4.6: 添加 shareFile 导入,原生平台导出后唤起系统分享
+import { isNativePlatform, writeFile, mkdir, shareFile } from "~/services/nativeBridge";
 
 type ShareFormat = "md" | "json" | "png";
 type ShareStep = "format" | "select";
@@ -150,6 +151,7 @@ export function LuzzyShareDialog({
           : content;
 
       // v0.4.5: 方案 D - 原生平台使用 NativeBridge 保存文件
+      // v0.4.6: 保存后唤起系统分享,让用户直接将文件发出去
       if (isNativePlatform()) {
         try {
           // 将 Blob 转 base64
@@ -167,7 +169,19 @@ export function LuzzyShareDialog({
           // 写入文件
           const { uri } = await writeFile("EXTERNAL", `LUZZY/${fileName}`, base64Data, true);
 
-          toast.success(`已导出到：${uri ?? '未知路径'}`);
+          // v0.4.6: 唤起系统分享,让用户直接将文件发出去
+          if (uri) {
+            try {
+              await shareFile(uri, fileName, `分享 ${fileName}`);
+              toast.success(`已保存并打开分享：${fileName}`);
+            } catch (shareErr) {
+              // 分享失败但文件已保存,提示用户文件路径
+              console.warn("[ShareDialog] 系统分享失败,文件已保存:", shareErr);
+              toast.success(`已导出到：${uri}（分享失败,请手动发送）`);
+            }
+          } else {
+            toast.success(`已导出到：LUZZY/${fileName}`);
+          }
           return;
         } catch (err) {
           console.error("[ShareDialog] 原生导出失败,降级到 Web 下载:", err);

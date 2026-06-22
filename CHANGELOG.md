@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.4.6
+
+### 🔧 工具系统修复（重点）
+
+- **统一标签格式**：`toolService.ts` 新增 `findPendingBuiltinToolCallInText` 函数，扫描 `<memory-recall:query>` 等 kebab-case 标签，与系统提示教 AI 的格式一致。文本标签路径同时扫描用户工具和内置工具
+- **内置工具与用户工具数据打通**：`chat-slice.ts` `activeToolsForRequest` 合并 `builtinToolConfigs`；`executeToolByName` 提升到 if 块之前，供原生 tool_calls 路径和文本标签路径共用，先查找内置工具（按 type 匹配），支持所有 6 种内置工具类型
+- **原生 tool_calls 结果持久化**：工具结果作为 `role:'user'` + XML 标签消息持久化到 store，设置 `metadata: { toolCallId, toolName, isToolResult: true }`；续写请求从 `get().messages` 取（已包含工具结果），不追加 cotContent
+- **buildContext 兼容 role:tool**：`ApiMessage` 接口扩展 `role: MessageRole | 'tool'`、`tool_call_id?`、`tool_calls?`；`buildContext` 消息遍历识别 `metadata.isToolResult` 转换为 OpenAI 的 `role:'tool'` 格式，识别 `msg.toolCalls` 输出 `tool_calls` 数组
+- **内置工具注入 API tools 参数**：`apiClient.ts` `buildToolSchema` 添加 6 个内置工具的 JSON Schema 映射表；`chat-slice.ts` `activeToolsForRequest` 合并内置工具，支持 function calling 的模型在 API 层面可见内置工具
+- **工具描述格式增强**：`chatService.ts` `BUILTIN_TOOL_INFO` 添加 `parameters` 字段（JSON Schema）；`buildToolDescriptions` 函数签名扩展为 `(builtinConfigs, activeTools)`，同时列出内置工具和用户工具
+- **循环保护**：`chat-slice.ts` 新增 `MAX_CONTINUATIONS = 3` 常量，文本标签路径迭代上限从 5 降至 3；原生 tool_calls 续写路径通过 `skipToolsInjection: true` 在 API 层面阻止模型再次发起 tool_calls
+- **续写请求不注入 tools**：`callApiWithRetry` 和 `callApiAndUpdate` 新增 `skipToolsInjection` 参数，续写时设为 `true`，防止模型再次发起 tool_calls 导致无限循环
+
+### 🚀 流式输出优化（重点）
+
+- **思考卡片完全流式输出**：移除 `luzzy-thinking-timeline.tsx` 中的 `useTypewriter` 打字机延迟 hook（原每帧 8-16 字符追加导致显示滞后），`ThinkingNode` 组件直接渲染 `step.content`，`isAnimating={isRunning}` 启用 Markdown 流式动画。参考 rikkahub 实现：直接渲染数据层累加的完整字符串，"逐字显示"由 SSE chunk 频率驱动，零滞后
+- **parseCot 阈值 3→1**：`chat-slice.ts` parseCot 调用节流阈值从 3 降至 1，实现真正逐字流式思考卡片解析
+- **useDeferredValue 背压机制**：`luzzy-thinking-timeline.tsx` 添加 `useDeferredValue(cot)`，`markdown.tsx` 添加 `useDeferredValue(content)`，React 18+ 内置背压机制避免高频流式更新导致渲染卡顿，浏览器空闲时更新实现丝滑流式效果
+- **两次请求架构保持不变**：Request 1 (phase="cot") → 流式更新 message.cot → Request 2 (phase="main") → 流式更新 message.content，KV 缓存机制零影响
+
+### ✨ 新增功能
+
+- **继续剧情按钮**：AI 消息气泡下新增"继续剧情"按钮（IconPlay），点击后追加 user 消息"请继续剧情的发展，请勿重复上一轮的剧情内容和言行。"并触发生成。末尾追加不破坏 KV 缓存前缀一致性
+- **API 设置弹窗扩展**：新增自定义提供商弹窗内增加 API Key 和模型配置字段（模型 ID/显示名称/上下文长度/推理能力开关），避免用户新增后还需在外部填写。ID 限制 25 字符
+
+### 🐛 Bug 修复
+
+- **分享功能修复**：`NativeBridge.kt` `shareFile` 使用 `ClipData.newUri` + `Handler(Looper.getMainLooper())` 主线程调用 + `FLAG_GRANT_READ_URI_PERMISSION` 确保权限传递；`shareText` 同样使用主线程 Handler；`luzzy-share-dialog.tsx` 和 `profile.tsx` 添加原生平台 `shareFile` 调用
+- **角色卡导入修复**：`LuzzyWebChromeClient.kt` 重写 `onShowFileChooser` 支持 `<input type="file">` 点击；`MainActivity.kt` 添加 `onActivityResult` 处理文件选择结果，`FILE_CHOOSER_REQUEST_CODE=10001`，Activity 重建时取消选择
+- **白屏修复**：`MainActivity.kt` 添加完整 WebView 生命周期（onPause/onStop/onStart/onResume/onSaveInstanceState），SplashScreen `setKeepOnScreenCondition { !webViewLoaded }` 在 WebView 加载完成前保持显示，`LuzzyWebViewClient.onPageFinished` 设置 `webViewLoaded=true`，WebAssetServer 启动添加 3 次重试
+- **取消 [] 高亮**：`markdown.tsx` `QUOTE_HIGHLIGHT_REGEX` 移除方括号，其他括号对保持不变
+- **角色卡侧边栏按钮可见性**：`character-picker.tsx` 展开/详情按钮添加图标和边框样式，增强视觉提示性；鹿溪角色禁用展开/详情按钮
+- **详情弹窗滑动修复**：`app.css` 移除 `[data-radix-scroll-area-viewport] > div` 的 `max-height: 100%` 限制
+- **Markdown 排版间距**：`markdown.css` 为 h3-h6 添加 `first:mt-0`，首个标题无顶部间距
+
+### 🏗️ 版本号
+
+- v0.4.5 → v0.4.6（package.json + frontend/package.json + build.gradle versionCode 24 + about.tsx）
+
 ## v0.4.5
 
 ### 🏗️ 架构重构

@@ -442,6 +442,61 @@ export const findPendingActiveToolCallInText = (
 };
 
 // ============================================================================
+// v0.4.6: 内置工具文本标签扫描（kebab-case 格式）
+// ============================================================================
+
+/** v0.4.6: 内置工具调用（文本标签模式） */
+export interface BuiltinToolCall {
+  toolType: BuiltinToolConfig['type'];
+  callLabel: string;
+  query: string;
+  raw: string;
+}
+
+/**
+ * v0.4.6: 扫描内置工具调用标签（kebab-case 格式）
+ *
+ * 识别 `<memory-recall:query>`、`<vector-memory:query>` 等标签。
+ * 与用户工具的 snake_case + _add/_cover 后缀格式不同，
+ * 内置工具使用 type 字段作为 callLabel（kebab-case）。
+ *
+ * @param text - 待扫描的文本
+ * @param configs - 内置工具配置列表
+ * @returns 第一个匹配的内置工具调用，无匹配则返回 null
+ */
+export const findPendingBuiltinToolCallInText = (
+  text: string,
+  configs: BuiltinToolConfig[],
+): BuiltinToolCall | null => {
+  const content = String(text || '');
+  if (!content) return null;
+
+  const enabledConfigs = (Array.isArray(configs) ? configs : []).filter((c) => c.enabled);
+  if (enabledConfigs.length === 0) return null;
+
+  for (const config of enabledConfigs) {
+    const callLabel = config.type; // kebab-case，如 'memory-recall'
+    const escapedLabel = escapeRegexText(callLabel);
+    // 匹配 <callLabel:query> 格式（无 _add/_cover 后缀）
+    // query 内容到下一个 < 或行尾结束
+    const regex = new RegExp(`<\\s*${escapedLabel}\\s*:\\s*([\\s\\S]*?)(?:<|$)`, 'i');
+    const match = content.match(regex);
+    if (match && match[1]) {
+      const query = match[1].trim();
+      if (query) {
+        return {
+          toolType: config.type,
+          callLabel,
+          query,
+          raw: match[0],
+        };
+      }
+    }
+  }
+  return null;
+};
+
+// ============================================================================
 // 角色卡过滤
 // ============================================================================
 

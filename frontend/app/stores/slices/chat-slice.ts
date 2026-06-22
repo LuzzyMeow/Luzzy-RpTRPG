@@ -52,6 +52,7 @@ import { parseCot } from "~/services/markdownService";
 import { getItem, setItem } from "~/services/storage";
 import {
   findPendingActiveToolCallInText,
+  findPendingBuiltinToolCallInText,
   executeActiveToolCall,
   filterToolsForCharacter,
 } from "~/services/toolService";
@@ -61,6 +62,9 @@ import { BUILTIN_PROVIDERS } from "~/stores/slices/settings-slice";
 import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
 import { logger } from "~/services/logger";
 import { toast } from "sonner";
+
+// v0.4.6: 文本标签路径最大续写次数限制，防止无限循环
+const MAX_CONTINUATIONS = 3;
 
 // ============================================================================
 // 辅助函数
@@ -299,6 +303,7 @@ export const createChatSlice: StateCreator<
         contextMsgs: ChatMessage[],
         phase: "cot" | "main" = "cot",
         cotContent?: string,
+        skipToolsInjection: boolean = false, // v0.4.6: 续写请求时不注入 tools
       ): Promise<{ content: string; reasoning: string; cot: string; toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> }> => {
         const maxRetries = 3;
         const baseDelays = [2000, 4000, 8000]; // 递增退避
@@ -310,7 +315,7 @@ export const createChatSlice: StateCreator<
           }
 
           try {
-            return await callApiAndUpdate(msgId, contextMsgs, phase, cotContent);
+            return await callApiAndUpdate(msgId, contextMsgs, phase, cotContent, skipToolsInjection);
           } catch (err) {
             // 用户取消不重试
             if (err instanceof DOMException && err.name === 'AbortError') throw err;
@@ -359,6 +364,7 @@ export const createChatSlice: StateCreator<
         contextMsgs: ChatMessage[],
         phase: "cot" | "main" = "cot",
         cotContent?: string,
+        skipToolsInjection: boolean = false, // v0.4.6: 续写请求时不注入 tools
       ): Promise<{ content: string; reasoning: string; cot: string; toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> }> => {
         // 构建 API 上下文
         const { apiMessages: rawApiMessages, appliedSkillIds: ctxAppliedSkillIds } = await buildContext({
@@ -376,6 +382,7 @@ export const createChatSlice: StateCreator<
           sessionId: currentSessionId ?? undefined,
           searchGlobalMemory,
           builtinToolConfigs, // v0.4.3: 传入内置工具配置，注入工具描述到 system prompt
+          activeTools, // v0.4.6: 传入用户工具，统一注入工具描述
         });
 
         // v0.4.3: 日志记录上下文构建完成
@@ -464,15 +471,35 @@ export const createChatSlice: StateCreator<
         // v0.4.4: 注入 activeTools 到 buildApiRequestBody（仅非 force 模式）
         // force 模式下由预执行逻辑处理工具，不注入 tools 参数避免重复调用
         // activeTools 在 line 775 加载，由于 callApiAndUpdate 是闭包且在 activeTools 初始化后才被调用，可安全引用
+        // v0.4.6: 将内置工具也纳入 tools 参数，让支持 function calling 的模型能看到内置工具
+        // v0.4.6: 续写请求（skipToolsInjection=true）时不注入 tools，防止模型再次发起 tool_calls 导致无限循环
+        const builtinToolsForRequest =
+          toolGlobalSettings.mode !== "force" && !skipToolsInjection
+            ? builtinToolConfigs
+                .filter((c) => c.enabled)
+                .map((c) => ({
+                  type: c.type,
+                  callName: c.type, // 内置工具使用 type 作为 callName（kebab-case）
+                  description: c.type, // 描述由 buildToolSchema 内部映射提供
+                  isBuiltin: true as const,
+                }))
+            : [];
+
         const activeToolsForRequest =
-          toolGlobalSettings.mode !== "force" && activeTools.length > 0
-            ? activeTools
-              .filter((t) => t.enabled)
-              .map((tool) => ({
-                type: tool.type,
-                callName: tool.callName || tool.name,
-                description: tool.description,
-              }))
+          toolGlobalSettings.mode !== "force" &&
+          !skipToolsInjection &&
+          (activeTools.length > 0 || builtinToolsForRequest.length > 0)
+            ? [
+                ...builtinToolsForRequest,
+                ...activeTools
+                  .filter((t) => t.enabled)
+                  .map((tool) => ({
+                    type: tool.type,
+                    callName: tool.callName || tool.name,
+                    description: tool.description,
+                    isBuiltin: false as const,
+                  })),
+              ]
             : undefined;
 
         const requestBody = buildApiRequestBody(
@@ -579,7 +606,7 @@ export const createChatSlice: StateCreator<
               // 仅在内容长度变化超过阈值、检测到标签闭合、或首次解析时才执行
               // v0.3.7: 阈值从 50 降至 10，提升流式思考卡片实时性
               // v0.4.0: 流式场景禁用 parseCot 缓存（content 持续变化缓存永不命中）
-              // v0.4.3: 阈值从 10 降至 3，实现逐字流式思考卡片
+              // v0.4.6: 阈值从 3 降至 1，实现真正逐字流式思考卡片
               const lengthDelta = accumulatedContent.length - lastParseLength;
               const closingTags = [
                 '</cot>', '</think>', '</thinking>', '</reasoning>',
@@ -588,7 +615,7 @@ export const createChatSlice: StateCreator<
               const hasClosingTag = closingTags.some((tag) => accumulatedContent.includes(tag));
               const shouldParse =
                 !lastCotResult ||
-                lengthDelta > 3 ||
+                lengthDelta > 1 ||
                 hasClosingTag;
 
               if (shouldParse) {
@@ -1669,54 +1696,148 @@ export const createChatSlice: StateCreator<
           ? nativeToolCallsFromMain
           : null;
 
+      // v0.4.6: 将工具执行相关函数提升到 if 块之前，供原生 tool_calls 路径和文本标签路径共用
+      const characterUuid = currentCharacter?.uuid ?? null;
+      const filteredTools = filterToolsForCharacter(activeTools, characterUuid);
+
+      // v0.4.4: 工具执行超时保护（30s）
+      const executeWithTimeout = async <T>(fn: () => Promise<T>, timeoutMs = 30000): Promise<T> => {
+        return Promise.race([
+          fn(),
+          new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error('工具执行超时')), timeoutMs),
+          ),
+        ]);
+      };
+
+      // v0.4.4: 根据工具名（callName）查找对应的 ActiveTool 并执行
+      // v0.4.6: 先查找内置工具（按 type 匹配），找到则执行内置工具逻辑
+      const executeToolByName = async (
+        toolName: string,
+        query: string,
+      ): Promise<string> => {
+        // v0.4.6: 先查找内置工具
+        const builtinConfig = builtinToolConfigs.find(
+          (c) => c.enabled && c.type === toolName,
+        );
+        if (builtinConfig) {
+          const limit = builtinConfig.resultCount || 8;
+          // memory-recall: 调用 searchLongTermMemory
+          if (toolName === "memory-recall" && currentCharacter?.uuid && memorySettings) {
+            const results = await executeWithTimeout(() =>
+              searchLongTermMemory(
+                currentCharacter.uuid,
+                query,
+                limit,
+                memorySettings,
+                settings,
+                allProviders,
+                get().apiProviderKeys,
+              ),
+            );
+            if (results.length === 0) return "<builtin_tool_result status='empty'>未找到相关记忆。</builtin_tool_result>";
+            return results.map((r, i) => `  <memory index="${i + 1}" turn="${r.turn ?? -1}">\n    ${r.content}\n  </memory>`).join('\n\n');
+          }
+          // vector-memory: 调用 searchVectorMemory
+          if (toolName === "vector-memory" && vectorMemoryShards.length > 0) {
+            const results = await executeWithTimeout(() =>
+              searchVectorMemory(query, vectorMemoryShards, memorySettings, settings, allProviders, get().apiProviderKeys),
+            );
+            if (results.length === 0) return "<builtin_tool_result status='empty'>未找到相关向量记忆。</builtin_tool_result>";
+            return results.map((r, i) => `  <memory index="${i + 1}" turn="${r.turn}">\n    ${r.content}\n  </memory>`).join('\n\n');
+          }
+          // keyword-search: 从 messages 中搜索
+          if (toolName === "keyword-search") {
+            const lowerQuery = query.toLowerCase();
+            const matched = get().messages
+              .filter((m) => m.content && m.content.toLowerCase().includes(lowerQuery))
+              .slice(-limit);
+            if (matched.length === 0) return "<builtin_tool_result status='empty'>未找到匹配的消息。</builtin_tool_result>";
+            return matched.map((m, i) => `  <message index="${i + 1}" role="${m.role}">\n    ${m.content.slice(0, 500)}\n  </message>`).join('\n\n');
+          }
+          // world-recall: 世界书语义检索（需要嵌入模型）
+          if (toolName === "world-recall" && worldInfoEntries.length > 0 && memorySettings?.embeddingModel) {
+            const enabled = worldInfoEntries.filter((e) => e.enabled !== false);
+            if (enabled.length === 0) return "<builtin_tool_result status='empty'>没有已启用的世界书条目。</builtin_tool_result>";
+            const queryEmbedding = await executeWithTimeout(() =>
+              getEmbedding(query, memorySettings, settings, allProviders, get().apiProviderKeys),
+            );
+            const scored = enabled.map((e) => {
+              const entryEmbedding = e.embedding || [];
+              const score = entryEmbedding.length > 0 ? cosineSimilarity(queryEmbedding, entryEmbedding) : 0;
+              return { entry: e, score };
+            }).sort((a, b) => b.score - a.score).slice(0, limit);
+            return scored.map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`).join('\n\n');
+          }
+          // world-search: 世界书关键词搜索
+          if (toolName === "world-search") {
+            const enabled = worldInfoEntries.filter((e) => e.enabled !== false);
+            const terms = query.split(/[\s,，、;；|｜/\\]+/u).map((t) => t.trim().toLowerCase()).filter(Boolean);
+            const matched = enabled.map((e) => {
+              const lowerContent = String(e.content || '').toLowerCase();
+              const lowerKeys = (e.keys || []).map((k) => String(k).toLowerCase());
+              const contentMatches = terms.filter((t) => lowerContent.includes(t));
+              const keyMatches = terms.filter((t) => lowerKeys.some((k) => k.includes(t)));
+              return { entry: e, score: contentMatches.length + keyMatches.length * 2 };
+            }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
+            if (matched.length === 0) return "<builtin_tool_result status='empty'>世界书检索未找到匹配条目。</builtin_tool_result>";
+            return matched.map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`).join('\n\n');
+          }
+          // anysearch: 联网搜索（复用 executeActiveToolCall 的 anysearch 逻辑）
+          if (toolName === "anysearch") {
+            const anysearchTool: ActiveTool = {
+              id: 'builtin-anysearch',
+              name: 'Anysearch',
+              type: 'web',
+              callName: 'tool_anysearch',
+              description: '联网搜索',
+              enabled: true,
+              resultCount: limit,
+              worldInfoAccessMode: 'all',
+              enableMode: 'all',
+              mcpTools: [],
+              tavilyApiKey: '',
+            };
+            return executeWithTimeout(() =>
+              executeActiveToolCall(
+                { tool: anysearchTool, mode: "add", callLabel: "tool_anysearch", query, raw: "", reason: "native tool_calls (builtin)" },
+                { messages: get().messages, character: currentCharacter, vectorMemoryShards, worldInfoEntries, tavilyApiKey: "", mcpSessionIds: new Map(), anysearchConfig: builtinConfig },
+              ),
+            );
+          }
+        }
+
+        // 查找用户工具（现有逻辑）
+        const tool = filteredTools.find(
+          (t) => t.callName === toolName || t.name === toolName,
+        );
+        if (!tool) {
+          throw new Error(`未找到匹配的工具: ${toolName}`);
+        }
+        const toolCall: ActiveToolCall = {
+          tool,
+          mode: "add",
+          callLabel: tool.callName || tool.name,
+          query,
+          raw: "",
+          reason: "native tool_calls",
+        };
+        return executeWithTimeout(() =>
+          executeActiveToolCall(toolCall, {
+            messages: get().messages,
+            character: currentCharacter,
+            vectorMemoryShards,
+            worldInfoEntries,
+            tavilyApiKey: "",
+            mcpSessionIds: new Map(),
+            anysearchConfig: builtinToolConfigs.find((c) => c.type === "anysearch"),
+          }),
+        );
+      };
+
       if (nativeToolCalls && nativeToolCalls.length > 0) {
         // === v0.4.4: 原生 tool_calls 模式 ===
         logger.info("api", `检测到原生 tool_calls（数量=${nativeToolCalls.length}），进入原生工具调用模式`);
-
-        const characterUuid = currentCharacter?.uuid ?? null;
-        const filteredTools = filterToolsForCharacter(activeTools, characterUuid);
-
-        // v0.4.4: 工具执行超时保护（30s）
-        const executeWithTimeout = async <T>(fn: () => Promise<T>, timeoutMs = 30000): Promise<T> => {
-          return Promise.race([
-            fn(),
-            new Promise<T>((_, reject) =>
-              setTimeout(() => reject(new Error('工具执行超时')), timeoutMs),
-            ),
-          ]);
-        };
-
-        // v0.4.4: 根据工具名（callName）查找对应的 ActiveTool 并执行
-        const executeToolByName = async (
-          toolName: string,
-          query: string,
-        ): Promise<string> => {
-          const tool = filteredTools.find(
-            (t) => t.callName === toolName || t.name === toolName,
-          );
-          if (!tool) {
-            throw new Error(`未找到匹配的工具: ${toolName}`);
-          }
-          const toolCall: ActiveToolCall = {
-            tool,
-            mode: "add",
-            callLabel: tool.callName || tool.name,
-            query,
-            raw: "",
-            reason: "native tool_calls",
-          };
-          return executeWithTimeout(() =>
-            executeActiveToolCall(toolCall, {
-              messages: get().messages,
-              character: currentCharacter,
-              vectorMemoryShards,
-              worldInfoEntries,
-              tavilyApiKey: "",
-              mcpSessionIds: new Map(),
-              anysearchConfig: builtinToolConfigs.find((c) => c.type === "anysearch"),
-            }),
-          );
-        };
 
         // 获取当前消息的 agentSteps 作为初始值
         const nativeAgentSteps: AgentStep[] = [
@@ -1725,6 +1846,29 @@ export const createChatSlice: StateCreator<
         const nativeToolCallRecords: ToolCall[] = [
           ...(get().messages.find((m) => m.id === assistantMessageId)?.toolCalls ?? []),
         ];
+
+        // v0.4.6: 持久化 assistant 消息的 tool_calls（用于续写时 buildContext 识别）
+        // 将原生 tool_calls 转换为 ToolCall 格式并持久化到 store
+        const persistedToolCalls: ToolCall[] = nativeToolCalls.map((tc) => {
+          let queryStr = '';
+          try {
+            const args = JSON.parse(tc.function.arguments || '{}');
+            queryStr = args.query ?? '';
+          } catch {
+            queryStr = tc.function.arguments;
+          }
+          return {
+            id: tc.id,
+            toolName: tc.function.name,
+            callLabel: tc.function.name,
+            query: queryStr,
+            reason: 'native tool_calls',
+            status: 'receiving' as const,
+          };
+        });
+        get().updateMessage(assistantMessageId, {
+          toolCalls: [...nativeToolCallRecords, ...persistedToolCalls],
+        });
 
         for (const tc of nativeToolCalls) {
           if (abortController?.signal.aborted) break;
@@ -1791,15 +1935,22 @@ export const createChatSlice: StateCreator<
               result: truncatedResult,
             });
 
-            // 添加 tool 角色消息到 contextMessages（OpenAI 原生格式）
-            // ChatMessage 类型不支持 role: 'tool'，用 as any 绕过
-            contextMessages.push({
+            // v0.4.6: 将工具结果持久化到 store（使用 user 角色 + XML 标签 + metadata）
+            // buildContext 会识别 metadata.isToolResult 并转换为 OpenAI 的 role:'tool' 格式
+            // 同时保留在 contextMessages 中以兼容当前请求的上下文
+            const toolResultMessage: ChatMessage = {
               id: uuidv4(),
-              role: "tool" as any,
-              content: truncatedResult,
+              role: "user",
+              content: `<tool_call_result tool="${tc.function.name}">\n${truncatedResult}\n</tool_call_result>`,
               createdAt: Date.now(),
-              tool_call_id: tc.id,
-            } as any);
+              metadata: {
+                toolCallId: tc.id,
+                toolName: tc.function.name,
+                isToolResult: true,
+              },
+            };
+            get().addMessage(toolResultMessage);
+            contextMessages.push(toolResultMessage);
 
             // 更新消息
             get().updateMessage(assistantMessageId, {
@@ -1836,14 +1987,20 @@ export const createChatSlice: StateCreator<
               error: errorMsg,
             });
 
-            // 注入错误信息到 contextMessages
-            contextMessages.push({
+            // v0.4.6: 将错误信息持久化到 store（与成功路径一致的格式）
+            const toolErrorMessage: ChatMessage = {
               id: uuidv4(),
-              role: "tool" as any,
-              content: `工具执行失败: ${errorMsg}`,
+              role: "user",
+              content: `<tool_call_result tool="${tc.function.name}">\n工具执行失败: ${errorMsg}\n</tool_call_result>`,
               createdAt: Date.now(),
-              tool_call_id: tc.id,
-            } as any);
+              metadata: {
+                toolCallId: tc.id,
+                toolName: tc.function.name,
+                isToolResult: true,
+              },
+            };
+            get().addMessage(toolErrorMessage);
+            contextMessages.push(toolErrorMessage);
 
             get().updateMessage(assistantMessageId, {
               toolCalls: [...nativeToolCallRecords],
@@ -1872,23 +2029,33 @@ export const createChatSlice: StateCreator<
           const newContextMessages = get().messages.filter(
             (m) => m.id !== continuationMessage.id,
           );
+          // v0.4.6: 续写请求不追加 cotContent（工具结果已在 messages 中，避免顺序错乱）
+          // 续写时从 get().messages 取（已包含 assistant(tool_calls) + user(tool_result) 消息）
+          // v0.4.6: 续写请求不注入 tools，防止模型再次发起 tool_calls 导致无限循环
+          // v0.4.6: 原生 tool_calls 路径无需 MAX_CONTINUATIONS 循环保护，
+          //         因为 skipToolsInjection=true 在 API 层面阻止模型再次发起 tool_calls
           await callApiWithRetry(
             continuationMessage.id,
             newContextMessages,
             "main",
-            cotContent,
+            undefined, // v0.4.6: 不追加 cotContent
+            true, // v0.4.6: skipToolsInjection
           );
         }
-      } else if (activeTools.length > 0) {
+      } else if (activeTools.length > 0 || builtinToolConfigs.some((c) => c.enabled)) {
         // === 回退到文本标签解析模式（原有逻辑） ===
+        // v0.4.6: 同时支持用户工具和内置工具的文本标签
         const characterUuid = currentCharacter?.uuid ?? null;
         const filteredTools = filterToolsForCharacter(
           activeTools,
           characterUuid,
         );
 
-        // 最多迭代 5 次以防止无限循环
-        for (let iteration = 0; iteration < 5; iteration++) {
+        // v0.4.6: 最多迭代 MAX_CONTINUATIONS 次以防止无限循环
+        for (let iteration = 0; iteration < MAX_CONTINUATIONS; iteration++) {
+          if (iteration === MAX_CONTINUATIONS - 1) {
+            logger.warn("api", "达到最大续写次数限制: " + MAX_CONTINUATIONS);
+          }
           // 检查是否已被用户取消，避免取消后继续发起工具调用与 API 请求
           if (abortController?.signal.aborted) break;
 
@@ -1897,15 +2064,106 @@ export const createChatSlice: StateCreator<
           );
           if (!currentAssistantMsg) break;
 
-          // 扫描 assistant 回复中的工具调用标签
+          // v0.4.6: 同时扫描用户工具和内置工具的文本标签
           const toolCall = findPendingActiveToolCallInText(
             currentAssistantMsg.content,
             filteredTools,
           );
-          if (!toolCall) break;
+          const builtinToolCall = !toolCall
+            ? findPendingBuiltinToolCallInText(currentAssistantMsg.content, builtinToolConfigs)
+            : null;
+
+          if (!toolCall && !builtinToolCall) break;
 
           try {
-            // 执行工具调用
+            // v0.4.6: 处理内置工具调用
+            if (builtinToolCall) {
+              const toolCallStepId = uuidv4();
+              const toolCallStep: AgentStep = {
+                id: toolCallStepId,
+                type: "tool_call",
+                title: builtinToolCall.callLabel,
+                content: builtinToolCall.query,
+                status: "running",
+                startedAt: Date.now(),
+              };
+
+              // 复用 executeToolByName 执行内置工具
+              const result = await executeToolByName(builtinToolCall.callLabel, builtinToolCall.query);
+
+              toolCallStep.status = "completed";
+              toolCallStep.endedAt = Date.now();
+              const toolResultStep: AgentStep = {
+                id: uuidv4(),
+                type: "tool_result",
+                title: builtinToolCall.callLabel,
+                content: result,
+                status: "completed",
+                startedAt: Date.now(),
+                endedAt: Date.now(),
+              };
+
+              const currentMsgForSteps = get().messages.find(
+                (m) => m.id === currentAssistantId,
+              );
+              get().updateMessage(currentAssistantId, {
+                toolCalls: [
+                  ...(currentAssistantMsg.toolCalls ?? []),
+                  {
+                    id: uuidv4(),
+                    toolName: builtinToolCall.callLabel,
+                    callLabel: builtinToolCall.callLabel,
+                    query: builtinToolCall.query,
+                    reason: "builtin tool text label",
+                    status: "completed" as const,
+                    result,
+                  },
+                ],
+                agentSteps: [
+                  ...(currentMsgForSteps?.agentSteps ?? []),
+                  toolCallStep,
+                  toolResultStep,
+                ],
+              });
+
+              // 添加工具结果作为用户消息
+              const toolResultMessage: ChatMessage = {
+                id: uuidv4(),
+                role: "user",
+                content: `<builtin_tool_result tool="${builtinToolCall.callLabel}">\n${result}\n</builtin_tool_result>`,
+                createdAt: Date.now(),
+              };
+              get().addMessage(toolResultMessage);
+
+              // 创建新的 assistant 消息用于续写
+              const continuationMessage: ChatMessage = {
+                id: uuidv4(),
+                role: "assistant",
+                content: "",
+                createdAt: Date.now(),
+                loading: true,
+              };
+              get().addMessage(continuationMessage);
+
+              const newContextMessages = get().messages.filter(
+                (m) => m.id !== continuationMessage.id,
+              );
+              // v0.4.6: 续写请求不注入 tools，防止无限循环
+              await callApiWithRetry(
+                continuationMessage.id,
+                newContextMessages,
+                "main",
+                cotContent,
+                true, // skipToolsInjection
+              );
+
+              currentAssistantId = continuationMessage.id;
+              continue;
+            }
+
+            // 执行用户工具调用（现有逻辑）
+            // v0.4.6: 添加 toolCall 非空守卫，TypeScript 类型收窄
+            if (!toolCall) continue;
             // 添加 tool_call 步骤（v0.3.0 新增）
             const toolCallStepId = uuidv4();
             const toolCallStep: AgentStep = {
@@ -2016,10 +2274,11 @@ export const createChatSlice: StateCreator<
               (m) => m.id === currentAssistantId,
             );
             // 记录工具调用错误 + 错误步骤
+            // v0.4.6: catch 块中 TypeScript 无法继承 try 块的类型收窄，使用非空断言
             const errorStep: AgentStep = {
               id: uuidv4(),
               type: "tool_call",
-              title: toolCall.tool.name,
+              title: toolCall!.tool.name,
               content: toolError instanceof Error ? toolError.message : String(toolError),
               status: "error",
               startedAt: Date.now(),
@@ -2030,16 +2289,16 @@ export const createChatSlice: StateCreator<
                 ...(latestAssistantMsg?.toolCalls ?? []),
                 {
                   id: uuidv4(),
-                  toolName: toolCall.tool.name,
-                  callLabel: toolCall.callLabel,
-                  query: toolCall.query,
-                  reason: toolCall.reason,
+                  toolName: toolCall!.tool.name,
+                  callLabel: toolCall!.callLabel,
+                  query: toolCall!.query,
+                  reason: toolCall!.reason,
                   status: "error" as const,
                   error:
                     toolError instanceof Error
                       ? toolError.message
                       : String(toolError),
-                  mcpSubToolName: toolCall.mcpSubToolName,
+                  mcpSubToolName: toolCall!.mcpSubToolName,
                 },
               ],
               agentSteps: [
@@ -2287,6 +2546,40 @@ export const createChatSlice: StateCreator<
 
       set({
         messages: [...newMessages, assistantMessage],
+        isGenerating: true,
+        abortController: new AbortController(),
+      });
+
+      await generateResponse(assistantMessage.id);
+    },
+
+    // v0.4.6: 继续剧情 - 在末尾追加 user 消息后生成新的 assistant 回复
+    // KV 缓存保护:仅在末尾追加 user 消息,前缀(system_prompt + history)不变,缓存命中
+    continueStory: async () => {
+      if (!get().currentCharacter) return;
+      if (get().isGenerating) return;
+      const { messages } = get();
+      if (messages.length === 0) return;
+
+      // 追加 user 消息,指示 AI 继续剧情发展
+      const userMessage: ChatMessage = {
+        id: uuidv4(),
+        role: "user",
+        content: "请继续剧情的发展，请勿重复上一轮的剧情内容和言行。",
+        createdAt: Date.now(),
+      };
+
+      // 创建新的空 assistant 消息
+      const assistantMessage: ChatMessage = {
+        id: uuidv4(),
+        role: "assistant",
+        content: "",
+        createdAt: Date.now(),
+        loading: true,
+      };
+
+      set({
+        messages: [...messages, userMessage, assistantMessage],
         isGenerating: true,
         abortController: new AbortController(),
       });

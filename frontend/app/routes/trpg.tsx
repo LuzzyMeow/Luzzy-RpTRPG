@@ -19,7 +19,6 @@ import { IconLink, IconInfo } from "~/components/luzzy/luzzy-icons";
 import { useAppStore } from "~/stores";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { Button } from "~/components/ui/button";
-import { ScrollArea } from "~/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -98,7 +97,8 @@ export default function TrpgPage() {
 
       {/* TRPG 模式说明弹窗 */}
       <Dialog open={showNotice} onOpenChange={setShowNotice}>
-        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-md flex flex-col gap-0">
+        {/* v0.4.6: overflow-y-auto 替代 overflow-hidden,避免 flex 布局在 Android WebView 上因 dvh 计算偏差导致 footer 与文字重叠 */}
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-y-auto max-w-md flex flex-col gap-0">
           <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <IconInfo className="size-5 text-primary" />
@@ -108,8 +108,8 @@ export default function TrpgPage() {
               了解 TRPG 模式如何配置 API 服务
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 min-h-0 max-h-[65vh]">
-            <div className="space-y-3 py-2 pr-2 text-sm leading-relaxed">
+          <div className="flex-1 min-h-0 py-2 pr-2">
+            <div className="space-y-3 text-sm leading-relaxed">
               {/* v0.4.2: 重写说明弹窗,明确支持三种 API 配置场景 */}
               <div className="rounded-lg border border-border/50 bg-muted/30 p-3">
                 <p className="font-medium text-foreground">工作原理</p>
@@ -195,8 +195,8 @@ export default function TrpgPage() {
                 </p>
               </div>
             </div>
-          </ScrollArea>
-          <DialogFooter className="gap-2 sm:gap-2 shrink-0">
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2 shrink-0 pt-3 border-t border-border/40">
             <Button variant="outline" onClick={handleDismissForever}>
               不再提示
             </Button>

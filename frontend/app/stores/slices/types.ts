@@ -225,6 +225,8 @@ export interface ChatSlice {
   sendMessage: (content: string) => Promise<void>;
   stopGenerating: () => void;
   regenerate: () => Promise<void>;
+  // v0.4.6: 继续剧情 - 追加 user 消息后生成新回复
+  continueStory: () => Promise<void>;
   editMessage: (id: string, content: string) => void;
   deleteMessage: (id: string) => void;
   clearMessages: () => void;

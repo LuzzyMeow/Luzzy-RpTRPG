@@ -276,77 +276,14 @@ function mergeSteps(
 }
 
 // ============================================================================
-// 打字机效果 Hook
-// ============================================================================
-
-/**
- * 打字机效果 Hook
- *
- * v0.3.6: 重写为 requestAnimationFrame + 增量追赶快照模式
- * 解决问题：旧版每次 fullText 变化都重建 setInterval，流式时定时器堆积导致 UI 卡顿
- * 新版用 rAF 平滑追赶，单一定时器，性能显著提升
- *
- * v0.4.3: 恢复轻量打字机效果,每帧追加 8-16 字符,平衡流式实时性与性能
- * 生成中时逐字渲染,生成完成后直接显示完整文本
- */
-function useTypewriter(fullText: string, isGenerating: boolean, speed = 30): string {
-  const [displayedText, setDisplayedText] = React.useState("");
-  const rafRef = React.useRef<number | null>(null);
-  const displayedRef = React.useRef("");
-
-  React.useEffect(() => {
-    if (!isGenerating) {
-      // 生成完成,直接显示完整文本
-      displayedRef.current = fullText;
-      setDisplayedText(fullText);
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      return;
-    }
-
-    // v0.4.3: rAF 追赶机制,每帧追加 8-16 字符(根据内容长度自适应)
-    const animate = () => {
-      const current = displayedRef.current;
-      if (current.length >= fullText.length) {
-        rafRef.current = null;
-        return;
-      }
-      // 每帧追加量:基础 8 + 内容长度自适应(最多 16)
-      const step = Math.min(
-        Math.max(8, Math.ceil(fullText.length / 60)),
-        16,
-      );
-      const nextLen = Math.min(current.length + step, fullText.length);
-      const next = fullText.slice(0, nextLen);
-      displayedRef.current = next;
-      setDisplayedText(next);
-      rafRef.current = requestAnimationFrame(animate);
-    };
-
-    // 若当前显示长度已落后于 fullText,启动追赶
-    if (displayedRef.current.length < fullText.length) {
-      rafRef.current = requestAnimationFrame(animate);
-    }
-
-    return () => {
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, [fullText, isGenerating, speed]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return displayedText;
-}
-
-// ============================================================================
 // 主组件
 // ============================================================================
 
 export function LuzzyThinkingTimeline({ cot, isGenerating, agentSteps }: LuzzyThinkingTimelineProps) {
-  const thinkingSteps = React.useMemo(() => parseThinkingSteps(cot, isGenerating), [cot, isGenerating]);
+  // v0.4.6: useDeferredValue 背压机制，避免高频流式更新导致渲染卡顿
+  // cot 高频更新时，deferredCot 会延迟更新，让浏览器先处理用户输入和高优先级任务
+  const deferredCot = React.useDeferredValue(cot);
+  const thinkingSteps = React.useMemo(() => parseThinkingSteps(deferredCot, isGenerating), [deferredCot, isGenerating]);
   // v0.4.4: 合并 agentSteps 到 Timeline 节点
   const allSteps = React.useMemo(() => mergeSteps(thinkingSteps, agentSteps), [thinkingSteps, agentSteps]);
   const [expandedStep, setExpandedStep] = React.useState<number | null>(0);
@@ -420,7 +357,6 @@ interface ThinkingNodeProps {
 
 function ThinkingNode({ step, index, isExpanded, onToggle }: ThinkingNodeProps) {
   const isRunning = step.status === "running";
-  const displayedContent = useTypewriter(step.content, isRunning);
 
   return (
     <div className="relative pl-8">
@@ -466,8 +402,8 @@ function ThinkingNode({ step, index, isExpanded, onToggle }: ThinkingNodeProps) 
             className="overflow-hidden"
           >
             <div className="mt-1.5 rounded-md bg-muted/40 p-2 text-sm text-muted-foreground">
-              {displayedContent ? (
-                <Markdown content={displayedContent} isAnimating={false} />
+              {step.content ? (
+                <Markdown content={step.content} isAnimating={isRunning} />
               ) : (
                 <span className="text-xs opacity-60">等待内容...</span>
               )}

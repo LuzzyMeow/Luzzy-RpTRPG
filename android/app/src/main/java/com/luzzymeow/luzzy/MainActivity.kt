@@ -1,12 +1,15 @@
 package com.luzzymeow.luzzy
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.webkit.WebViewAssetLoader
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -19,10 +22,16 @@ import fi.iki.elonen.NanoHTTPD
  * LUZZY 主 Activity(方案 D:原生 Kotlin 架构,替代 Capacitor BridgeActivity)。
  *
  * 关键定制:
- * 1. WebViewAssetLoader:用 https://appassets.androidplatform.net/ 协议加载 assets 中的前端资源
+ * 1. WebAssetServer(NanoHTTPD :18528):本地 HTTP 资源服务器,直接从 assets/public/ 直出前端构建产物
  * 2. DownloadListener:万相广场 iframe 内下载(角色卡/UI模板)转发到 JS 层自动导入
- * 3. ApiProxyServer:本地 HTTP 代理服务器,为 TRPG iframe 内的 API 请求绕过 CORS
+ * 3. ApiProxyServer(NanoHTTPD :18527):本地 HTTP 代理服务器,为 TRPG iframe 内的 API 请求绕过 CORS
  * 4. NativeBridge:JavascriptInterface,替代 @capacitor/device、@capacitor/filesystem、@capacitor/share
+ *
+ * 资源服务器设计(参考 rikkahub web/routes/AIIconRoutes.kt 的 Ktor assets 路由):
+ * - 参考 rikkahub 的做法:用本地 HTTP 服务器直出 assets,而非 WebViewAssetLoader
+ * - 端口 18528 专用于前端资源请求,不与 18527 API 代理冲突
+ * - 与 https://appassets.androidplatform.net 相比,localhost HTTP 不需要 DNS 解析,
+ *   不依赖 WebViewAssetLoader 的 path 段约束(/ 不支持),直接通过 WebView 网络栈加载
  *
  * === ApiProxyServer 设计原理 ===
  *
@@ -55,12 +64,20 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "LUZZY"
         private const val PROXY_PORT = 18527
+        private const val WEB_ASSET_PORT = 18528
+        // v0.4.6: 文件选择请求码(角色卡导入)
+        const val FILE_CHOOSER_REQUEST_CODE = 10001
     }
 
     private var downloadListenerRegistered = false
     private var proxyServer: ApiProxyServer? = null
+    private var webAssetServer: WebAssetServer? = null
     private lateinit var webView: WebView
-    private lateinit var assetLoader: WebViewAssetLoader
+
+    // v0.4.6: 文件选择回调(角色卡导入)
+    var filePathCallback: ValueCallback<Array<Uri>>? = null
+    // v0.4.6: WebView 是否已加载完成(控制 SplashScreen 保持显示)
+    @Volatile private var webViewLoaded = false
 
     // 配置缓存(由 JS 层通过 JavascriptInterface 推送)
     @Volatile private var cachedApiUrl: String = ""
@@ -93,35 +110,145 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 必须在 super.onCreate() 之前调用,将 SplashScreen 主题切换为 postSplashScreenTheme
+        // 否则 Activity 会因主题不兼容 AppCompatActivity 而闪退
+        // v0.4.6: 添加 keepOnScreenCondition,在 WebView 加载完成前保持 Splash 显示,
+        // 避免从其他 app 返回时短暂白屏
+        val splashScreenViewProvider = installSplashScreen()
+        splashScreenViewProvider.setKeepOnScreenCondition { !webViewLoaded }
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        initWebView()
+        // 先启动资源服务器(含重试),再 initWebView 加载页面
+        startWebAssetServerIfNeeded()
+        initWebView(savedInstanceState)
         registerDownloadListenerIfNeeded()
         startProxyServerIfNeeded()
     }
 
     override fun onResume() {
         super.onResume()
+        // v0.4.6: WebView 恢复活跃状态
+        if (::webView.isInitialized) {
+            webView.onResume()
+            webView.resumeTimers()
+        }
         registerDownloadListenerIfNeeded()
+        startWebAssetServerIfNeeded()
         startProxyServerIfNeeded()
+    }
+
+    // v0.4.6: 完善 WebView 生命周期,避免从其他 app 返回时白屏
+    override fun onPause() {
+        super.onPause()
+        if (::webView.isInitialized) {
+            webView.onPause()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // v0.4.6: 停止 WebView 定时器,降低后台 CPU 占用
+        if (::webView.isInitialized) {
+            webView.pauseTimers()
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // v0.4.6: 恢复 WebView 定时器
+        if (::webView.isInitialized) {
+            webView.resumeTimers()
+        }
+    }
+
+    // v0.4.6: 保存 WebView 状态,避免 Activity 重建后白屏
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::webView.isInitialized) {
+            webView.saveState(outState)
+            Log.i(TAG, "WebView state saved")
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         stopProxyServer()
+        stopWebAssetServer()
+        // v0.4.6: 清理文件选择回调
+        cancelFilePathCallback()
+    }
+
+    // v0.4.6: 处理文件选择结果(角色卡导入)
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == FILE_CHOOSER_REQUEST_CODE) {
+            val callback = filePathCallback
+            filePathCallback = null
+            if (callback == null) {
+                Log.w(TAG, "File chooser callback is null")
+                return
+            }
+            // 结果处理
+            val result: Array<Uri>? = when {
+                resultCode != RESULT_OK -> {
+                    Log.i(TAG, "File chooser canceled")
+                    null
+                }
+                data?.data != null -> {
+                    Log.i(TAG, "File selected: ${data.data}")
+                    arrayOf(data.data!!)
+                }
+                data?.clipData != null -> {
+                    val count = data.clipData!!.itemCount
+                    val uris = Array<Uri>(count) { i -> data.clipData!!.getItemAt(i).uri }
+                    Log.i(TAG, "Files selected: $count")
+                    uris
+                }
+                else -> {
+                    Log.w(TAG, "File chooser returned no data")
+                    null
+                }
+            }
+            try {
+                callback.onReceiveValue(result)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to deliver file chooser result: ${e.message}", e)
+            }
+        }
+    }
+
+    // v0.4.6: 取消文件选择回调(用于新选择开始前或 Activity 销毁时)
+    fun cancelFilePathCallback() {
+        filePathCallback?.let {
+            try {
+                it.onReceiveValue(null)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to cancel file chooser callback: ${e.message}")
+            }
+        }
+        filePathCallback = null
+    }
+
+    // v0.4.6: WebView 页面加载完成回调,关闭 SplashScreen
+    fun onWebViewPageFinished() {
+        webViewLoaded = true
+        Log.i(TAG, "WebView page finished, SplashScreen dismissed")
     }
 
     /**
-     * 初始化 WebView(替代 Capacitor BridgeActivity 的默认配置)
+     * 初始化 WebView(替代 Capacitor BridgeActivity 的默认配置)。
+     *
+     * 前端资源加载方案(参考 rikkahub 的 Ktor assets 路由):
+     * - WebAssetServer 在 localhost:18528 直出 assets/public/ 目录
+     * - WebView 通过 http://localhost:18528/index.html 加载首页
+     * - 子资源 /assets/xxx.js、/fonts/xxx.woff2 等由 WebAssetServer 统一处理
+     * - 与 WebViewAssetLoader 相比,localhost HTTP 不需要 DNS 解析,也不受 path 段约束
      */
-    private fun initWebView() {
+    private fun initWebView(savedInstanceState: Bundle? = null) {
         webView = findViewById(R.id.webview)
 
-        // WebViewAssetLoader:用 https://appassets.androidplatform.net/ 协议加载 assets
-        // 保留 https 协议,避免混合内容警告,前端代码无需任何路径调整
-        assetLoader = WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
-            .build()
+        // 启用 WebView 远程调试(Chrome DevTools://inspect 可见),便于排查前端运行时错误
+        WebView.setWebContentsDebuggingEnabled(true)
 
         val settings = webView.settings
         settings.javaScriptEnabled = true
@@ -129,7 +256,6 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.allowFileAccess = true
         settings.allowContentAccess = true
-        // v0.3.2: 配置 WebView 缓存模式,避免 TRPG iframe 每次冷启动重新下载
         settings.cacheMode = WebSettings.LOAD_DEFAULT
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.setSupportZoom(false)
@@ -139,24 +265,47 @@ class MainActivity : AppCompatActivity() {
         settings.useWideViewPort = true
         Log.i(TAG, "WebView settings configured")
 
-        webView.webViewClient = LuzzyWebViewClient(assetLoader)
-        webView.webChromeClient = LuzzyWebChromeClient()
+        webView.webViewClient = LuzzyWebViewClient(this)
+        // v0.4.6: 传入 MainActivity 引用,支持 onShowFileChooser
+        webView.webChromeClient = LuzzyWebChromeClient(this)
 
         // 注册 JavascriptInterface(替代 Capacitor 的 bridge)
         webView.addJavascriptInterface(NativeBridge(this), "AndroidBridge")
         webView.addJavascriptInterface(ProxyConfigInterface(), "AndroidProxy")
         Log.i(TAG, "JavascriptInterface registered: AndroidBridge + AndroidProxy")
 
+        // v0.4.6: 优先恢复 WebView 状态(避免 Activity 重建后白屏)
+        // 注意:restoreState 恢复的是 WebView 历史栈,不恢复前端 JS 状态
+        // 前端使用 IndexedDB 持久化,恢复后会从存储重新加载
+        if (savedInstanceState != null) {
+            val restored = webView.restoreState(savedInstanceState)
+            if (restored != null) {
+                Log.i(TAG, "WebView state restored from savedInstanceState")
+                // 状态恢复后,WebView 会自动加载历史栈顶部的 URL
+                // 但如果 WebAssetServer 未就绪,需要等待
+                webViewLoaded = false
+                return
+            }
+        }
+
         // 加载前端入口
-        // 前端构建产物位于 android/app/src/main/assets/public/index.html
-        // WebViewAssetLoader 通过 https://appassets.androidplatform.net/assets/ 前缀访问
-        webView.loadUrl("https://appassets.androidplatform.net/assets/public/index.html")
+        // 前端构建产物在 assets/public/ 下,WebAssetServer 在 localhost:18528 提供 HTTP 服务
+        // 必须使用根路径 / 而非 /index.html:React Router 7 SPA 模式下,
+        // index.html 内 SSR context 的 pathname 为 "/",若加载 /index.html 则浏览器 URL 变为
+        // /index.html 导致路由不匹配,React Router 渲染 404 页面
+        webView.loadUrl("http://localhost:$WEB_ASSET_PORT/")
     }
 
     private fun registerDownloadListenerIfNeeded() {
         if (downloadListenerRegistered) return
 
         webView.setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
+            // v0.4.6: blob: 和 data: URL 由前端处理,不在此拦截
+            // 仅转发 http/https 下载(万相广场角色卡/UI模板下载)到 JS 层自动导入
+            if (url.startsWith("blob:") || url.startsWith("data:")) {
+                Log.i(TAG, "Download skipped (blob/data URL): $url")
+                return@setDownloadListener
+            }
             val js = String.format(
                 "try{window.LuzzyAutoImport&&window.LuzzyAutoImport(%s,%s);}catch(e){console.error('[LUZZY] AutoImport failed:',e);}",
                 jsString(url), jsString(mimetype)
@@ -177,6 +326,42 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "API Proxy Server started on port $PROXY_PORT")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start API Proxy Server", e)
+        }
+    }
+
+    // v0.4.6: WebAssetServer 启动添加重试逻辑(最多 3 次,间隔 100ms)
+    // 避免端口占用或初始化竞态导致白屏
+    private fun startWebAssetServerIfNeeded() {
+        if (webAssetServer != null && webAssetServer!!.isAlive) return
+        val maxRetries = 3
+        var attempt = 0
+        while (attempt < maxRetries) {
+            try {
+                webAssetServer = WebAssetServer(applicationContext, WEB_ASSET_PORT)
+                webAssetServer!!.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+                Log.i(TAG, "Web Asset Server started on port $WEB_ASSET_PORT (attempt ${attempt + 1})")
+                return
+            } catch (e: Exception) {
+                attempt++
+                Log.e(TAG, "Failed to start Web Asset Server (attempt $attempt/$maxRetries): ${e.message}", e)
+                // 停止可能残留的实例
+                try {
+                    webAssetServer?.stop()
+                } catch (ignore: Exception) {}
+                webAssetServer = null
+                if (attempt < maxRetries) {
+                    Thread.sleep(100)
+                }
+            }
+        }
+        Log.e(TAG, "Web Asset Server failed to start after $maxRetries attempts")
+    }
+
+    private fun stopWebAssetServer() {
+        if (webAssetServer != null) {
+            webAssetServer!!.stop()
+            webAssetServer = null
+            Log.i(TAG, "Web Asset Server stopped")
         }
     }
 

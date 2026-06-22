@@ -1,9 +1,12 @@
 package com.luzzymeow.luzzy
 
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import androidx.core.content.FileProvider
@@ -159,13 +162,32 @@ class NativeBridge(private val context: Context) {
     @JavascriptInterface
     fun shareFile(uri: String, title: String, dialogTitle: String): Boolean {
         return try {
+            val fileUri = Uri.parse(uri)
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "*/*"
-                putExtra(Intent.EXTRA_STREAM, Uri.parse(uri))
+                putExtra(Intent.EXTRA_STREAM, fileUri)
                 putExtra(Intent.EXTRA_TITLE, title)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, dialogTitle))
+            // v0.4.6: 使用 ClipData 确保 URI 权限可靠传递
+            val clipData = ClipData.newUri(context.contentResolver, title, fileUri)
+            intent.clipData = clipData
+
+            // v0.4.6: chooser intent 也需要授权标志
+            val chooserIntent = Intent.createChooser(intent, dialogTitle).apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            // v0.4.6: startActivity 必须在主线程调用
+            // JavascriptInterface 方法默认在后台线程执行,直接 startActivity 会崩溃
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    context.startActivity(chooserIntent)
+                } catch (e: Exception) {
+                    Log.e(TAG, "shareFile startActivity 失败: ${e.message}")
+                }
+            }
             true
         } catch (e: Exception) {
             Log.e(TAG, "shareFile 失败: ${e.message}")
@@ -182,7 +204,18 @@ class NativeBridge(private val context: Context) {
                 putExtra(Intent.EXTRA_TEXT, text)
                 putExtra(Intent.EXTRA_TITLE, title)
             }
-            context.startActivity(Intent.createChooser(intent, dialogTitle))
+            val chooserIntent = Intent.createChooser(intent, dialogTitle).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            // v0.4.6: startActivity 必须在主线程调用
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    context.startActivity(chooserIntent)
+                } catch (e: Exception) {
+                    Log.e(TAG, "shareText startActivity 失败: ${e.message}")
+                }
+            }
             true
         } catch (e: Exception) {
             Log.e(TAG, "shareText 失败: ${e.message}")

@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="frontend/public/icons/icon-192.png" width="120" height="120" alt="LUZZY Logo" />
 
@@ -8,7 +8,7 @@
 > 
 > *Every conversation feels like opening a fresh role-playing novel.*
 
-[![Version](https://img.shields.io/badge/version-v0.4.4-9d4edd?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.4.6-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -114,7 +114,7 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.4.2-debug.apk`
+📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.4.6-debug.apk`
 
 ---
 
@@ -142,6 +142,12 @@ RP-Hub/
 ---
 
 ## 📰 最新动态 · What's New
+
+### v0.4.6
+
+思考卡片完全流式输出（移除打字机延迟，参考 rikkahub 实现直接渲染完整字符串）；新增"继续剧情"按钮和 API 设置弹窗扩展（API Key + 模型配置）；修复分享功能（NativeBridge ClipData + 主线程 Handler）、角色卡导入（onShowFileChooser）、应用恢复白屏（WebView 生命周期 + SplashScreen）、取消 [] 高亮、角色卡侧边栏按钮可见性、详情弹窗滑动、Markdown 排版间距等问题。
+
+> Thinking cards now fully stream output (removed typewriter delay, referencing rikkahub's approach of rendering complete strings directly); added "Continue Story" button and expanded API settings dialog (API Key + model config); fixed share functionality (NativeBridge ClipData + main thread Handler), character card import (onShowFileChooser), app resume white screen (WebView lifecycle + SplashScreen), removed [] highlight, character card sidebar button visibility, detail dialog scrolling, Markdown spacing, and more.
 
 ### v0.4.2
 

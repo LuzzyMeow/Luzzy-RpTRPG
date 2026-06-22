@@ -19,9 +19,10 @@ import "streamdown/styles.css";
 const INLINE_LATEX_REGEX = /\\\((.+?)\\\)/g;
 const BLOCK_LATEX_REGEX = /\\\[(.+?)\\\]/gs;
 const CODE_BLOCK_REGEX = /```[\s\S]*?```|`[^`\n]*`/g;
-// v0.4.3: 扩展高亮支持多种括号:"" "" 「」 【】 〔〕 『』 {} [] ()
+// v0.4.6: 高亮支持多种括号:"" "" 「」 【】 〔〕 『』 {} ()
+// v0.4.3 曾包含 [] 方括号,v0.4.6 移除 [] 高亮
 // 统一正则匹配所有括号对,左括号和右括号分别捕获
-const QUOTE_HIGHLIGHT_REGEX = /([\u201C\u300C\u3010\u3014\u300E{[("])([^\u201D\u300D\u3011\u3015\u300F}\])"]+?)([\u201D\u300D\u3011\u3015\u300F}\])"])/g;
+const QUOTE_HIGHLIGHT_REGEX = /([\u201C\u300C\u3010\u3014\u300E{("])([^\u201D\u300D\u3011\u3015\u300F})"]+?)([\u201D\u300D\u3011\u3015\u300F})"])/g;
 
 // Preprocess markdown content
 function preProcess(content: string): string {
@@ -102,7 +103,9 @@ export default function Markdown({
   const workbench = useOptionalWorkbench();
   // LUZZY 的 SettingsSlice 扁平结构无 displaySetting，使用默认值（showLineNumbers/codeBlockAutoWrap 均为 false）
   const displaySetting: { showLineNumbers?: boolean; codeBlockAutoWrap?: boolean } = {};
-  const processedContent = React.useMemo(() => preProcess(content), [content]);
+  // v0.4.6: useDeferredValue 背压机制，避免高频流式更新导致 Markdown 渲染卡顿
+  const deferredContent = React.useDeferredValue(content);
+  const processedContent = React.useMemo(() => preProcess(deferredContent), [deferredContent]);
   const handlePreviewCode = React.useCallback(
     (language: string, code: string) => {
       if (!allowCodePreview || !workbench) return;

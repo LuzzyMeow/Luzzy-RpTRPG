@@ -7,6 +7,7 @@ Thumbs.db
 *.log
 doc/
 .trae/
+.reasonix/
 .aisbg-research/
 commit_msg.txt
 frontend/dist/

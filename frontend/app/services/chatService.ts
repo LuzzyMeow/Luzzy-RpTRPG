@@ -24,6 +24,7 @@ import type {
   VectorMemoryShard,
   BuiltinToolConfig,
   BuiltinToolType,
+  ActiveTool,
 } from '~/types/luzzy';
 import { parseCot } from '~/services/markdownService';
 import {
@@ -47,9 +48,17 @@ import { logger } from '~/services/logger';
 
 /** API 消息格式（发送给 API 的消息结构） */
 export interface ApiMessage {
-  role: MessageRole;
+  role: MessageRole | 'tool';
   content: string;
   name?: string;
+  /** v0.4.6: 工具结果消息的关联 tool_call_id（OpenAI function calling 协议） */
+  tool_call_id?: string;
+  /** v0.4.6: assistant 消息携带的 tool_calls 数组（OpenAI function calling 协议） */
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
 }
 
 /** buildContext 参数 */
@@ -73,6 +82,8 @@ export interface BuildContextParams {
   searchGlobalMemory?: boolean;
   /** v0.4.3: 内置工具配置（用于注入工具描述到 system prompt） */
   builtinToolConfigs?: BuiltinToolConfig[];
+  /** v0.4.6: 用户工具（用于注入工具描述到 system prompt） */
+  activeTools?: ActiveTool[];
 }
 
 /** buildContext 返回值 */
@@ -158,35 +169,103 @@ export interface ExtractMemoryParams {
  *
  * 用于在 system prompt 末尾注入工具描述，提升模型主动调用工具的概率
  */
-const BUILTIN_TOOL_INFO: Record<BuiltinToolType, { callLabel: string; description: string }> = {
-  'memory-recall': { callLabel: 'memory-recall', description: '召回历史记忆，按相关度排序返回' },
-  'vector-memory': { callLabel: 'vector-memory', description: '使用嵌入模型在向量记忆分片中语义检索' },
-  'keyword-search': { callLabel: 'keyword-search', description: '在聊天消息中按关键词搜索匹配内容' },
-  'world-recall': { callLabel: 'world-recall', description: '基于嵌入模型召回当前角色卡绑定的世界书内容' },
-  'world-search': { callLabel: 'world-search', description: '在世界书中按关键词检索（无需嵌入模型）' },
-  'anysearch': { callLabel: 'anysearch', description: '联网搜索外部信息，获取实时数据' },
+const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
+  callLabel: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}> = {
+  'memory-recall': {
+    callLabel: 'memory-recall',
+    description: '召回历史记忆，按相关度排序返回',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: '记忆召回的查询关键词' } },
+      required: ['query'],
+    },
+  },
+  'vector-memory': {
+    callLabel: 'vector-memory',
+    description: '使用嵌入模型在向量记忆分片中语义检索',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: '向量记忆语义检索的查询内容' } },
+      required: ['query'],
+    },
+  },
+  'keyword-search': {
+    callLabel: 'keyword-search',
+    description: '在聊天消息中按关键词搜索匹配内容',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: '关键词搜索的查询内容' } },
+      required: ['query'],
+    },
+  },
+  'world-recall': {
+    callLabel: 'world-recall',
+    description: '基于嵌入模型召回当前角色卡绑定的世界书内容',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: '世界书语义检索的查询内容' } },
+      required: ['query'],
+    },
+  },
+  'world-search': {
+    callLabel: 'world-search',
+    description: '在世界书中按关键词检索（无需嵌入模型）',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '世界书关键词搜索的查询内容' },
+        keys: { type: 'string', description: '可选的世界书条目 keys 筛选（逗号分隔）' },
+      },
+      required: ['query'],
+    },
+  },
+  'anysearch': {
+    callLabel: 'anysearch',
+    description: '联网搜索外部信息，获取实时数据',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: '联网搜索的查询内容' } },
+      required: ['query'],
+    },
+  },
 };
 
 /**
  * 构建工具描述文本，注入 system prompt 末尾
  *
  * v0.4.3: 提升模型主动调用工具的概率
- * 仅注入已启用的工具，避免无效信息干扰
+ * v0.4.6: 同时列出内置工具和用户工具，统一标签格式
  */
-function buildToolDescriptions(configs: BuiltinToolConfig[] | undefined): string {
-  if (!configs || configs.length === 0) return '';
-  const enabledTools = configs.filter((c) => c.enabled);
-  if (enabledTools.length === 0) return '';
+function buildToolDescriptions(
+  builtinConfigs: BuiltinToolConfig[] | undefined,
+  activeTools: ActiveTool[] | undefined,
+): string {
+  const enabledBuiltin = (builtinConfigs || []).filter((c) => c.enabled);
+  const enabledActive = (activeTools || []).filter((t) => t.enabled);
+  if (enabledBuiltin.length === 0 && enabledActive.length === 0) return '';
+
   const lines: string[] = [
     '<available_tools>',
     '可用工具列表（在思考链 Step 内使用 <callLabel:query> 格式调用）：',
   ];
-  for (const c of enabledTools) {
+
+  // v0.4.6: 内置工具
+  for (const c of enabledBuiltin) {
     const info = BUILTIN_TOOL_INFO[c.type];
     if (info) {
       lines.push(`- ${info.callLabel}: ${info.description}（返回 ${c.resultCount} 条结果）`);
     }
   }
+
+  // v0.4.6: 用户工具（MCP/SKILL/Web）
+  for (const t of enabledActive) {
+    const callLabel = t.callName || t.name;
+    lines.push(`- ${callLabel}: ${t.description}（返回 ${t.resultCount} 条结果）`);
+  }
+
   lines.push('</available_tools>');
   return lines.join('\n');
 }
@@ -617,8 +696,9 @@ export const buildContext = async (
   systemPromptParts.push(COT_OUTPUT_PROTOCOL);
 
   // v0.4.3: 注入内置工具描述，提升模型主动调用工具的概率
+  // v0.4.6: 同时注入用户工具描述，统一标签格式
   // 工具描述追加到 system prompt 末尾，不破坏前缀（KV 缓存友好）
-  const toolDescriptions = buildToolDescriptions(params.builtinToolConfigs);
+  const toolDescriptions = buildToolDescriptions(params.builtinToolConfigs, params.activeTools);
   if (toolDescriptions) {
     systemPromptParts.push(toolDescriptions);
   }
@@ -716,6 +796,37 @@ export const buildContext = async (
 
   // 4.4 聊天记录（移除 CoT 内容）
   for (const msg of limitedMessages) {
+    // v0.4.6: 处理工具结果消息（metadata.isToolResult === true）
+    // 输出 OpenAI function calling 协议的 role:'tool' 消息
+    if (msg.metadata?.isToolResult && msg.metadata?.toolCallId) {
+      apiMessages.push({
+        role: 'tool',
+        content: msg.content,
+        tool_call_id: msg.metadata.toolCallId,
+      });
+      continue;
+    }
+
+    // v0.4.6: 处理带 tool_calls 的 assistant 消息
+    // 输出 OpenAI function calling 协议的 assistant 消息（携带 tool_calls 数组）
+    if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+      const parsed = parseCot(msg.content || '');
+      apiMessages.push({
+        role: 'assistant',
+        content: parsed.main || '',
+        tool_calls: msg.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: {
+            name: tc.toolName,
+            arguments: typeof tc.query === 'string' ? JSON.stringify({ query: tc.query }) : '{}',
+          },
+        })),
+      });
+      continue;
+    }
+
+    // 普通消息处理（现有逻辑）
     const parsed = parseCot(msg.content || '');
     let content = parsed.main;
     // 用户消息的系统指令保留

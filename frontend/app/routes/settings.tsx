@@ -189,6 +189,14 @@ export default function SettingsPage() {
   const [newProvider, setNewProvider] = React.useState<ApiProvider | null>(
     null,
   );
+  // v0.4.6: 新增供应商弹窗扩展字段
+  const [newProviderApiKey, setNewProviderApiKey] = React.useState("");
+  const [newProviderModel, setNewProviderModel] = React.useState({
+    modelId: "",
+    displayName: "",
+    contextLength: 128000,
+    supportsReasoning: false,
+  });
   // 编辑模型弹窗
   const [editingModel, setEditingModel] = React.useState<{
     providerId: string;
@@ -231,12 +239,27 @@ export default function SettingsPage() {
         isBuiltin: false,
         apiType: "openai-compatible",
       });
+      // v0.4.6: 同时保存 API Key（如果填写了）
+      if (newProviderApiKey.trim()) {
+        setProviderKey(newProvider.id, newProviderApiKey.trim());
+      }
+      // v0.4.6: 同时添加模型配置（如果填写了模型 ID）
+      if (newProviderModel.modelId.trim()) {
+        addModelToProvider(newProvider.id, {
+          id: newProviderModel.modelId.trim(),
+          name: newProviderModel.displayName.trim() || newProviderModel.modelId.trim(),
+          modelId: newProviderModel.modelId.trim(),
+          displayName: newProviderModel.displayName.trim() || undefined,
+          contextLength: newProviderModel.contextLength,
+          supportsReasoning: newProviderModel.supportsReasoning,
+        });
+      }
       setNewProvider(null);
       toast.success("供应商已添加");
     } catch (e) {
       toast.error("添加失败：" + (e as Error).message);
     }
-  }, [newProvider, addCustomProvider]);
+  }, [newProvider, newProviderApiKey, newProviderModel, addCustomProvider, setProviderKey, addModelToProvider]);
 
   /** 处理 API 地址变更 */
   const handleApiUrlChange = React.useCallback(
@@ -465,13 +488,22 @@ export default function SettingsPage() {
                       variant="outline"
                       size="sm"
                       onClick={() =>
-                        setNewProvider({
-                          id: "",
-                          name: "",
-                          apiUrl: "",
-                          isBuiltin: false,
-                          apiType: "openai-compatible",
-                        })
+                        {
+                          setNewProvider({
+                            id: "",
+                            name: "",
+                            apiUrl: "",
+                            isBuiltin: false,
+                            apiType: "openai-compatible",
+                          });
+                          setNewProviderApiKey("");
+                          setNewProviderModel({
+                            modelId: "",
+                            displayName: "",
+                            contextLength: 128000,
+                            supportsReasoning: false,
+                          });
+                        }
                       }
                       {...pressableSubtle}
                     >
@@ -1148,59 +1180,120 @@ export default function SettingsPage() {
         open={!!newProvider}
         onOpenChange={(o) => !o && setNewProvider(null)}
       >
-        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-sm">
-          <DialogHeader>
+        <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-md flex flex-col gap-0">
+          <DialogHeader className="shrink-0">
             <DialogTitle>新增自定义供应商</DialogTitle>
             <DialogDescription>
               配置自定义 API 供应商，ID 仅支持英文字母
             </DialogDescription>
           </DialogHeader>
           {newProvider && (
-            <div className="grid gap-4 py-2">
-              <div className="grid min-w-0 gap-2">
-                <label className="text-sm font-medium">
-                  ID（唯一标识，仅英文字母）
-                </label>
-                <Input
-                  value={newProvider.id}
-                  onChange={(e) =>
-                    setNewProvider({ ...newProvider, id: e.target.value })
-                  }
-                  placeholder="myProvider"
-                />
-                <p className="text-xs text-muted-foreground">
-                  仅支持英文字母，不支持特殊字符
-                </p>
+            <ScrollArea className="flex-1 min-h-0 max-h-[60vh] pr-2">
+              <div className="grid gap-4 py-2">
+                <div className="grid min-w-0 gap-2">
+                  <label className="text-sm font-medium">
+                    ID（唯一标识，仅英文字母）
+                  </label>
+                  <Input
+                    value={newProvider.id}
+                    onChange={(e) =>
+                      setNewProvider({ ...newProvider, id: e.target.value })
+                    }
+                    placeholder="myProvider"
+                    maxLength={25}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    仅支持英文字母，最大 25 字符
+                  </p>
+                </div>
+                <div className="grid min-w-0 gap-2">
+                  <label className="text-sm font-medium">显示名称</label>
+                  <Input
+                    value={newProvider.displayName ?? newProvider.name}
+                    onChange={(e) =>
+                      setNewProvider({ ...newProvider, displayName: e.target.value.slice(0, 20), name: e.target.value.slice(0, 20) })
+                    }
+                    placeholder="供应商显示名称（最大 20 字符）"
+                    maxLength={20}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    前端展示用名称，支持自由取名（最大 20 字符）
+                  </p>
+                </div>
+                <div className="grid min-w-0 gap-2">
+                  <label className="text-sm font-medium">API 地址</label>
+                  <Input
+                    value={newProvider.apiUrl}
+                    onChange={(e) =>
+                      setNewProvider({ ...newProvider, apiUrl: e.target.value })
+                    }
+                    placeholder="https://api.example.com/v1"
+                    className="max-w-full break-all font-mono text-xs"
+                    maxLength={500}
+                  />
+                </div>
+                {/* v0.4.6: API Key 字段 */}
+                <div className="grid min-w-0 gap-2">
+                  <label className="text-sm font-medium">API Key（可选）</label>
+                  <Input
+                    type="password"
+                    value={newProviderApiKey}
+                    onChange={(e) => setNewProviderApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="max-w-full font-mono text-xs"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    填写后自动保存，也可稍后在设置中配置
+                  </p>
+                </div>
+                {/* v0.4.6: 模型配置区域 */}
+                <div className="grid min-w-0 gap-2 rounded-lg border border-border/50 p-3">
+                  <label className="text-sm font-medium">模型配置（可选）</label>
+                  <Input
+                    value={newProviderModel.modelId}
+                    onChange={(e) =>
+                      setNewProviderModel({ ...newProviderModel, modelId: e.target.value })
+                    }
+                    placeholder="模型 ID，如 gpt-4o"
+                    className="max-w-full font-mono text-xs"
+                  />
+                  <Input
+                    value={newProviderModel.displayName}
+                    onChange={(e) =>
+                      setNewProviderModel({ ...newProviderModel, displayName: e.target.value })
+                    }
+                    placeholder="显示名称（留空则用模型 ID）"
+                    maxLength={30}
+                  />
+                  <div className="grid min-w-0 gap-2">
+                    <label className="text-xs text-muted-foreground">上下文长度</label>
+                    <Input
+                      type="number"
+                      value={newProviderModel.contextLength}
+                      onChange={(e) =>
+                        setNewProviderModel({
+                          ...newProviderModel,
+                          contextLength: parseInt(e.target.value) || 128000,
+                        })
+                      }
+                      placeholder="128000"
+                      className="text-xs"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-muted-foreground">支持推理/思考</label>
+                    <Switch
+                      checked={newProviderModel.supportsReasoning}
+                      onCheckedChange={(v) =>
+                        setNewProviderModel({ ...newProviderModel, supportsReasoning: v })
+                      }
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="grid min-w-0 gap-2">
-                <label className="text-sm font-medium">显示名称</label>
-                <Input
-                  value={newProvider.displayName ?? newProvider.name}
-                  onChange={(e) =>
-                    setNewProvider({ ...newProvider, displayName: e.target.value.slice(0, 20), name: e.target.value.slice(0, 20) })
-                  }
-                  placeholder="供应商显示名称（最大 20 字符）"
-                  maxLength={20}
-                />
-                <p className="text-xs text-muted-foreground">
-                  前端展示用名称，支持自由取名（最大 20 字符）
-                </p>
-              </div>
-              <div className="grid min-w-0 gap-2">
-                <label className="text-sm font-medium">API 地址</label>
-                <Input
-                  value={newProvider.apiUrl}
-                  onChange={(e) =>
-                    setNewProvider({ ...newProvider, apiUrl: e.target.value })
-                  }
-                  placeholder="https://api.example.com/v1"
-                  className="max-w-full break-all font-mono text-xs"
-                  maxLength={500}
-                />
-              </div>
-            </div>
+            </ScrollArea>
           )}
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => setNewProvider(null)}>
               <IconClose className="mr-2 size-4" />
               取消
