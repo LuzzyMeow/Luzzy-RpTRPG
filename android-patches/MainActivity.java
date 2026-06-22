@@ -218,13 +218,30 @@ public class MainActivity extends BridgeActivity {
                 String endpoint = uri.replaceFirst("^/v\\d+", "");
                 if (endpoint.startsWith("/")) endpoint = endpoint.substring(1);
 
-                // 构建目标 URL：优先使用 _target 参数（支持多供应商路由），否则用 cachedApiUrl
-                String targetParam = getParam(session, "_target");
-                String baseUrl;
-                if (targetParam != null && !targetParam.isEmpty()) {
-                    baseUrl = targetParam.replaceAll("/+$", "");
+                // v0.4.2-fix: 正确使用 resolveTargetBase() 确定目标 API 基础地址
+                // 修复 Bug1: 之前直接用 cachedApiUrl(占位符)作为 baseUrl,导致火山方舟请求失败
+                // 现在的逻辑:
+                //   1. /v3/* 无 _target → 火山方舟 coding plan(硬编码 VOLCANO_ARK_BASE)
+                //   2. /v1/* 或其他 + _target → 自定义目标(支持任意 OpenAI 兼容 API)
+                //   3. /v1/* 或其他 无 _target → 回退到 cachedApiUrl(仅当非占位符时)
+                String baseUrl = resolveTargetBase(session, uri);
+                if (baseUrl == null) {
+                    // 无 _target 且非 /v3 路径
+                    // v0.4.2-fix: 防止回退到 localhost 代理地址导致死循环
+                    // 若 cachedApiUrl 是占位符(包含 localhost:18527),说明用户配置错误
+                    String cachedUrl = cachedApiUrl != null ? cachedApiUrl : "";
+                    if (cachedUrl.contains("localhost:18527") || cachedUrl.contains("127.0.0.1:18527")) {
+                        Log.w(TAG, "Proxy: cachedApiUrl is a placeholder (localhost:18527), cannot resolve target");
+                        Response errResp = newFixedLengthResponse(Response.Status.BAD_REQUEST,
+                            "application/json",
+                            "{\"error\":\"无法确定目标 API 地址。请在 TRPG 网页内配置 API 地址为 http://localhost:18527/v3（火山方舟）或 http://localhost:18527/v1?_target=https://你的供应商地址（其他供应商）。\"}");
+                        addCorsHeaders(errResp);
+                        return errResp;
+                    }
+                    baseUrl = cachedUrl.replaceAll("/+$", "");
+                    Log.i(TAG, "Proxy: no _target, falling back to cachedApiUrl: " + baseUrl);
                 } else {
-                    baseUrl = cachedApiUrl.replaceAll("/+$", ""); // 去掉末尾斜杠
+                    baseUrl = baseUrl.replaceAll("/+$", "");
                 }
                 String targetUrl = baseUrl + "/" + endpoint;
 
@@ -257,7 +274,15 @@ public class MainActivity extends BridgeActivity {
                 }
 
                 // 使用 LUZZY 的 apiKey 设置 Authorization
-                if (cachedApiKey != null && !cachedApiKey.isEmpty()) {
+                // v0.4.2-fix: 火山方舟编码计划(/v3 路径)使用 coding plan 认证,不需要 API Key
+                // 若 cachedApiKey 是占位符(如 "placeholder" 或空),且目标是火山方舟,则不注入 Authorization
+                boolean isVolcanoArk = targetUrl.contains("ark.cn-beijing.volces.com");
+                boolean isPlaceholderKey = cachedApiKey == null || cachedApiKey.isEmpty()
+                    || "placeholder".equalsIgnoreCase(cachedApiKey)
+                    || cachedApiKey.contains("localhost:18527");
+                if (isVolcanoArk && isPlaceholderKey) {
+                    Log.i(TAG, "Proxy: skipping Authorization for Volcano Ark coding plan (no key needed)");
+                } else if (cachedApiKey != null && !cachedApiKey.isEmpty()) {
                     conn.setRequestProperty("Authorization", "Bearer " + cachedApiKey);
                 }
 
@@ -380,10 +405,18 @@ public class MainActivity extends BridgeActivity {
         /**
          * 根据请求路径和参数确定目标 API 基础地址。
          *
+         * v0.4.2-fix: 此方法现在被 serve() 正确调用,修复火山方舟 API 转发失败的问题
+         *
          * 优先级：
          * 1. _target 参数（最高优先级，支持任意 API）
+         *    - 适用场景:用户在 TRPG 网页配置 API 地址为
+         *      http://localhost:18527/v1?_target=https://api.deepseek.com
+         *    - 支持任意 OpenAI 兼容 API(需转发的场景)
          * 2. /v3 路径前缀（火山方舟 coding plan）
-         * 3. /v1 路径前缀（通用 OpenAI 兼容，需 _target 指定目标）
+         *    - 适用场景:用户在 TRPG 网页配置 API 地址为 http://localhost:18527/v3
+         *    - 自动转发到 https://ark.cn-beijing.volces.com/api/coding/v3
+         * 3. 返回 null（由调用方回退到 cachedApiUrl）
+         *    - 适用场景:用户在 LUZZY 设置页直接填写真实 API 地址(无需转发的场景)
          */
         private String resolveTargetBase(IHTTPSession session, String uri) {
             // 1. 检查 _target 参数（最高优先级）

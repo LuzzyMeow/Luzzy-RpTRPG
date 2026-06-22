@@ -518,7 +518,7 @@ export function LuzzyChatMessage({
           {isLoading ? (
             <TypingIndicator />
           ) : message.content ? (
-            <Markdown content={message.content} isAnimating={isGenerating && isLast} />
+            <Markdown content={message.content} isAnimating={false} />
           ) : isGenerating && isLast && message.cot ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <IconRefresh className="size-3 animate-spin" />

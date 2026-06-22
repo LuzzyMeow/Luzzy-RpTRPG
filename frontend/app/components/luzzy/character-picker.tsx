@@ -184,6 +184,8 @@ export function CharacterPicker({
                         className={cn(
                           "text-xs text-muted-foreground whitespace-pre-wrap",
                           !expandedCards.has(char.uuid) && "line-clamp-3",
+                          // v0.4.1-fix: 展开时限制最大高度,内容在容器内滚动
+                          expandedCards.has(char.uuid) && "max-h-[200px] overflow-y-auto pr-1",
                         )}
                       >
                         {char.description}
@@ -249,15 +251,16 @@ export function CharacterPicker({
       </ScrollArea>
 
       {/* v0.3.6: 角色卡详情弹窗 */}
+      {/* v0.4.1-fix: 限制弹窗高度,内容在容器内滚动,支持长提示词 */}
       <Dialog
         open={!!detailCharacter}
         onOpenChange={(o) => !o && setDetailCharacter(null)}
       >
-        <DialogContent className="max-h-[80vh] min-w-0 overflow-hidden max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="max-h-[80vh] min-w-0 overflow-hidden max-w-2xl flex flex-col gap-0">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{detailCharacter?.name}</DialogTitle>
           </DialogHeader>
-          <ScrollArea className="flex-1 min-h-0 pr-2">
+          <ScrollArea className="flex-1 min-h-0 max-h-[70vh] pr-2">
             {detailCharacter?.description && (
               <Markdown content={detailCharacter.description} />
             )}

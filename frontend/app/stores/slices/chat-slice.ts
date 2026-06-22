@@ -55,7 +55,7 @@ import {
   executeActiveToolCall,
   filterToolsForCharacter,
 } from "~/services/toolService";
-import { loadVectorMemoryShards, searchLongTermMemory } from "~/services/memoryService";
+import { loadVectorMemoryShards, searchLongTermMemory, searchVectorMemory } from "~/services/memoryService";
 import { BUILTIN_PRESET_DEFAULTS } from "~/services/presetContent";
 import { BUILTIN_PROVIDERS } from "~/stores/slices/settings-slice";
 import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
@@ -285,6 +285,69 @@ export const createChatSlice: StateCreator<
       // - phase="main": 第二次请求,基于 CoT 输出正文,流式更新正文气泡
       // KV 缓存保护: 两次请求的 system_prompt + history + current_user_msg 前缀完全一致,
       // 第二次仅在 messages 末尾追加 assistant(CoT) + user(指令),缓存自然命中
+
+      // v0.4.1-fix: 带重试退避的 API 调用包装(针对 429 ServerOverloaded)
+      // 最多重试 3 次,退避间隔递增(2s/4s/8s),重试期间显示提示
+      const callApiWithRetry = async (
+        msgId: string,
+        contextMsgs: ChatMessage[],
+        phase: "cot" | "main" = "cot",
+        cotContent?: string,
+      ): Promise<{ content: string; reasoning: string; cot: string }> => {
+        const maxRetries = 3;
+        const baseDelays = [2000, 4000, 8000]; // 递增退避
+        let lastError: unknown;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          if (abortController?.signal.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+          }
+
+          try {
+            return await callApiAndUpdate(msgId, contextMsgs, phase, cotContent);
+          } catch (err) {
+            // 用户取消不重试
+            if (err instanceof DOMException && err.name === 'AbortError') throw err;
+
+            // 检查是否为 429 错误
+            const errMessage = err instanceof Error ? err.message : String(err);
+            const is429 = errMessage.includes('429') ||
+                          errMessage.includes('TooManyRequests') ||
+                          errMessage.includes('ServerOverloaded') ||
+                          errMessage.includes('server overload');
+
+            if (!is429 || attempt === maxRetries) throw err;
+
+            // 429 错误:显示退避提示并等待
+            const delay = baseDelays[attempt];
+            console.warn(`[ChatSlice] API 429 错误,${delay / 1000}秒后重试(${attempt + 1}/${maxRetries})`);
+            get().updateMessage(msgId, {
+              loading: true,
+              error: `服务器繁忙,${delay / 1000}秒后自动重试(${attempt + 1}/${maxRetries})...`,
+            });
+
+            // 等待退避时间(可被中止)
+            await new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(resolve, delay);
+              const onAbort = (): void => {
+                clearTimeout(timer);
+                reject(new DOMException('Aborted', 'AbortError'));
+              };
+              if (abortController?.signal.aborted) {
+                onAbort();
+                return;
+              }
+              abortController?.signal.addEventListener('abort', onAbort, { once: true });
+            });
+
+            // 清除错误提示
+            get().updateMessage(msgId, { error: undefined });
+            lastError = err;
+          }
+        }
+        throw lastError;
+      };
+
       const callApiAndUpdate = async (
         msgId: string,
         contextMsgs: ChatMessage[],
@@ -531,15 +594,10 @@ export const createChatSlice: StateCreator<
                     agentSteps: [...agentSteps],
                   });
                 } else {
-                  // 正文阶段: 更新正文气泡(content),原生思考追加到 cot 的"头脑风暴"节点
-                  const existingMsg = get().messages.find((m) => m.id === msgId);
-                  const existingCot = existingMsg?.cot ?? "";
-                  const updatedCot = accumulatedReasoning
-                    ? (existingCot ? existingCot + "\n\n" + accumulatedReasoning : accumulatedReasoning)
-                    : existingCot;
+                  // 正文阶段: 更新正文气泡(content),不追加 reasoning 到 cot(避免思考内容重复)
+                  // v0.4.1-fix: 第二次请求的 reasoning 不再追加到 cot,避免与第一次 CoT 重复
                   get().updateMessage(msgId, {
                     content: cotResult.main || accumulatedContent,
-                    cot: updatedCot,
                     loading: false,
                     tokenUsage: {
                       promptTokens: 0,
@@ -597,15 +655,10 @@ export const createChatSlice: StateCreator<
               agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
             });
           } else {
-            // 正文阶段: 更新正文气泡,原生思考追加到 cot
-            const existingMsg = get().messages.find((m) => m.id === msgId);
-            const existingCot = existingMsg?.cot ?? "";
-            const updatedCot = accumulatedReasoning
-              ? (existingCot ? existingCot + "\n\n" + accumulatedReasoning : accumulatedReasoning)
-              : existingCot;
+            // 正文阶段: 更新正文气泡,不追加 reasoning 到 cot(避免思考内容重复)
+            // v0.4.1-fix: 第二次请求的 reasoning 不再追加到 cot
             get().updateMessage(msgId, {
               content: cotResult.main || accumulatedContent,
-              cot: updatedCot,
               loading: false,
               agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
             });
@@ -639,15 +692,10 @@ export const createChatSlice: StateCreator<
               loading: false,
             });
           } else {
-            // 正文阶段: 更新正文气泡,原生思考追加到 cot
-            const existingMsg = get().messages.find((m) => m.id === msgId);
-            const existingCot = existingMsg?.cot ?? "";
-            const updatedCot = accumulatedReasoning
-              ? (existingCot ? existingCot + "\n\n" + accumulatedReasoning : accumulatedReasoning)
-              : existingCot;
+            // 正文阶段: 更新正文气泡,不追加 reasoning 到 cot(避免思考内容重复)
+            // v0.4.1-fix: 第二次请求的 reasoning 不再追加到 cot
             get().updateMessage(msgId, {
               content: finalCotResult.main || accumulatedContent,
-              cot: updatedCot,
               loading: false,
             });
           }
@@ -845,6 +893,7 @@ export const createChatSlice: StateCreator<
       // v0.3.7: memory-recall 内置工具预执行
       // memory-recall 是内置工具（存储在 builtinToolConfigs），不在 activeTools 中
       // 需独立执行 searchLongTermMemory，将结果注入上下文并填充 message.memoryRecalls
+      // v0.4.1-fix: 添加 agentSteps 和 toolCalls,显示为二级思考卡片
       const memoryRecallConfig = builtinToolConfigs.find(
         (c) => c.type === "memory-recall",
       );
@@ -856,6 +905,15 @@ export const createChatSlice: StateCreator<
         const latestUserMsg = messages.filter((m) => m.role === "user").pop();
         const recallQuery = latestUserMsg?.content || "";
         if (recallQuery.trim()) {
+          // v0.4.1-fix: 添加 tool_call 步骤(运行中)
+          const recallCallStep: AgentStep = {
+            id: uuidv4(),
+            type: "tool_call",
+            title: "记忆召回",
+            content: recallQuery,
+            status: "running",
+            startedAt: Date.now(),
+          };
           try {
             const recallTopK = memoryRecallConfig.resultCount || 8;
             const recallResults = await searchLongTermMemory(
@@ -867,6 +925,33 @@ export const createChatSlice: StateCreator<
               allProviders,
               get().apiProviderKeys,
             );
+
+            // v0.4.1-fix: 标记 tool_call 完成,添加 tool_result 步骤
+            recallCallStep.status = "completed";
+            recallCallStep.endedAt = Date.now();
+            const recallResultText = recallResults.length > 0
+              ? recallResults.map((r) => `[score=${r.score.toFixed(3)}] ${r.content}`).join('\n\n')
+              : "(无匹配记忆)";
+            const recallResultStep: AgentStep = {
+              id: uuidv4(),
+              type: "tool_result",
+              title: "记忆召回",
+              content: recallResultText,
+              status: "completed",
+              startedAt: recallCallStep.startedAt,
+              endedAt: Date.now(),
+            };
+
+            // v0.4.1-fix: 添加到 toolCalls 和 agentSteps,显示为二级思考卡片
+            const recallToolCall: ToolCall = {
+              id: uuidv4(),
+              toolName: "记忆召回",
+              callLabel: "memory-recall",
+              query: recallQuery,
+              reason: "force mode pre-execution (builtin)",
+              status: "completed" as const,
+              result: recallResultText,
+            };
 
             if (recallResults.length > 0) {
               // 填充 message.memoryRecalls 供 UI 显示
@@ -892,8 +977,278 @@ export const createChatSlice: StateCreator<
                 createdAt: Date.now(),
               });
             }
+
+            // v0.4.1-fix: 更新消息的 toolCalls 和 agentSteps
+            const existingMsg = get().messages.find((m) => m.id === assistantMessageId);
+            get().updateMessage(assistantMessageId, {
+              toolCalls: [...(existingMsg?.toolCalls ?? []), recallToolCall],
+              agentSteps: [
+                ...(existingMsg?.agentSteps ?? []),
+                recallCallStep,
+                recallResultStep,
+              ],
+            });
           } catch (e) {
             console.warn("[ChatSlice] memory-recall 预执行失败:", e);
+            // v0.4.1-fix: 记录错误步骤
+            recallCallStep.status = "error";
+            recallCallStep.endedAt = Date.now();
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            const errorStep: AgentStep = {
+              id: uuidv4(),
+              type: "tool_call",
+              title: "记忆召回",
+              content: errorMsg,
+              status: "error",
+              startedAt: recallCallStep.startedAt,
+              endedAt: Date.now(),
+            };
+            const existingMsg = get().messages.find((m) => m.id === assistantMessageId);
+            get().updateMessage(assistantMessageId, {
+              toolCalls: [
+                ...(existingMsg?.toolCalls ?? []),
+                {
+                  id: uuidv4(),
+                  toolName: "记忆召回",
+                  callLabel: "memory-recall",
+                  query: recallQuery,
+                  reason: "force mode pre-execution (builtin)",
+                  status: "error" as const,
+                  error: errorMsg,
+                },
+              ],
+              agentSteps: [...(existingMsg?.agentSteps ?? []), errorStep],
+            });
+          }
+        }
+      }
+
+      // v0.4.1-fix: vector-memory 内置工具预执行(force 模式下主动召回向量记忆)
+      // 将结果注入上下文并添加 agentSteps/toolCalls,显示为二级思考卡片
+      const vectorMemoryBuiltinConfig = builtinToolConfigs.find(
+        (c) => c.type === "vector-memory",
+      );
+      if (
+        vectorMemoryBuiltinConfig?.enabled &&
+        currentCharacter?.uuid &&
+        memorySettings?.enabled &&
+        vectorMemoryShards.length > 0
+      ) {
+        const latestUserMsg = messages.filter((m) => m.role === "user").pop();
+        const vectorQuery = latestUserMsg?.content || "";
+        if (vectorQuery.trim()) {
+          const vectorCallStep: AgentStep = {
+            id: uuidv4(),
+            type: "tool_call",
+            title: "向量记忆检索",
+            content: vectorQuery,
+            status: "running",
+            startedAt: Date.now(),
+          };
+          try {
+            const vectorTopK = vectorMemoryBuiltinConfig.resultCount || 8;
+            const vectorResults = await searchVectorMemory(
+              vectorQuery,
+              vectorMemoryShards,
+              memorySettings,
+              settings,
+              allProviders,
+              get().apiProviderKeys,
+            );
+            const topResults = vectorResults.slice(0, vectorTopK);
+
+            vectorCallStep.status = "completed";
+            vectorCallStep.endedAt = Date.now();
+            const vectorResultText = topResults.length > 0
+              ? topResults.map((r) => `[turn=${r.turn}] ${r.content}`).join('\n\n')
+              : "(无匹配向量记忆)";
+            const vectorResultStep: AgentStep = {
+              id: uuidv4(),
+              type: "tool_result",
+              title: "向量记忆检索",
+              content: vectorResultText,
+              status: "completed",
+              startedAt: vectorCallStep.startedAt,
+              endedAt: Date.now(),
+            };
+            const vectorToolCall: ToolCall = {
+              id: uuidv4(),
+              toolName: "向量记忆检索",
+              callLabel: "vector-memory",
+              query: vectorQuery,
+              reason: "force mode pre-execution (builtin)",
+              status: "completed" as const,
+              result: vectorResultText,
+            };
+
+            if (topResults.length > 0) {
+              const vectorText = topResults
+                .map(
+                  (r, i) =>
+                    `  <memory index="${i + 1}" turn="${r.turn}">\n    ${r.content}\n  </memory>`,
+                )
+                .join("\n\n");
+              contextMessages.push({
+                id: uuidv4(),
+                role: "user",
+                content: `<vector_memory_result>\n${vectorText}\n</vector_memory_result>`,
+                createdAt: Date.now(),
+              });
+            }
+
+            const existingMsg = get().messages.find((m) => m.id === assistantMessageId);
+            get().updateMessage(assistantMessageId, {
+              toolCalls: [...(existingMsg?.toolCalls ?? []), vectorToolCall],
+              agentSteps: [
+                ...(existingMsg?.agentSteps ?? []),
+                vectorCallStep,
+                vectorResultStep,
+              ],
+            });
+          } catch (e) {
+            console.warn("[ChatSlice] vector-memory 预执行失败:", e);
+            vectorCallStep.status = "error";
+            vectorCallStep.endedAt = Date.now();
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            const errorStep: AgentStep = {
+              id: uuidv4(),
+              type: "tool_call",
+              title: "向量记忆检索",
+              content: errorMsg,
+              status: "error",
+              startedAt: vectorCallStep.startedAt,
+              endedAt: Date.now(),
+            };
+            const existingMsg = get().messages.find((m) => m.id === assistantMessageId);
+            get().updateMessage(assistantMessageId, {
+              toolCalls: [
+                ...(existingMsg?.toolCalls ?? []),
+                {
+                  id: uuidv4(),
+                  toolName: "向量记忆检索",
+                  callLabel: "vector-memory",
+                  query: vectorQuery,
+                  reason: "force mode pre-execution (builtin)",
+                  status: "error" as const,
+                  error: errorMsg,
+                },
+              ],
+              agentSteps: [...(existingMsg?.agentSteps ?? []), errorStep],
+            });
+          }
+        }
+      }
+
+      // v0.4.1-fix: keyword-search 内置工具预执行(force 模式下主动关键词检索)
+      const keywordSearchConfig = builtinToolConfigs.find(
+        (c) => c.type === "keyword-search",
+      );
+      if (
+        keywordSearchConfig?.enabled &&
+        currentCharacter?.uuid &&
+        memorySettings?.enabled &&
+        vectorMemoryShards.length > 0
+      ) {
+        const latestUserMsg = messages.filter((m) => m.role === "user").pop();
+        const keywordQuery = latestUserMsg?.content || "";
+        if (keywordQuery.trim()) {
+          const keywordCallStep: AgentStep = {
+            id: uuidv4(),
+            type: "tool_call",
+            title: "关键词检索",
+            content: keywordQuery,
+            status: "running",
+            startedAt: Date.now(),
+          };
+          try {
+            // 关键词检索:从向量记忆分片中按关键词匹配
+            const queryWords = keywordQuery.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+            const keywordTopK = keywordSearchConfig.resultCount || 8;
+            const keywordResults = vectorMemoryShards
+              .filter((shard) => {
+                const shardLower = shard.content.toLowerCase();
+                return queryWords.some((w) => shardLower.includes(w));
+              })
+              .slice(0, keywordTopK);
+
+            keywordCallStep.status = "completed";
+            keywordCallStep.endedAt = Date.now();
+            const keywordResultText = keywordResults.length > 0
+              ? keywordResults.map((r) => `[turn=${r.turn}] ${r.content}`).join('\n\n')
+              : "(无匹配关键词记忆)";
+            const keywordResultStep: AgentStep = {
+              id: uuidv4(),
+              type: "tool_result",
+              title: "关键词检索",
+              content: keywordResultText,
+              status: "completed",
+              startedAt: keywordCallStep.startedAt,
+              endedAt: Date.now(),
+            };
+            const keywordToolCall: ToolCall = {
+              id: uuidv4(),
+              toolName: "关键词检索",
+              callLabel: "keyword-search",
+              query: keywordQuery,
+              reason: "force mode pre-execution (builtin)",
+              status: "completed" as const,
+              result: keywordResultText,
+            };
+
+            if (keywordResults.length > 0) {
+              const keywordText = keywordResults
+                .map(
+                  (r, i) =>
+                    `  <memory index="${i + 1}" turn="${r.turn}">\n    ${r.content}\n  </memory>`,
+                )
+                .join("\n\n");
+              contextMessages.push({
+                id: uuidv4(),
+                role: "user",
+                content: `<keyword_search_result>\n${keywordText}\n</keyword_search_result>`,
+                createdAt: Date.now(),
+              });
+            }
+
+            const existingMsg = get().messages.find((m) => m.id === assistantMessageId);
+            get().updateMessage(assistantMessageId, {
+              toolCalls: [...(existingMsg?.toolCalls ?? []), keywordToolCall],
+              agentSteps: [
+                ...(existingMsg?.agentSteps ?? []),
+                keywordCallStep,
+                keywordResultStep,
+              ],
+            });
+          } catch (e) {
+            console.warn("[ChatSlice] keyword-search 预执行失败:", e);
+            keywordCallStep.status = "error";
+            keywordCallStep.endedAt = Date.now();
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            const errorStep: AgentStep = {
+              id: uuidv4(),
+              type: "tool_call",
+              title: "关键词检索",
+              content: errorMsg,
+              status: "error",
+              startedAt: keywordCallStep.startedAt,
+              endedAt: Date.now(),
+            };
+            const existingMsg = get().messages.find((m) => m.id === assistantMessageId);
+            get().updateMessage(assistantMessageId, {
+              toolCalls: [
+                ...(existingMsg?.toolCalls ?? []),
+                {
+                  id: uuidv4(),
+                  toolName: "关键词检索",
+                  callLabel: "keyword-search",
+                  query: keywordQuery,
+                  reason: "force mode pre-execution (builtin)",
+                  status: "error" as const,
+                  error: errorMsg,
+                },
+              ],
+              agentSteps: [...(existingMsg?.agentSteps ?? []), errorStep],
+            });
           }
         }
       }
@@ -902,8 +1257,9 @@ export const createChatSlice: StateCreator<
       // 第一次请求: 输出 CoT 思考内容(放入头脑风暴卡片 + 二级卡片)
       // 第二次请求: 基于 CoT 输出正文(正文气泡 + 头脑风暴节点)
       // KV 缓存保护: 两次请求前缀完全一致,第二次仅在 messages 末尾追加
+      // v0.4.1-fix: 使用 callApiWithRetry 包装,自动处理 429 错误重试
       const { content: cotRawContent, reasoning: cotReasoning, cot: cotContent } =
-        await callApiAndUpdate(assistantMessageId, contextMessages, "cot");
+        await callApiWithRetry(assistantMessageId, contextMessages, "cot");
 
       // 检查第一次请求(CoT)是否为空响应
       if (!cotRawContent.trim() && !cotReasoning.trim() && !cotContent.trim()) {
@@ -919,7 +1275,7 @@ export const createChatSlice: StateCreator<
 
       // 第二次请求: 基于 CoT 输出正文
       const { content: accumulatedContent, reasoning: accumulatedReasoning } =
-        await callApiAndUpdate(assistantMessageId, contextMessages, "main", cotContent);
+        await callApiWithRetry(assistantMessageId, contextMessages, "main", cotContent);
 
       // 7. 检查空响应(正文阶段)
       if (!accumulatedContent.trim() && !accumulatedReasoning.trim()) {
@@ -1056,11 +1412,12 @@ export const createChatSlice: StateCreator<
             get().addMessage(continuationMessage);
 
             // 调用 API 进行续写(工具调用续写属正文阶段,复用已有 CoT 上下文以保持 KV 缓存前缀一致)
+            // v0.4.1-fix: 使用 callApiWithRetry 包装,自动处理 429 错误重试
             const newContextMessages = get().messages.filter(
               (m) => m.id !== continuationMessage.id,
             );
-            const { content: newContent, reasoning: newReasoning, cot: newCot } =
-              await callApiAndUpdate(
+            const { content: newContent, reasoning: newReasoning } =
+              await callApiWithRetry(
                 continuationMessage.id,
                 newContextMessages,
                 "main",

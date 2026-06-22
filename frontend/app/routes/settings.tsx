@@ -1067,6 +1067,7 @@ export default function SettingsPage() {
                         <label className="text-sm font-medium">自定义颜色</label>
                         <div className="flex min-w-0 items-center gap-2">
                           {/* v0.4.1: 用容器包裹 input[type=color],移除浏览器原生留白,颜色填满圆角方形 */}
+                          {/* v0.4.1-fix: input 设置 opacity:0 完全透明,移除浏览器原生 color picker 的空心边框 */}
                           <div
                             className="size-8 shrink-0 cursor-pointer overflow-hidden rounded-md border border-border"
                             style={{ padding: 0, background: highlightSettings.color }}
@@ -1082,6 +1083,7 @@ export default function SettingsPage() {
                                 background: 'transparent',
                                 appearance: 'none',
                                 WebkitAppearance: 'none',
+                                opacity: 0,
                               }}
                             />
                           </div>
