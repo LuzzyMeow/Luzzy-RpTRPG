@@ -1069,6 +1069,7 @@ export const createChatSlice: StateCreator<
       const { content: toolDecisionRaw, reasoning: toolReasoning } =
         await callApiWithRetry(assistantMessageId, contextMessages, "tool");
       logger.info("api", `API 响应阶段1: 工具决策完成（字符数=${toolDecisionRaw.length}）`);
+      logger.debug("tool", `请求1原始回复(前200字符): ${toolDecisionRaw.slice(0, 200)}`);
 
       // 解析工具决策并执行
       if (!abortController?.signal.aborted && toolDecisionRaw.trim()) {
@@ -1103,6 +1104,7 @@ export const createChatSlice: StateCreator<
                   );
                 } else {
                   result = `<builtin_tool_result status='error'>未找到工具: ${d.toolName}</builtin_tool_result>`;
+                  logger.warn("tool", `AI请求的工具不存在: ${d.toolName}（可用: ${[...builtinToolConfigs.filter(c=>c.enabled).map(c=>c.type), ...filterToolsForCharacter(activeTools, currentCharacter?.uuid ?? null).map(t=>t.callName||t.name)].join(", ")}）`);
                 }
               }
               const existingMsg = get().messages.find(m => m.id === assistantMessageId);
@@ -1113,9 +1115,14 @@ export const createChatSlice: StateCreator<
                 agentSteps: [...(existingMsg?.agentSteps ?? []), callStep, resultStep],
               });
               contextMessages.push({ id: uuidv4(), role: "user", content: `<tool_result tool="${d.toolName}">\n${result || "(空结果)"}\n</tool_result>`, createdAt: Date.now() });
+              logger.info("tool", `工具 ${d.toolName} 执行完成: 结果长度=${(result || "").length}`);
             } catch (e) { logger.warn("tool", `工具 ${d.toolName} 执行失败: ${e}`); }
           }
+        } else {
+          logger.info("tool", `AI决定不调用任何工具（原始回复非空但未匹配到工具标签）`);
         }
+      } else {
+        logger.warn("tool", "请求1返回空响应，AI未输出任何工具决策");
       }
       if (abortController?.signal.aborted) return;
 
