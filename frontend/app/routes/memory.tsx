@@ -38,7 +38,9 @@ import type {
   AceSkill,
   AceSkillbook,
   ApiProvider,
+  Character,
 } from "~/types/luzzy";
+import { cn } from "~/lib/utils";
 import { getItem, setItem } from "~/services/storage";
 import { logger } from "~/services/logger";
 import {
@@ -125,6 +127,8 @@ const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   similarityThreshold: 0.7,
   compressionEnabled: false,
   compressionKeepRecent: 20,
+  longTermMemoryCharacterIds: [],
+  globalMemoryCharacterIds: [],
 };
 
 type TabKey = "session" | "long-term" | "global";
@@ -162,6 +166,7 @@ export default function MemoryPage() {
   // store 数据
   const getAllProviders = useAppStore((s) => s.getAllProviders);
   const providers = React.useMemo(() => getAllProviders(), [getAllProviders]);
+  const characters = useAppStore((s) => s.characters);
 
   /** 页面加载时读取记忆设置 */
   React.useEffect(() => {
@@ -213,6 +218,7 @@ export default function MemoryPage() {
             <MemorySettingsCard
               settings={settings}
               providers={providers}
+              characters={characters}
               onUpdate={updateField}
               onSave={handleSaveSettings}
             />
@@ -273,6 +279,8 @@ export default function MemoryPage() {
 interface MemorySettingsCardProps {
   settings: MemorySettings;
   providers: ApiProvider[];
+  /** v0.4.4: 角色卡列表(用于长期记忆/全局记忆的角色卡启用选择) */
+  characters: Character[];
   onUpdate: <K extends keyof MemorySettings>(
     key: K,
     value: MemorySettings[K],
@@ -283,6 +291,7 @@ interface MemorySettingsCardProps {
 function MemorySettingsCard({
   settings,
   providers,
+  characters,
   onUpdate,
   onSave,
 }: MemorySettingsCardProps) {
@@ -430,6 +439,96 @@ function MemorySettingsCard({
                   max={1}
                   step={0.01}
                 />
+              </div>
+
+              {/* v0.4.4: 长期记忆角色卡启用选择 */}
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">
+                  长期记忆启用角色卡
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {(settings.longTermMemoryCharacterIds ?? []).length === 0
+                      ? "全部角色卡"
+                      : `${(settings.longTermMemoryCharacterIds ?? []).length} 个角色卡`}
+                  </span>
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  选择启用长期记忆的角色卡(不选则对所有角色卡启用)
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {characters.length === 0 ? (
+                    <span className="text-xs text-muted-foreground">暂无角色卡</span>
+                  ) : (
+                    characters.map((c) => {
+                      const selected = (settings.longTermMemoryCharacterIds ?? []).includes(c.uuid);
+                      return (
+                        <button
+                          key={c.uuid}
+                          type="button"
+                          onClick={() => {
+                            const current = settings.longTermMemoryCharacterIds ?? [];
+                            const next = selected
+                              ? current.filter((id) => id !== c.uuid)
+                              : [...current, c.uuid];
+                            onUpdate("longTermMemoryCharacterIds", next);
+                          }}
+                          className={cn(
+                            "rounded-md border px-2 py-1 text-xs transition-colors",
+                            selected
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border bg-background text-muted-foreground hover:bg-muted/50",
+                          )}
+                        >
+                          {c.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* v0.4.4: 全局记忆角色卡启用选择 */}
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">
+                  全局记忆启用角色卡
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {(settings.globalMemoryCharacterIds ?? []).length === 0
+                      ? "全部角色卡"
+                      : `${(settings.globalMemoryCharacterIds ?? []).length} 个角色卡`}
+                  </span>
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  选择启用全局记忆(ACE Skillbook)的角色卡(不选则对所有角色卡启用)
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {characters.length === 0 ? (
+                    <span className="text-xs text-muted-foreground">暂无角色卡</span>
+                  ) : (
+                    characters.map((c) => {
+                      const selected = (settings.globalMemoryCharacterIds ?? []).includes(c.uuid);
+                      return (
+                        <button
+                          key={c.uuid}
+                          type="button"
+                          onClick={() => {
+                            const current = settings.globalMemoryCharacterIds ?? [];
+                            const next = selected
+                              ? current.filter((id) => id !== c.uuid)
+                              : [...current, c.uuid];
+                            onUpdate("globalMemoryCharacterIds", next);
+                          }}
+                          className={cn(
+                            "rounded-md border px-2 py-1 text-xs transition-colors",
+                            selected
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border bg-background text-muted-foreground hover:bg-muted/50",
+                          )}
+                        >
+                          {c.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
               <div className="flex justify-end">

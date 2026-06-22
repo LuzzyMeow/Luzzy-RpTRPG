@@ -83,9 +83,8 @@ import { LUXI_CHARACTER_NAME } from "~/services/presetContent";
 import { toast } from "sonner";
 import { cn } from "~/lib/utils";
 import { useConfirm } from "~/components/luzzy/luzzy-confirm";
-// v0.3.4: PNG 角色卡导出 - Capacitor Filesystem 保存到相册
-import { Filesystem, Directory } from "@capacitor/filesystem";
-import { Capacitor } from "@capacitor/core";
+// v0.4.5: 方案 D - 使用 NativeBridge 替代 Capacitor Filesystem/Share
+import { isNativePlatform, writeFile, shareFile } from "~/services/nativeBridge";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "角色卡 - LUZZY" }];
@@ -540,29 +539,18 @@ export default function CharactersPage() {
         );
 
         // 4. 根据运行环境选择保存方式
-        // v0.4.3: 原生平台写入临时文件后唤起系统分享面板,不再静默保存到相册
-        if (Capacitor.isNativePlatform()) {
-          // Android: 使用 Capacitor Filesystem 写入临时文件,然后唤起分享
+        // v0.4.5: 方案 D - 原生平台使用 NativeBridge 写入临时文件后唤起系统分享面板
+        if (isNativePlatform()) {
+          // Android: 使用 NativeBridge 写入临时文件,然后唤起分享
           const base64Data = await blobToBase64(pngBlob);
           const fileName = `${c.name || "character"}.png`;
-          await Filesystem.writeFile({
-            path: `Pictures/LUZZY/${fileName}`,
-            data: base64Data,
-            directory: Directory.External,
-            recursive: true,
-          });
-          const uriResult = await Filesystem.getUri({
-            path: `Pictures/LUZZY/${fileName}`,
-            directory: Directory.External,
-          });
-          // v0.4.3: 唤起系统分享面板
-          const { Share } = await import('@capacitor/share');
-          await Share.share({
-            title: c.name || '角色卡',
-            url: uriResult.uri,
-            dialogTitle: '导出角色卡',
-          });
-          toast.success('已唤起分享');
+          const { uri } = await writeFile("EXTERNAL", `Pictures/LUZZY/${fileName}`, base64Data, true);
+          if (uri) {
+            await shareFile(uri, c.name || '角色卡', '导出角色卡');
+            toast.success('已唤起分享');
+          } else {
+            toast.error('导出失败:无法创建文件');
+          }
         } else {
           // Web: 回退到 <a download> 下载
           const url = URL.createObjectURL(pngBlob);

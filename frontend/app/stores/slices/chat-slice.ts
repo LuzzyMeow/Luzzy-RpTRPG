@@ -97,6 +97,8 @@ const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   similarityThreshold: 0.7,
   compressionEnabled: false,
   compressionKeepRecent: 10,
+  longTermMemoryCharacterIds: [],
+  globalMemoryCharacterIds: [],
 };
 
 /**
@@ -959,13 +961,20 @@ export const createChatSlice: StateCreator<
       // memory-recall 是内置工具（存储在 builtinToolConfigs），不在 activeTools 中
       // 需独立执行 searchLongTermMemory，将结果注入上下文并填充 message.memoryRecalls
       // v0.4.1-fix: 添加 agentSteps 和 toolCalls,显示为二级思考卡片
+      // v0.4.4: 支持按角色卡启用长期记忆(longTermMemoryCharacterIds 为空表示对所有角色卡启用)
       const memoryRecallConfig = builtinToolConfigs.find(
         (c) => c.type === "memory-recall",
       );
+      const longTermMemoryEnabledForCharacter = (() => {
+        const ids = memorySettings?.longTermMemoryCharacterIds;
+        if (!ids || ids.length === 0) return true; // 空列表:所有角色卡启用
+        return currentCharacter ? ids.includes(currentCharacter.uuid) : false;
+      })();
       if (
         memoryRecallConfig?.enabled &&
         currentCharacter?.uuid &&
-        memorySettings
+        memorySettings &&
+        longTermMemoryEnabledForCharacter
       ) {
         // v0.4.3: 日志记录记忆召回工具执行
         logger.info("memory", `记忆召回工具启动（topK=${memoryRecallConfig.resultCount ?? 8}）`);
@@ -2588,15 +2597,11 @@ export const createChatSlice: StateCreator<
 
       const text = message.content;
       try {
-        const { Capacitor } = await import('@capacitor/core');
-        if (Capacitor.isNativePlatform()) {
-          // v0.4.3: 原生平台使用 @capacitor/share 唤起系统分享面板
-          const { Share } = await import('@capacitor/share');
-          await Share.share({
-            title: 'LUZZY 消息',
-            text,
-            dialogTitle: '分享消息',
-          });
+        // v0.4.5: 方案 D - 使用 NativeBridge 替代 Capacitor/Share
+        const { isNativePlatform, shareText } = await import('~/services/nativeBridge');
+        if (isNativePlatform()) {
+          // 原生平台使用 NativeBridge 唤起系统分享面板
+          await shareText(text, 'LUZZY 消息', '分享消息');
         } else if (
           typeof navigator !== "undefined" &&
           typeof navigator.share === "function"

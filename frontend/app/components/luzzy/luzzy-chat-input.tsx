@@ -198,13 +198,14 @@ export function LuzzyChatInput({
     : "minimal";
 
   /** 检测 JSON 配置是否已设置思考深度（v0.3.0 B6：若已设置则置灰聊天栏思考深度按钮） */
+  // v0.4.4: 仅 reasoning_effort 锁定深度档位;thinking.type=enabled 仅是开关,不锁定
   const thinkingDepthLockedByJson = React.useMemo(() => {
     const text = (customRequestBody ?? "").trim();
     if (!text) return false;
     try {
       const parsed = JSON.parse(text);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return "reasoning_effort" in parsed || "thinking" in parsed;
+        return "reasoning_effort" in parsed;
       }
     } catch {
       // JSON 解析失败，不置灰

@@ -50,7 +50,6 @@ import { TypingIndicator } from "~/components/ui/typing-indicator";
 import Markdown from "~/components/markdown/markdown";
 import { LuzzyTokenUsageBar } from "~/components/luzzy/luzzy-token-usage-bar";
 import { useAppStore } from "~/stores";
-import { LuzzyAgentSteps } from "~/components/luzzy/luzzy-agent-steps";
 import { LuzzyThinkingTimeline } from "~/components/luzzy/luzzy-thinking-timeline";
 import { pressableSubtle } from "~/lib/motion-presets";
 
@@ -399,21 +398,16 @@ export function LuzzyChatMessage({
           isUser ? "items-end" : "items-start",
         )}
       >
-        {/* 思考链 */}
-        {!isUser && message.cot && (
+        {/* 思考链 + 工具节点统一卡片(v0.4.4: 修复两个思考卡片并存 bug) */}
+        {/* 即使 cot 为空(force 预执行阶段)也渲染 CotCard,让工具节点始终落在卡内 */}
+        {!isUser && (message.cot || (message.agentSteps && message.agentSteps.length > 0)) && (
           <CotCard
-            cot={message.cot}
+            cot={message.cot ?? ""}
             isGenerating={Boolean(isGenerating && isLast)}
             agentSteps={message.agentSteps?.filter(
               (s) => !(s.type === "thinking" && message.cot)
             )}
           />
-        )}
-
-        {/* v0.4.4: LuzzyAgentSteps 已合并到 CotCard 的思考节点中,不再独立显示 */}
-        {/* 回退: cot 为空但 agentSteps 有内容(force 预执行阶段,cot 还没生成) */}
-        {!isUser && !message.cot && message.agentSteps && message.agentSteps.length > 0 && (
-          <LuzzyAgentSteps steps={message.agentSteps} />
         )}
 
         {/* 记忆召回 */}

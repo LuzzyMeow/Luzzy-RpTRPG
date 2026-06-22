@@ -39,7 +39,8 @@ import { cn } from "~/lib/utils";
 import { toast } from "sonner";
 import type { Session, ChatMessage } from "~/types/luzzy";
 import { useAppStore } from "~/stores/app-store";
-import { isNativePlatform } from "~/services/apiClient";
+// v0.4.5: 方案 D - 使用 NativeBridge 替代 Capacitor Filesystem
+import { isNativePlatform, writeFile, mkdir } from "~/services/nativeBridge";
 
 type ShareFormat = "md" | "json" | "png";
 type ShareStep = "format" | "select";
@@ -148,10 +149,9 @@ export function LuzzyShareDialog({
           ? new Blob([content], { type: mime })
           : content;
 
-      // v0.3.5: 原生平台使用 Capacitor Filesystem API 保存文件
+      // v0.4.5: 方案 D - 原生平台使用 NativeBridge 保存文件
       if (isNativePlatform()) {
         try {
-          const { Filesystem, Directory } = await import('@capacitor/filesystem');
           // 将 Blob 转 base64
           const arrayBuffer = await blob.arrayBuffer();
           const uint8Array = new Uint8Array(arrayBuffer);
@@ -162,34 +162,16 @@ export function LuzzyShareDialog({
           const base64Data = btoa(binary);
 
           // 确保 LUZZY 目录存在
-          try {
-            await Filesystem.mkdir({
-              path: 'LUZZY',
-              directory: Directory.Documents,
-              recursive: true,
-            });
-          } catch {
-            // 目录已存在，忽略
-          }
+          await mkdir("EXTERNAL", "LUZZY", true).catch(() => {});
 
           // 写入文件
-          await Filesystem.writeFile({
-            path: `LUZZY/${fileName}`,
-            data: base64Data,
-            directory: Directory.Documents,
-            recursive: true,
-          });
+          const { uri } = await writeFile("EXTERNAL", `LUZZY/${fileName}`, base64Data, true);
 
-          // 获取文件 URI 用于提示
-          const uriResult = await Filesystem.getUri({
-            path: `LUZZY/${fileName}`,
-            directory: Directory.Documents,
-          });
-          toast.success(`已导出到：${uriResult.uri}`);
+          toast.success(`已导出到：${uri ?? '未知路径'}`);
           return;
         } catch (err) {
           console.error("[ShareDialog] 原生导出失败,降级到 Web 下载:", err);
-          // v0.4.1: Filesystem 插件不可用时自动降级到 Web 下载
+          // 降级到 Web 下载
         }
       }
 

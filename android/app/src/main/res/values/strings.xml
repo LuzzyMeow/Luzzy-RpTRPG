@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LUZZY</string>
+    <string name="title_activity_main">LUZZY</string>
+    <string name="package_name">com.luzzymeow.luzzy</string>
+    <string name="custom_url_scheme">com.luzzymeow.luzzy</string>
+</resources>

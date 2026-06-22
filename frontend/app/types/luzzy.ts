@@ -388,6 +388,10 @@ export interface MemorySettings {
   similarityThreshold: number;
   compressionEnabled: boolean;
   compressionKeepRecent: number;
+  /** v0.4.4: 长期记忆启用的角色卡 UUID 列表(空表示对所有角色卡启用) */
+  longTermMemoryCharacterIds?: string[];
+  /** v0.4.4: 全局记忆启用的角色卡 UUID 列表(空表示对所有角色卡启用) */
+  globalMemoryCharacterIds?: string[];
 }
 
 /** 全局记忆 */

@@ -42,8 +42,8 @@ import { getItem, setItem } from '~/services/storage';
 /** 向量记忆批量处理的批次大小（与旧版一致） */
 const MEMORY_VECTOR_BATCH_SIZE = 16;
 
-/** 嵌入 API 版本路径（避免与 chat/completions 的 /v1 冲突） */
-const EMBEDDING_API_VERSION = 'v3';
+/** 嵌入 API 默认版本路径(仅当 baseUrl 不含版本时回退使用) */
+const EMBEDDING_API_DEFAULT_VERSION = 'v1';
 
 /** 全局记忆在 IndexedDB 中的存储键 */
 const GLOBAL_MEMORY_STORAGE_KEY = 'global_memory';
@@ -224,17 +224,24 @@ export const cosineSimilarity = (a: number[], b: number[]): number => {
 /**
  * 构建嵌入 API 的完整 URL
  *
- * 使用 /v3 版本路径以避免与 chat/completions 的 /v1 版本冲突。
- * 若 baseUrl 已含版本路径（/v1, /v2 等），则替换为 /v3。
+ * v0.4.4: 不硬编码版本号,用户填什么就是什么。
+ * - 若 baseUrl 已含版本路径(/v1, /v2, /v3 等),直接追加 /embeddings
+ * - 若不含版本路径,回退到 OpenAI 标准 /v1/embeddings
+ *
+ * 示例:
+ *   https://ark.cn-beijing.volces.com/api/coding/v3 → /api/coding/v3/embeddings
+ *   https://api.deepseek.com/v1 → /v1/embeddings
+ *   https://api.deepseek.com → /v1/embeddings (回退)
  *
  * @param baseUrl - 供应商 API 基础地址
- * @returns 完整的 embeddings 端点 URL，如 `https://api.example.com/v3/embeddings`
+ * @returns 完整的 embeddings 端点 URL
  */
 const buildEmbeddingUrl = (baseUrl: string): string => {
   const clean = normalizeApiProviderUrl(baseUrl);
-  // 移除已有的版本路径（/v1, /v2 等），统一使用 /v3
-  const withoutVersion = clean.replace(/\/v\d+(?=\/|$)/, '');
-  return `${withoutVersion}/${EMBEDDING_API_VERSION}/embeddings`;
+  // 检测是否已含版本路径(/v1, /v2, /v3 等)
+  const hasVersion = /\/v\d+(?=\/|$)/.test(clean);
+  const apiUrl = hasVersion ? clean : `${clean}/${EMBEDDING_API_DEFAULT_VERSION}`;
+  return `${apiUrl}/embeddings`;
 };
 
 /**

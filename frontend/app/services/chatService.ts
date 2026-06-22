@@ -499,28 +499,38 @@ export const buildContext = async (
   );
 
   // 3.6 全局记忆（v0.3.0: ACE Skillbook 注入，兼容旧 GlobalMemory）
-  // 优先使用 ACE Skillbook；若 Skillbook 为空则回退到旧全局记忆
+  // v0.4.4: 支持按角色卡启用(globalMemoryCharacterIds 为空表示对所有角色卡启用)
+  const globalMemoryEnabledForCharacter = (() => {
+    const ids = memorySettings?.globalMemoryCharacterIds;
+    if (!ids || ids.length === 0) return true; // 空列表:所有角色卡启用
+    return character ? ids.includes(character.uuid) : false;
+  })();
+
   let aceMemoryText = '';
   let aceActiveSkillIds: string[] = [];
-  try {
-    const skillbook = await loadSkillbook();
-    const activeSkills = getActiveSkills(skillbook);
-    if (activeSkills.length > 0) {
-      aceMemoryText = renderSkillbookForInjection(skillbook);
-      aceActiveSkillIds = activeSkills.map((s) => s.id);
-      // v0.4.3: 日志记录 ACE 记忆注入
-      logger.info("memory", `ACE 记忆注入（active策略=${activeSkills.length}）`);
+  if (globalMemoryEnabledForCharacter) {
+    try {
+      const skillbook = await loadSkillbook();
+      const activeSkills = getActiveSkills(skillbook);
+      if (activeSkills.length > 0) {
+        aceMemoryText = renderSkillbookForInjection(skillbook);
+        aceActiveSkillIds = activeSkills.map((s) => s.id);
+        // v0.4.3: 日志记录 ACE 记忆注入
+        logger.info("memory", `ACE 记忆注入（active策略=${activeSkills.length}）`);
+      }
+    } catch {
+      // Skillbook 加载失败不阻塞主流程
+      logger.warn("memory", "ACE Skillbook 加载失败");
     }
-  } catch {
-    // Skillbook 加载失败不阻塞主流程
-    logger.warn("memory", "ACE Skillbook 加载失败");
+  } else {
+    logger.info("memory", `全局记忆未对当前角色卡启用,跳过注入`);
   }
 
   if (aceMemoryText) {
     systemPromptParts.push(
       `<global_memory>\n${aceMemoryText}\n</global_memory>`,
     );
-  } else if (globalMemory && globalMemory.content.trim()) {
+  } else if (globalMemoryEnabledForCharacter && globalMemory && globalMemory.content.trim()) {
     // 回退：旧全局记忆（迁移前或迁移失败时）
     systemPromptParts.push(
       `<global_memory>\n${globalMemory.content.trim()}\n</global_memory>`,

@@ -99,6 +99,36 @@ function AppContent() {
     }
   }, [apiUrl, apiKey]);
 
+  // v0.4.5-fix: 推送高级设置到原生代理(修复 setAdvancedSettings 从未被调用的死代码 bug)
+  // 影响:火山方舟 CodingPlan 的 customRequestBody(thinking)和 DeepSeek 的 reasoning_effort
+  // 现在会正确注入到 TRPG iframe 的代理请求中
+  const customRequestBody = useAppStore((s) => s.customRequestBody);
+  const apiProviderId = useAppStore((s) => s.apiProviderId);
+  const modelName = useAppStore((s) => s.modelName);
+  const getAllProviders = useAppStore((s) => s.getAllProviders);
+  const builtinModelOverrides = useAppStore((s) => s.builtinModelOverrides);
+  useEffect(() => {
+    const androidProxy = (window as unknown as { AndroidProxy?: { setAdvancedSettings: (thinking: string, body: string) => void } }).AndroidProxy;
+    if (!androidProxy || typeof androidProxy.setAdvancedSettings !== "function") return;
+
+    // 派生 enableThinking:从当前模型的 supportsReasoning 属性(与 chat-slice.ts extractApiSettings 一致)
+    const allProviders = getAllProviders();
+    const currentProvider = allProviders.find((p) => p.id === apiProviderId);
+    // parseModelName 逻辑:支持 "providerId/modelName" 格式
+    const slashIdx = modelName.indexOf('/');
+    const { providerId, modelName: actualModelName } = slashIdx >= 0
+      ? { providerId: modelName.substring(0, slashIdx), modelName: modelName.substring(slashIdx + 1) }
+      : { providerId: undefined, modelName };
+    const targetProvider = providerId
+      ? allProviders.find((p) => p.id === providerId)
+      : currentProvider;
+    const currentModel = targetProvider?.models?.find((m) => m.name === actualModelName);
+    const enableThinking = !!currentModel?.supportsReasoning;
+
+    androidProxy.setAdvancedSettings(enableThinking ? "true" : "false", customRequestBody ?? "");
+    logger.info("app", `已推送高级设置到原生代理（thinking=${enableThinking}, customBody=${customRequestBody ? "已设置" : "空"}）`);
+  }, [customRequestBody, apiProviderId, modelName, getAllProviders, builtinModelOverrides]);
+
   // v0.3.2: 路由变化时记录日志
   useEffect(() => {
     if (showSplash) return;

@@ -21,7 +21,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.4.4";
+const APP_VERSION = "v0.4.5";
 
 export default function AboutPage() {
   const [systemInfo, setSystemInfo] = React.useState<Record<string, string>>({});
@@ -42,15 +42,19 @@ export default function AboutPage() {
       info["屏幕分辨率"] = `${window.screen.width} × ${window.screen.height}`;
       info["视口大小"] = `${window.innerWidth} × ${window.innerHeight}`;
 
-      // 尝试获取 Capacitor 设备信息
+      // 尝试获取原生设备信息(方案 D:使用 NativeBridge 替代 @capacitor/device)
       try {
-        const { Device } = await import("@capacitor/device");
-        const deviceInfo = await Device.getInfo();
-        info["操作系统"] = deviceInfo.platform;
-        info["系统版本"] = deviceInfo.osVersion;
-        info["设备型号"] = deviceInfo.model;
-        info["设备名称"] = deviceInfo.name || "未知";
-        info["制造商"] = deviceInfo.manufacturer || "未知";
+        const { getDeviceInfo } = await import("~/services/nativeBridge");
+        const deviceInfo = await getDeviceInfo();
+        if (deviceInfo.platform !== 'web') {
+          info["操作系统"] = deviceInfo.platform;
+          info["系统版本"] = deviceInfo.osVersion;
+          info["设备型号"] = deviceInfo.model;
+          info["设备名称"] = deviceInfo.name || "未知";
+          info["制造商"] = deviceInfo.manufacturer || "未知";
+        } else {
+          info["操作系统"] = "Web 浏览器";
+        }
       } catch {
         info["操作系统"] = "Web 浏览器";
       }

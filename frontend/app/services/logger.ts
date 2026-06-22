@@ -71,41 +71,28 @@ function formatLogEntry(entry: LogEntry): string {
 }
 
 /**
- * 动态导入 Filesystem 并写入日志
+ * 动态导入 NativeBridge 并写入日志
  * 在 Web 环境下跳过文件写入
  */
 async function writeToFile(entry: LogEntry): Promise<void> {
   if (!filesystemReady) return;
   try {
-    const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem');
+    const { appendFile, mkdir, writeFile } = await import('~/services/nativeBridge');
     const line = formatLogEntry(entry) + '\n';
     const filename = `logs/${getDateString()}.log`;
 
     try {
       // 尝试追加写入
-      await Filesystem.appendFile({
-        path: filename,
-        directory: Directory.Documents,
-        data: line,
-        encoding: Encoding.UTF8,
-      });
+      await appendFile("DOCUMENTS", filename, line, "UTF-8");
     } catch {
-      // 文件不存在时先创建（递归创建目录）
+      // 文件不存在时先创建(递归创建目录)
       try {
-        await Filesystem.mkdir({
-          path: 'logs',
-          directory: Directory.Documents,
-          recursive: true,
-        });
+        await mkdir("DOCUMENTS", "logs", true);
       } catch {
-        // 目录已存在，忽略
+        // 目录已存在,忽略
       }
-      await Filesystem.writeFile({
-        path: filename,
-        directory: Directory.Documents,
-        data: line,
-        encoding: Encoding.UTF8,
-      });
+      // writeFile 接受 base64 数据,需将文本转 base64(处理 UTF-8 中文)
+      await writeFile("DOCUMENTS", filename, btoa(unescape(encodeURIComponent(line))), true);
     }
     currentLogFile = filename;
   } catch (e) {
@@ -119,11 +106,8 @@ async function writeToFile(entry: LogEntry): Promise<void> {
  */
 async function cleanOldLogs(): Promise<void> {
   try {
-    const { Filesystem, Directory } = await import('@capacitor/filesystem');
-    const result = await Filesystem.readdir({
-      path: 'logs',
-      directory: Directory.Documents,
-    }).catch(() => null);
+    const { readdir, deleteFile } = await import('~/services/nativeBridge');
+    const result = await readdir("DOCUMENTS", "logs").catch(() => null);
 
     if (!result) return;
 
@@ -138,10 +122,7 @@ async function cleanOldLogs(): Promise<void> {
         parseInt(match[1].substring(6, 8)),
       );
       if (fileDate.getTime() < threeDaysAgo) {
-        await Filesystem.deleteFile({
-          path: `logs/${file.name}`,
-          directory: Directory.Documents,
-        }).catch(() => {});
+        await deleteFile("DOCUMENTS", `logs/${file.name}`).catch(() => {});
       }
     }
   } catch {
@@ -151,20 +132,20 @@ async function cleanOldLogs(): Promise<void> {
 
 /**
  * 初始化日志系统
- * 检测运行环境，如果是 Capacitor 原生环境则启用文件写入
+ * 检测运行环境,如果是原生环境则启用文件写入
  */
 export async function initLogger(): Promise<void> {
   try {
-    // 检测是否在 Capacitor 原生环境
-    const { Capacitor } = await import('@capacitor/core');
-    if (Capacitor.isNativePlatform()) {
+    // v0.4.5: 方案 D - 使用 NativeBridge 检测原生平台
+    const { isNativePlatform } = await import('~/services/nativeBridge');
+    if (isNativePlatform()) {
       filesystemReady = true;
       // 清理旧日志
       await cleanOldLogs();
       console.log('[Logger] 文件日志系统已初始化');
     }
   } catch {
-    // Web 环境，仅使用 console
+    // Web 环境,仅使用 console
   }
   // 记录启动日志
   log('info', 'app', '应用启动');
@@ -176,13 +157,10 @@ export async function initLogger(): Promise<void> {
 export async function getLogFilePath(): Promise<string | null> {
   if (!filesystemReady) return null;
   try {
-    const { Filesystem, Directory } = await import('@capacitor/filesystem');
+    const { getUri } = await import('~/services/nativeBridge');
     const filename = `logs/${getDateString()}.log`;
-    const uri = await Filesystem.getUri({
-      path: filename,
-      directory: Directory.Documents,
-    });
-    return uri.uri;
+    const { uri } = await getUri("DOCUMENTS", filename);
+    return uri ?? null;
   } catch {
     return null;
   }

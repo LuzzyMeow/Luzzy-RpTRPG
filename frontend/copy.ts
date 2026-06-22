@@ -8,7 +8,7 @@ import {
 import { join, dirname } from "node:path";
 
 const SOURCE_DIR = "./build/client";
-const TARGET_DIR = "../www";
+const TARGET_DIR = "../android/app/src/main/assets/public";
 
 function copyDirectory(src: string, dest: string) {
   mkdirSync(dest, { recursive: true });
@@ -50,7 +50,7 @@ try {
 
   copyDirectory(SOURCE_DIR, TARGET_DIR);
 
-  console.log("✅ Build output copied to www/ successfully!");
+  console.log("✅ Build output copied to android/app/src/main/assets/public/ successfully!");
 } catch (error) {
   console.error("❌ Copy failed:", error);
   process.exit(1);

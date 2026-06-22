@@ -17,6 +17,8 @@ import {
   IconToolKit,
   IconPuzzle,
   IconBook,
+  IconBookmark,
+  IconMap,
   IconSearch,
   IconGlobe,
   IconImport,
@@ -1486,6 +1488,12 @@ function BuiltinToolsTab() {
                         {toolType === "memory-recall" && (
                           <IconBook className="size-4 text-primary" />
                         )}
+                        {toolType === "world-recall" && (
+                          <IconMap className="size-4 text-primary" />
+                        )}
+                        {toolType === "world-search" && (
+                          <IconBookmark className="size-4 text-primary" />
+                        )}
                         {toolType === "anysearch" && (
                           <IconGlobe className="size-4 text-primary" />
                         )}
@@ -1533,7 +1541,8 @@ function BuiltinToolsTab() {
                     >
                       {/* v0.3.3: 向量记忆工具未配置嵌入模型时的提示 */}
                       {/* v0.3.4: memory-recall 工具同步添加提示 */}
-                      {(toolType === "vector-memory" || toolType === "memory-recall") && !hasEmbeddingModel && (
+                      {/* v0.4.3: world-recall 工具同步添加提示 */}
+                      {(toolType === "vector-memory" || toolType === "memory-recall" || toolType === "world-recall") && !hasEmbeddingModel && (
                         <motion.div
                           initial={{ opacity: 0, y: -4 }}
                           animate={{ opacity: 1, y: 0 }}

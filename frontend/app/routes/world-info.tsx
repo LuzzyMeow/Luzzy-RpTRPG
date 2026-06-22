@@ -75,8 +75,8 @@ import {
   fadeSlide,
 } from "~/lib/motion-presets";
 import { toast } from "sonner";
-// v0.4.1: 导入 isNativePlatform 用于世界书导出原生平台 fallback
-import { isNativePlatform } from "~/services/apiClient";
+// v0.4.5: 方案 D - 使用 NativeBridge 替代 Capacitor Filesystem/Share
+import { isNativePlatform, writeFile, shareFile, mkdir } from "~/services/nativeBridge";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "世界书 - LUZZY" }];
@@ -507,11 +507,9 @@ export default function WorldInfoPage() {
       });
       const fileName = `${group.bookName || "worldbook"}.json`;
 
-      // v0.4.1: 原生平台优先使用 Filesystem 插件,失败时降级到 Web 下载
-      // v0.4.3: 原生平台写入临时文件后唤起系统分享面板,不再静默保存
+      // v0.4.5: 方案 D - 原生平台使用 NativeBridge 写入临时文件后唤起系统分享面板
       if (isNativePlatform()) {
         try {
-          const { Filesystem, Directory } = await import('@capacitor/filesystem');
           const arrayBuffer = await blob.arrayBuffer();
           const uint8Array = new Uint8Array(arrayBuffer);
           let binary = '';
@@ -520,33 +518,12 @@ export default function WorldInfoPage() {
           }
           const base64Data = btoa(binary);
           // 确保 LUZZY 目录存在
-          try {
-            await Filesystem.mkdir({
-              path: 'LUZZY',
-              directory: Directory.Documents,
-              recursive: true,
-            });
-          } catch {
-            // 目录已存在,忽略
+          await mkdir("EXTERNAL", "LUZZY", true).catch(() => {});
+          const { uri } = await writeFile("EXTERNAL", `LUZZY/${fileName}`, base64Data, true);
+          if (uri) {
+            await shareFile(uri, group.bookName || '世界书', '导出世界书');
+            toast.success('已唤起分享');
           }
-          await Filesystem.writeFile({
-            path: `LUZZY/${fileName}`,
-            data: base64Data,
-            directory: Directory.Documents,
-            recursive: true,
-          });
-          const uriResult = await Filesystem.getUri({
-            path: `LUZZY/${fileName}`,
-            directory: Directory.Documents,
-          });
-          // v0.4.3: 唤起系统分享面板
-          const { Share } = await import('@capacitor/share');
-          await Share.share({
-            title: group.bookName || '世界书',
-            url: uriResult.uri,
-            dialogTitle: '导出世界书',
-          });
-          toast.success('已唤起分享');
           return;
         } catch (err) {
           console.error("[WorldInfo] 原生导出失败,降级到 Web 下载:", err);

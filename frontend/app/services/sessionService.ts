@@ -26,8 +26,8 @@ import { cosineSimilarity, getCachedEmbedding, setCachedEmbedding } from '~/serv
 /** 会话列表在 IndexedDB 中的存储键 */
 const SESSIONS_STORAGE_KEY = 'all_sessions';
 
-/** 嵌入 API 版本路径（避免与 chat/completions 的 /v1 冲突） */
-const EMBEDDING_API_VERSION = 'v3';
+/** 嵌入 API 默认版本路径(仅当 baseUrl 不含版本时回退使用) */
+const EMBEDDING_API_DEFAULT_VERSION = 'v1';
 
 /** 标题生成提示词 */
 const TITLE_GENERATION_PROMPT =
@@ -154,16 +154,18 @@ export const searchSessionsKeyword = (
 /**
  * 构建嵌入 API 的完整 URL
  *
- * 使用 /v3 版本路径以避免与 chat/completions 的 /v1 版本冲突。
- * 若 baseUrl 已含版本路径（/v1, /v2 等），则替换为 /v3。
+ * v0.4.4: 不硬编码版本号,用户填什么就是什么。
+ * - 若 baseUrl 已含版本路径(/v1, /v2, /v3 等),直接追加 /embeddings
+ * - 若不含版本路径,回退到 OpenAI 标准 /v1/embeddings
  *
  * @param baseUrl - 供应商 API 基础地址
  * @returns 完整的 embeddings 端点 URL
  */
 const buildEmbeddingUrl = (baseUrl: string): string => {
   const clean = normalizeApiProviderUrl(baseUrl);
-  const withoutVersion = clean.replace(/\/v\d+(?=\/|$)/, '');
-  return `${withoutVersion}/${EMBEDDING_API_VERSION}/embeddings`;
+  const hasVersion = /\/v\d+(?=\/|$)/.test(clean);
+  const apiUrl = hasVersion ? clean : `${clean}/${EMBEDDING_API_DEFAULT_VERSION}`;
+  return `${apiUrl}/embeddings`;
 };
 
 /**

@@ -1,12 +1,12 @@
 {
   "name": "luzzy",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "LUZZY - AI 角色扮演与 TRPG 对话应用",
   "main": "index.js",
   "scripts": {
     "build:web": "cd frontend && pnpm run build",
-    "sync": "npm run build:web && npx cap sync",
-    "build:android": "npm run sync && npx cap build android"
+    "sync": "npm run build:web",
+    "build:android": "npm run sync && cd android && gradlew assembleDebug"
   },
   "repository": {
     "type": "git",
@@ -20,9 +20,5 @@
     "url": "https://github.com/LuzzyMeow/RP-Hub/issues"
   },
   "homepage": "https://github.com/LuzzyMeow/RP-Hub#readme",
-  "dependencies": {
-    "@capacitor/android": "^8.4.0",
-    "@capacitor/cli": "^8.4.0",
-    "@capacitor/core": "^8.4.0"
-  }
+  "dependencies": {}
 }

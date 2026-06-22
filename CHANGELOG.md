@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.4.5
+
+### 🏗️ 架构重构
+
+- **剔除 Capacitor 框架,从零搭建安卓原生 Kotlin 架构(方案 D)**:移除 `@capacitor/android`、`@capacitor/cli`、`@capacitor/core`、`@capacitor/device`、`@capacitor/filesystem`、`@capacitor/share` 共 6 个 npm 依赖;删除 `capacitor.config.json`、`capacitor.plugins.json`、`config.xml`、`capacitor-cordova-android-plugins` 目录;构建脚本移除 `npx cap sync`,改为 `pnpm build + gradle` 直通流程
+- **MainActivity.kt 原生翻译**:从 `MainActivity.java` 完整翻译为 Kotlin(478 行),保留全部功能:WebViewAssetLoader(https://appassets.androidplatform.net 协议加载 assets)、DownloadListener(万相广场 iframe 下载转发 JS 自动导入)、ApiProxyServer(NanoHTTPD localhost:18527 本地代理,绕过 CORS)、ProxyConfigInterface(JavascriptInterface 推送 API 配置和高级设置)
+- **NativeBridge.kt JavascriptInterface**:替代 `@capacitor/device`、`@capacitor/filesystem`、`@capacitor/share` 的全部功能,共 10 个 `@JavascriptInterface` 方法:`isNativePlatform`、`getDeviceInfo`、`writeFile`、`appendFile`、`mkdir`、`readdir`、`deleteFile`、`getUri`、`shareFile`、`shareText`,每个方法含 Web 平台降级
+- **LuzzyWebViewClient.kt**:WebViewAssetLoader 配置,将 `/assets/` 路径映射到 assets 目录
+- **LuzzyWebChromeClient.kt**:console.log 转发到 Logcat,便于调试
+
+### 🐛 Bug 修复
+
+- **死代码 bug:`setAdvancedSettings` 从未被前端调用**:火山方舟/DeepSeek 的 `customRequestBody`(thinking、reasoning_effort 等)从未注入代理请求。`root.tsx` 新增 `setAdvancedSettings` 推送逻辑(行 102-130),在 API 配置变更时同步推送 `enableThinking` 和 `customRequestBody` 到原生层
+- **Kotlin KDoc 嵌套注释编译错误**:Kotlin 块注释支持嵌套,KDoc 内部的 `/v3/*`、`/v1/*` 等路径表示被编译器当作嵌套块注释开始标记,导致 "Unclosed comment"。改为 `/v3/...`、`/v1/...` 表示通配路径
+- **Gradle pluginManagement 缺失**:`android/settings.gradle` 缺少 `pluginManagement` 块,导致 Android Gradle Plugin 无法解析,新增 google()、mavenCentral()、gradlePluginPortal() 三个仓库
+- **Android 颜色资源缺失**:`styles.xml` 引用 `@color/colorPrimary` 等颜色但缺少 `colors.xml`,新建 `res/values/colors.xml` 定义 colorPrimary(#8B5CF6)、colorPrimaryDark(#7C3AED)、colorAccent(#A78BFA)
+
+### 🔄 前端适配
+
+- **6 个前端文件从 Capacitor 切换到 nativeBridge**:
+  - `characters.tsx`:角色卡导出从 `Filesystem.writeFile` + `Share.share` 改为 `writeFile("EXTERNAL", ...)` + `shareFile(uri, ...)`
+  - `about.tsx`:设备信息从 `Device.getInfo()` 改为 `getDeviceInfo()`,含 Web 平台降级
+  - `logger.ts`:日志写入从 `Filesystem.appendFile/mkdir/writeFile` 改为 nativeBridge 对应方法,使用 `btoa(unescape(encodeURIComponent(line)))` 处理 UTF-8 中文
+  - `world-info.tsx`:世界书导出从 `Filesystem.mkdir/writeFile/getUri` + `Share.share` 改为 nativeBridge 对应方法
+  - `chat-slice.ts`:消息分享从 `Share.share` 改为 `shareText()`,含 navigator.share 和 clipboard 降级
+  - `luzzy-share-dialog.tsx`:Blob 下载从 `Filesystem.mkdir/writeFile` 改为 nativeBridge `mkdir/writeFile`
+- **apiClient.ts 简化**:移除 Capacitor 类型声明和死代码,XHR 直接使用(方案 D 无 CapacitorHttp patch)
+- **copy.ts 目标目录**:从 `../www` 改为 `../android/app/src/main/assets/public`
+
+### 🚀 功能增强
+
+- **版本号升级**:v0.4.4 → v0.4.5(package.json + frontend/package.json + build.gradle versionCode 23 + about.tsx)
+
 ## v0.4.4
 
 ### 🐛 Bug 修复
@@ -11,6 +44,9 @@
 - **工具卡片时序 bug（重点任务）**：`chat-slice.ts` `callApiAndUpdate` 函数内 `agentSteps` 初始化改为读取已有消息的 agentSteps(`existingMsg?.agentSteps ? [...existingMsg.agentSteps] : []`),继承 force 预执行阶段的 tool_call/tool_result 步骤,避免流式 CoT 更新时覆盖
 - **会话切换滚动问题**：`chat.tsx` `handleSwitchSession` 添加 `setTimeout(() => scrollToBottom(), 300)`,等待 AnimatePresence 动画完成后滚动到底部
 - **输入法自动唤出**：`settings.tsx` 移除自定义目标语言弹窗的 `autoFocus`,API 地址输入框添加 `inputMode="url"`,上下文长度/输出长度/历史消息数限制添加 `inputMode="numeric"`;`characters.tsx` 名称/标签/创作者/版本输入框添加 `inputMode="text"`
+- **两个思考卡片并存 bug**：`luzzy-chat-message.tsx` 移除独立的 `LuzzyAgentSteps` 渲染分支,统一为单个 `CotCard`。即使 `cot` 为空(force 预执行阶段)也渲染 CotCard,让工具节点始终落在卡内,避免"工具卡片闪现 → 消失 → 被吸入新 CoT 卡片"的视觉跳跃
+- **火山方舟思考深度按钮被置灰**：`luzzy-chat-input.tsx` `thinkingDepthLockedByJson` 检测逻辑修正,仅当 `reasoning_effort` 存在(真正指定了深度档位)时才置灰,`thinking` 键(如火山方舟的 `{"thinking": {"type": "enabled"}}` 仅是开关)不置灰
+- **嵌入模型端点硬编码 /v3 导致多数供应商 404**：`memoryService.ts`/`sessionService.ts`/`knowledgeBaseService.ts` 的 `buildEmbeddingUrl` 不再硬编码版本号,改为"用户填什么就是什么"——baseUrl 已含版本路径(`/v1`、`/v3` 等)直接追加 `/embeddings`,不含则回退到 OpenAI 标准 `/v1/embeddings`。对齐 RP-Hub-main 的 `getOpenAICompatUrl` 实现
 
 ### ✨ 新增功能
 
@@ -19,6 +55,7 @@
 - **DeepSeek 供应商 customRequestBody**：`settings-slice.ts` DeepSeek 供应商添加 `apiType: "openai-compatible"`、`customRequestBody: '{"reasoning_effort": "max"}'`,模型 contextLength 改为 1048576,outputLength 改为 393216
 - **角色卡鹿溪保护**：`characters.tsx` 导入 `LUXI_CHARACTER_NAME`,新增 `isLuxiCharacter` 判断函数;SwipeCard 对鹿溪禁用滑动(`disabled={isLuxiCharacter(c)}`);分享按钮对鹿溪条件渲染(`!isLuxiCharacter(c)`);`handleCardClick` 鹿溪提前返回
 - **工具卡片作为思考节点**：`luzzy-thinking-timeline.tsx` 新增 `ToolStep` 接口和 `TimelineStep` 联合类型,`isToolStep` 类型守卫,`mergeSteps` 函数(工具步骤与思考步骤合并);`ToolNode` 组件渲染 tool_call(蓝色 IconToolKit)/tool_result(绿色 IconCheck)/memory_inject(紫色 IconBook)/knowledge_call(琥珀色 IconSearch);`LuzzyThinkingTimeline` 接受 `agentSteps` 参数;`luzzy-chat-message.tsx` `CotCard` 传递 `agentSteps`
+- **长期记忆/全局记忆的角色卡启用设置**：`MemorySettings` 类型新增 `longTermMemoryCharacterIds` 和 `globalMemoryCharacterIds` 字段(空数组表示对所有角色卡启用,保持向后兼容);`memory.tsx` MemorySettingsCard 新增两个角色卡多选器(标签式选择,选中高亮);`chatService.ts` 全局记忆注入前检查 `globalMemoryCharacterIds`,`chat-slice.ts` 长期记忆(memory-recall 工具)预执行前检查 `longTermMemoryCharacterIds`
 
 ### 🚀 功能增强
 

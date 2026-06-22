@@ -1,85 +1,21 @@
 /**
  * API 客户端服务
  *
- * 提供流式请求（fetch + ReadableStream for 浏览器，XMLHttpRequest for 原生/Capacitor）、
+ * 提供流式请求（fetch + ReadableStream for 浏览器，XMLHttpRequest for 原生）、
  * SSE 解析、非流式请求、AbortController 支持及错误处理。
  *
  * 从旧 Vue 3 app.js 迁移，改为纯函数风格，状态由 zustand store 管理。
  */
 
 import type { ThinkingDepth } from '~/types/luzzy';
-
-/** Capacitor 全局对象的最小类型声明 */
-declare global {
-  interface Window {
-    Capacitor?: {
-      isNativePlatform?: () => boolean;
-    };
-  }
-}
+import { isNativePlatform } from '~/services/nativeBridge';
 
 /** 本地代理基础地址（仅原生平台使用） */
 const NATIVE_PROXY_BASE = 'http://localhost:18527';
 
-// v0.4.4: 保存原始 fetch 和 XMLHttpRequest,避免被 CapacitorHttp patch
-// 注意:Node.js 环境下 XMLHttpRequest 可能不存在,需做安全检测
-const _originalFetch =
-  typeof window !== 'undefined'
-    ? window.fetch.bind(window)
-    : typeof fetch !== 'undefined'
-      ? fetch
-      : undefined;
-const _originalXHR =
-  typeof window !== 'undefined'
-    ? window.XMLHttpRequest
-    : typeof XMLHttpRequest !== 'undefined'
-      ? XMLHttpRequest
-      : undefined;
-
-/**
- * 检测当前是否为 Capacitor 原生平台
- *
- * CapacitorHttp 会 patch 全局 fetch，导致 response.body.getReader() 在 Android 上
- * 一次性返回完整数据，无法实现真流式。原生平台需通过 XMLHttpRequest + 本地代理实现真流式。
- *
- * v0.3.5: 增强检测，多重判断确保原生平台正确识别
- */
-export const isNativePlatform = (): boolean => {
-  if (typeof window === 'undefined') return false;
-
-  // 1. 优先使用 Capacitor 官方 API
-  if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function') {
-    try {
-      if (window.Capacitor.isNativePlatform()) return true;
-    } catch {
-      // 忽略异常，继续其他检测
-    }
-  }
-
-  // 2. 检测 Capacitor 平台标识
-  const platform = (window as unknown as { Capacitor?: { getPlatform?: () => string } }).Capacitor;
-  if (platform && typeof platform.getPlatform === 'function') {
-    try {
-      const p = platform.getPlatform();
-      if (p === 'android' || p === 'ios') return true;
-    } catch {
-      // 忽略异常
-    }
-  }
-
-  // 3. 检测 User-Agent 中的 Android/iOS 标识（兜底）
-  if (typeof navigator !== 'undefined' && navigator.userAgent) {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('android') || ua.includes('iphone') || ua.includes('ipad')) {
-      // 进一步确认是 Capacitor 环境（非普通移动浏览器）
-      if (window.Capacitor || ua.includes('capacitor')) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-};
+// v0.4.5: 重新导出 isNativePlatform,保持现有 import 路径兼容
+// (world-info.tsx 和 luzzy-share-dialog.tsx 仍从 apiClient 导入 isNativePlatform)
+export { isNativePlatform };
 
 // ============================================================================
 // SSE 解析
@@ -737,14 +673,8 @@ const sendStreamRequestViaXHR = (
       proxyUrl = url;
     }
 
-    // v0.4.0-patch2: CapacitorHttp 会 patch 全局 XMLHttpRequest，对 POST 请求重定向到原生 HTTP，
-    // 导致 XHR 无法访问 localhost:18527 的 NanoHTTPD 代理（API error: 0）。
-    // 修复：使用 Capacitor 保存的原始构造函数（fullObject 才是真正的 XMLHttpRequest 类）。
-    // 之前误用 .constructor 是 Object.prototype.constructor，导致 new 出来的不是 XHR 实例。
-    const CapXHR = (window as unknown as {
-      CapacitorWebXMLHttpRequest?: { fullObject: typeof XMLHttpRequest };
-    }).CapacitorWebXMLHttpRequest;
-    const XhrCtor: typeof XMLHttpRequest = CapXHR?.fullObject ?? XMLHttpRequest;
+    // v0.4.5: 方案 D 移除 CapacitorHttp patch,XHR 可直接使用,无需 CapacitorWebXMLHttpRequest.fullObject hack
+    const XhrCtor: typeof XMLHttpRequest = XMLHttpRequest;
 
     const xhr = new XhrCtor();
     xhr.open('POST', proxyUrl, true);
