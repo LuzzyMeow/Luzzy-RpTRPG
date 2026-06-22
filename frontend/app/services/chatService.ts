@@ -31,6 +31,7 @@ import {
   saveVectorMemoryShards,
   compressContext,
 } from '~/services/memoryService';
+import { LUXI_CHARACTER_NAME } from '~/services/presetContent';
 import {
   loadSkillbook,
   getActiveSkills,
@@ -353,9 +354,24 @@ export const buildContext = async (
   const systemPromptParts: string[] = [];
 
   // 3.1 预设内容（保持 NSFW 预设内容完整）
+  // v0.4.1-fix: 非鹿溪角色卡时,仅注入鹿溪预设的 CoT 框架部分,不注入身份锚定
+  // 避免鹿溪预设的"身份锚定"覆盖其他角色卡的设定
+  // CoT 框架部分从 "## 角色扮演通用 CoT 推理框架" 开始,到预设末尾
+  const isLuxiCharacter = character?.name === LUXI_CHARACTER_NAME;
   const presetContents = presets
     .filter((p) => p.enabled !== false && p.content && p.content.trim())
-    .map((p) => p.content)
+    .map((p) => {
+      // 非鹿溪角色卡时,对鹿溪预设仅保留 CoT 框架部分
+      if (!isLuxiCharacter && p.name === 'Luzzy' && p.isBuiltin) {
+        const cotFrameworkStart = p.content.indexOf('## 角色扮演通用 CoT 推理框架');
+        if (cotFrameworkStart >= 0) {
+          return p.content.slice(cotFrameworkStart);
+        }
+        return ''; // 找不到 CoT 框架分界线,跳过鹿溪预设
+      }
+      return p.content;
+    })
+    .filter((content) => content.trim())
     .join('\n\n---\n\n');
   if (presetContents) {
     systemPromptParts.push(presetContents);

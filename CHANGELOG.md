@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.4.2
+
+### 🐛 Bug 修复
+
+- **TRPG 模式火山方舟 API 转发失败（重点任务）**：`MainActivity.java` `serve()` 方法正确使用 `resolveTargetBase()` 确定目标 API 基础地址，修复之前直接用 `cachedApiUrl`（占位符）作为 baseUrl 导致请求发到错误地址的 Bug。现在三种路径前缀正确路由：
+  - `/v3/*` 无 `_target` → 火山方舟 coding plan（硬编码 `VOLCANO_ARK_BASE`）
+  - `/v1/*` 或其他 + `_target` → 自定义目标（支持任意 OpenAI 兼容 API）
+  - `/v1/*` 或其他 无 `_target` → 回退到 `cachedApiUrl`（仅当非占位符时）
+- **代理回退死循环防护**：`MainActivity.java` 检测到 `cachedApiUrl` 包含 `localhost:18527` 或 `127.0.0.1:18527`（占位符）时，返回 400 错误提示用户正确配置 TRPG 网页内的 API 地址，避免代理转发给自己导致死循环
+- **火山方舟 Authorization 注入优化**：`MainActivity.java` 检测到目标是火山方舟（`ark.cn-beijing.volces.com`）且 `cachedApiKey` 是占位符时，跳过 `Authorization` 头注入。火山方舟编码计划使用 coding plan 认证，不需要 API Key
+
+### ✨ 新增功能
+
+- **TRPG 说明弹窗重写（重点任务）**：`trpg.tsx` 说明弹窗明确支持三种 API 配置场景：
+  - 场景一：火山方舟编码计划（自动转发）— 用户在 TRPG 网页配置 `http://localhost:18527/v3`，代理自动转发至火山方舟 API
+  - 场景二：其他供应商需转发（绕过 CORS）— 用户在 TRPG 网页配置 `http://localhost:18527/v1?_target=https://供应商地址`，支持任意 OpenAI 兼容 API
+  - 场景三：其他供应商无需转发（直连）— 用户在 TRPG 网页直接填写供应商真实 API 地址，绕过本地代理
+  - 弹窗改为 `max-w-md max-h-[85vh]` 三段式 flex 布局，`ScrollArea` 限制 `max-h-[65vh]`，支持长内容滚动
+  - 三个场景卡片使用统一的 `rounded-lg border border-primary/20 bg-primary/5` 样式 + 圆形数字序号徽章
+
+### 🚀 功能增强
+
+- **版本号升级**：v0.4.1 → v0.4.2（package.json + frontend/package.json + build.gradle versionCode 20 + about.tsx + README.md 徽章）
+
+## v0.4.1-patch1
+
+### 🐛 Bug 修复
+
+- **思考内容重复显示（重点）**：`chat-slice.ts` phase="main" 阶段第二次请求的 `accumulatedReasoning` 不再追加到 `existingCot`，三处（流式更新、非流式更新、最终更新）均移除追加逻辑，避免与第一次 CoT 内容重复
+- **流式输出始终未成功（重点）**：`markdown.tsx` 移除 Streamdown `animated={{ sep: 'char', duration: 80 }}` 配置（动画队列与流式更新冲突导致内容积压无法渲染）；`luzzy-chat-message.tsx` `isAnimating` 固定为 `false`；`luzzy-thinking-timeline.tsx` 思考节点 Markdown 也禁用动画。流式逐字效果由 API 流式输出本身提供
+- **高亮预览色块空心边框**：`settings.tsx` `input[type=color]` 添加 `opacity: 0` 完全透明，移除浏览器原生 color picker 的空心边框残留
+- **429 错误重试**：`chat-slice.ts` 新增 `callApiWithRetry` 包装函数，最多重试 3 次，退避间隔递增（2s/4s/8s），重试期间显示"服务器繁忙"提示，支持用户中止
+- **非鹿溪角色卡设定未应用（重点）**：`chatService.ts` `buildContext` 中，当 `currentCharacter.name !== '鹿溪'` 时，鹿溪预设仅注入 `## 角色扮演通用 CoT 推理框架` 及之后部分（NSFW CoT 框架），不注入身份锚定，避免覆盖其他角色卡的设定
+- **工具调用/向量记忆/强制工具未生效（重点）**：`chat-slice.ts` 内置工具预执行添加 `agentSteps` 和 `toolCalls`，显示为二级思考卡片：
+  - `memory-recall` 预执行：添加 `tool_call` + `tool_result` 步骤，更新 `toolCalls` 和 `agentSteps`
+  - `vector-memory` 预执行（新增）：force 模式下主动调用 `searchVectorMemory`，结果注入上下文并添加二级思考卡片
+  - `keyword-search` 预执行（新增）：force 模式下主动从向量记忆分片中按关键词匹配，结果注入上下文并添加二级思考卡片
+- **角色卡预览弹窗滑动容器限制**：`character-picker.tsx` 详情弹窗 `DialogContent` 改为 `flex flex-col gap-0`，`DialogHeader` 添加 `shrink-0`，`ScrollArea` 添加 `max-h-[70vh]`；侧边栏展开角色卡内容添加 `max-h-[200px] overflow-y-auto`，限制展开内容在容器内滚动
+
 ## v0.4.1
 
 ### 🐛 Bug 修复

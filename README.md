@@ -8,7 +8,7 @@
 > 
 > *Every conversation feels like opening a fresh role-playing novel.*
 
-[![Version](https://img.shields.io/badge/version-v0.4.1-9d4edd?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.4.2-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -114,7 +114,7 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.4.1-debug.apk`
+📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.4.2-debug.apk`
 
 ---
 
@@ -142,6 +142,12 @@ RP-Hub/
 ---
 
 ## 📰 最新动态 · What's New
+
+### v0.4.2
+
+修复 TRPG 模式火山方舟 API 转发失败问题（`MainActivity.java` 正确使用 `resolveTargetBase()` 路由目标地址），新增代理回退死循环防护与火山方舟 Authorization 注入优化。重写 TRPG 说明弹窗，明确支持三种 API 配置场景：火山方舟自动转发、其他供应商需转发（`_target` 参数）、其他供应商直连。
+
+> Fixes TRPG mode Volcano Ark API forwarding failure (`MainActivity.java` now correctly uses `resolveTargetBase()` to route target addresses), adds proxy fallback loop protection and Volcano Ark Authorization injection optimization. Rewrites TRPG notice dialog to clearly support three API configuration scenarios: Volcano Ark auto-forward, other providers needing forwarding (`_target` param), and other providers direct connection.
 
 ### v0.4.1
 

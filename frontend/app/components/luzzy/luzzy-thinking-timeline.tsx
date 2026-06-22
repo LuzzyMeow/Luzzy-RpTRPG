@@ -347,7 +347,7 @@ function ThinkingNode({ step, index, isExpanded, onToggle }: ThinkingNodeProps) 
           >
             <div className="mt-1.5 rounded-md bg-muted/40 p-2 text-sm text-muted-foreground">
               {displayedContent ? (
-                <Markdown content={displayedContent} isAnimating={isRunning} />
+                <Markdown content={displayedContent} isAnimating={false} />
               ) : (
                 <span className="text-xs opacity-60">等待内容...</span>
               )}
