@@ -593,6 +593,8 @@ export const createChatSlice: StateCreator<
             body: requestBody,
             signal: abortController.signal,
             onChunk: (_dataStr, parsed) => {
+              // v0.5.3: abort 后不再处理 chunk，避免向已卸载组件写入状态
+              if (abortController?.signal.aborted) return;
               const chunk = parseSSEChunk(parsed);
 
               // 提取 usage（OpenAI 在最后一个 chunk 携带；Anthropic 分 message_start/message_delta 携带，需合并）
@@ -678,8 +680,13 @@ export const createChatSlice: StateCreator<
                 lastParseLength = accumulatedContent.length;
               }
               const cotResult = lastCotResult!;
+              // v0.5.3: 对 reasoning 也调用 parseCot，提取其中的 <cot> 标签内容
+              // 解决 GLM-5.2 等推理型模型将 CoT 放在 reasoning 字段的问题
+              const reasoningCotResult = accumulatedReasoning
+                ? parseCot(accumulatedReasoning, false, true)
+                : { cot: '', main: '', sys: '', isFinished: false };
               const finalCot = (
-                accumulatedReasoning +
+                reasoningCotResult.cot +
                 (cotResult.cot ? "\n" + cotResult.cot : "")
               ).trim();
 
@@ -898,8 +905,12 @@ export const createChatSlice: StateCreator<
 
         // v0.4.1: 返回 cot 字段,供第二次请求使用
         const finalCotResult = parseCot(accumulatedContent, true);
+        // v0.5.3: 同步流式中的修复——对 reasoning 也调用 parseCot
+        const finalReasoningCotResult = accumulatedReasoning
+          ? parseCot(accumulatedReasoning, true)
+          : { cot: '', main: '', sys: '', isFinished: false };
         const finalCotCombined = (
-          accumulatedReasoning +
+          finalReasoningCotResult.cot +
           (finalCotResult.cot ? "\n" + finalCotResult.cot : "")
         ).trim();
         // v0.4.6: 流式诊断日志（记录请求完成状态）
@@ -1161,6 +1172,9 @@ export const createChatSlice: StateCreator<
       logger.info("api", `API 响应阶段3: 正文完成（字符数=${accumulatedContent.length}）`);
       logger.info("chat", `消息接收完成（CoT=${cotContent.length}字符，正文=${accumulatedContent.length}字符）`);
 
+      // v0.5.3: Phase 3 完成后检查 abort，避免卸载后继续执行工具调用
+      if (abortController?.signal.aborted) return;
+
       // 7. 检查空响应(正文阶段)
       if (!accumulatedContent.trim() && !accumulatedReasoning.trim()) {
         // 正文为空但 CoT 有内容,保留 CoT 并提示
@@ -1260,22 +1274,45 @@ export const createChatSlice: StateCreator<
             return matched.map((m, i) => `  <message index="${i + 1}" role="${m.role}">\n    ${m.content.slice(0, 500)}\n  </message>`).join('\n\n');
           }
           // world-recall: 世界书语义检索（需要嵌入模型）
+          // v0.5.3: 移除 enabled 二次过滤——加载时已按 bookId 过滤，buildContext 已按 enabled 过滤
           if (toolName === "world-recall" && worldInfoEntries.length > 0 && memorySettings?.embeddingModel) {
-            const enabled = worldInfoEntries.filter((e) => e.enabled !== false);
-            if (enabled.length === 0) return "<builtin_tool_result status='empty'>没有已启用的世界书条目。</builtin_tool_result>";
+            const enabled = worldInfoEntries;
             const queryEmbedding = await executeWithTimeout(() =>
               getEmbedding(query, memorySettings, settings, allProviders, get().apiProviderKeys),
             );
-            const scored = enabled.map((e) => {
-              const entryEmbedding = e.embedding || [];
+            // v0.5.3: 对缺少 embedding 的条目实时懒加载生成
+            const scored = await Promise.all(enabled.map(async (e) => {
+              let entryEmbedding = e.embedding || [];
+              if (entryEmbedding.length === 0 && e.content) {
+                try {
+                  entryEmbedding = await getEmbedding(e.content, memorySettings, settings, allProviders, get().apiProviderKeys);
+                  e.embedding = entryEmbedding; // 写回缓存，后续调用直接命中
+                } catch {
+                  entryEmbedding = [];
+                }
+              }
               const score = entryEmbedding.length > 0 ? cosineSimilarity(queryEmbedding, entryEmbedding) : 0;
               return { entry: e, score };
-            }).sort((a, b) => b.score - a.score).slice(0, limit);
-            return scored.map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`).join('\n\n');
+            }));
+            const sorted = scored.sort((a, b) => b.score - a.score).slice(0, limit);
+            if (sorted.length === 0) return "<builtin_tool_result status='empty'>没有已启用的世界书条目。</builtin_tool_result>";
+            // v0.5.3: 持久化懒加载的 embedding 到 IndexedDB
+            try {
+              const allWorldInfo = await getItem<WorldInfoEntry[]>("worldInfo", "worldInfo");
+              if (allWorldInfo) {
+                const updated = allWorldInfo.map(wi => {
+                  const match = enabled.find(e => e.id === wi.id);
+                  return match && match.embedding ? { ...wi, embedding: match.embedding } : wi;
+                });
+                await setItem("worldInfo", "worldInfo", updated);
+              }
+            } catch { /* 持久化失败不影响工具结果 */ }
+            return sorted.map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`).join('\n\n');
           }
           // world-search: 世界书关键词搜索
+          // v0.5.3: 移除 enabled 二次过滤
           if (toolName === "world-search") {
-            const enabled = worldInfoEntries.filter((e) => e.enabled !== false);
+            const enabled = worldInfoEntries;
             const terms = query.split(/[\s,，、;；|｜/\\]+/u).map((t) => t.trim().toLowerCase()).filter(Boolean);
             const matched = enabled.map((e) => {
               const lowerContent = String(e.content || '').toLowerCase();

@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.5.4
+
+### 🌊 流式输出深度修复（核心 — 解决"一次性全部蹦出"问题）
+
+> 用户反馈流式输出始终无法实现（思考卡片和正文都一次性蹦出）。经 6 层根因分析，
+> 定位到 Android XHR onprogress 批量触发为主因，辅以非流式回退、全量重渲染、
+> Markdown 同步解析阻塞等问题。参考 rikkahub 的 `mapLatest + flowOn(Dispatchers.Default)`
+> 后台解析模式，使用 React `useDeferredValue` 等价实现。
+
+#### 6 层根因修复
+
+- **C1 — XHR 异步队列处理**（`apiClient.ts`）：Android 平台 `onprogress` 因 NanoHTTPD 代理缓冲导致批量触发。新增 `pendingChunks` 队列 + `isProcessing` 标志 + `processIncrementalAsync` 异步处理函数，每 10 行让出主线程一次（`setTimeout(resolve, 0)`），允许浏览器在 chunk 之间重绘 UI
+- **C2 — 非流式回退分批让出**（`apiClient.ts`）：content-type 非 event-stream 时的整体 JSON.parse 改为逐行 SSE 解析，每 10 行让出主线程
+- **C3 — React.memo 避免全量重渲染**（`luzzy-chat-message.tsx`）：新增自定义比较函数，仅当 message.id/content/cot/loading/error/agentSteps/isGenerating/isLast/avatarUrl/avatarName 变化时重渲染，避免流式更新触发整个消息列表重渲染
+- **C4 — parseThinkingSteps 始终缓存**（`luzzy-thinking-timeline.tsx`）：移除 `isGenerating` 限制，生成中也启用缓存（MAX=50，LRU 淘汰），避免每次流式更新全量正则解析
+- **C6 — useDeferredValue 延迟 Markdown 解析**（`markdown.tsx`）：等价 rikkahub 的 `mapLatest + flowOn(Dispatchers.Default)` 后台解析模式，流式期间 content 高频变化时 React 优先处理 UI 交互，空闲时才解析 Markdown
+- **C7 — 流式期间禁用文本选择**（`luzzy-chat-message.tsx`）：`userSelect: message.loading ? 'none' : 'text'`，避免内容追加导致选区错乱
+
+#### rikkahub 源码复用分析
+
+rikkahub 是 Kotlin/Compose Android 原生应用，与 RP-Hub（TypeScript/React/Capacitor）语言和运行时完全不同，**源码不可直接复用**。但其核心设计模式已等价移植：
+- `mapLatest`（取消旧解析）→ `useDeferredValue`（React 18+ 原生支持）
+- `flowOn(Dispatchers.Default)`（后台调度）→ `useDeferredValue` 自动延迟到低优先级
+- `callbackFlow + EventSource`（SSE 接收）→ `XHR onprogress + 异步队列`
+
+### 🏗️ 三请求架构修复
+
+- **A1 — world-recall enabled 过滤修复**（`chat-slice.ts`）：移除 `executeToolByName` 中的 enabled 二次过滤（加载时已按 bookId 过滤，buildContext 已按 enabled 过滤），避免误删有效条目
+- **A2 — embedding 懒加载**（`chat-slice.ts`）：对缺少 embedding 的 WorldInfoEntry 实时生成并持久化到 IndexedDB，修复 `WorldInfoEntry.embedding` 从未赋值导致语义检索退化为无序的问题
+- **B2 — onChunk abort 检查**（`chat-slice.ts`）：onChunk 回调首行检查 `abortController?.signal.aborted`，避免向已卸载组件写入状态
+- **B3 — Phase 3 后 abort 检查**（`chat-slice.ts`）：正文生成完成后、工具调用循环之前检查 abort，避免卸载后继续执行工具调用
+- **D1 — parseCot 处理 reasoning 字段**（`chat-slice.ts`）：对 `accumulatedReasoning` 调用 `parseCot`，与 content 的 cot 合并，解决 GLM-5.2 等推理型模型将 CoT 放在 reasoning_content 字段的问题
+- **D2 — COT_OUTPUT_PROTOCOL reasoning 兼容**（`chatService.ts`）：协议末尾增加 reasoning_content 字段兼容说明，告知模型可不在 content 中使用 `<cot>` 标签
+
+### 🗑️ 数据完整性
+
+- **B1 — 组件卸载中止生成**（`chat.tsx`）：unmount cleanup useEffect 中检查 `abortController`，存在则调用 `stop()` 中止生成
+- **B4 — 角色卡级联删除**（`character-slice.ts`）：`deleteCharacter` 扩展为级联删除 6 类关联数据：聊天记录、关联会话、向量记忆分片、长期记忆、世界书条目、正则脚本组、UI 模板绑定（知识库/技能/内置工具的 enabledForCharacters）
+
+### 📦 版本号统一
+
+更新 6 处版本号定义：`frontend/package.json`、`package.json`、`android/app/build.gradle`（versionCode 27）、`about.tsx`、`luzzy-global-trpg-iframe.tsx`（`?_v=0.5.4`）、`README.md` 徽章
+
+---
+
 ## v0.5.1
 
 ### 🏗️ 三请求架构（核心需求 — 用户明确要求实现）

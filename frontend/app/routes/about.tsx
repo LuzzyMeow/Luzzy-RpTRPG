@@ -43,7 +43,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.5.1";
+const APP_VERSION = "v0.5.4";
 
 /** 日志分类 Tab 配置 */
 const CATEGORY_TABS: { key: LogCategory | "all"; label: string }[] = [

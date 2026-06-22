@@ -149,17 +149,17 @@ function extractStepTitle(para: string, fallbackIndex: number): string {
   return `思考步骤 ${fallbackIndex + 1}`;
 }
 
-// v0.4.0: parseThinkingSteps 结果缓存（仅缓存完成态）
+// v0.4.0: parseThinkingSteps 结果缓存
+// v0.5.4: 生成中也启用缓存，避免流式更新时每次全量正则解析
 const parseThinkingStepsCache = new Map<string, ThinkingStep[]>();
-const MAX_PARSE_CACHE_SIZE = 20;
+const MAX_PARSE_CACHE_SIZE = 50;
 
 function parseThinkingSteps(cot: string, isGenerating: boolean): ThinkingStep[] {
   if (!cot.trim()) return [];
 
-  if (!isGenerating) {
-    const cached = parseThinkingStepsCache.get(cot);
-    if (cached) return cached;
-  }
+  // v0.5.4: 移除 isGenerating 限制，始终使用缓存
+  const cached = parseThinkingStepsCache.get(cot);
+  if (cached) return cached;
 
   const stepMarkerRegex = /(?=\*\*\s*Step\s*\d+|【\s*Step\s*\d+)/i;
   const hasStepMarkers = /\*\*\s*Step\s*\d+|【\s*Step\s*\d+/i.test(cot);
@@ -200,13 +200,12 @@ function parseThinkingSteps(cot: string, isGenerating: boolean): ThinkingStep[] 
     });
   }
 
-  if (!isGenerating) {
-    if (parseThinkingStepsCache.size >= MAX_PARSE_CACHE_SIZE) {
-      const firstKey = parseThinkingStepsCache.keys().next().value;
-      if (firstKey) parseThinkingStepsCache.delete(firstKey);
-    }
-    parseThinkingStepsCache.set(cot, steps);
+  // v0.5.4: 始终写入缓存（包括生成中），限制缓存大小避免内存膨胀
+  if (parseThinkingStepsCache.size >= MAX_PARSE_CACHE_SIZE) {
+    const firstKey = parseThinkingStepsCache.keys().next().value;
+    if (firstKey) parseThinkingStepsCache.delete(firstKey);
   }
+  parseThinkingStepsCache.set(cot, steps);
 
   return steps;
 }

@@ -103,7 +103,11 @@ export default function Markdown({
   const workbench = useOptionalWorkbench();
   // LUZZY 的 SettingsSlice 扁平结构无 displaySetting，使用默认值（showLineNumbers/codeBlockAutoWrap 均为 false）
   const displaySetting: { showLineNumbers?: boolean; codeBlockAutoWrap?: boolean } = {};
-  const processedContent = React.useMemo(() => preProcess(content), [content]);
+  // v0.5.4: 使用 useDeferredValue 延迟 Markdown 解析，避免流式高频更新阻塞主线程
+  // 等价 rikkahub 的 mapLatest + flowOn(Dispatchers.Default) 后台解析模式
+  // 流式期间 content 高频变化时，React 优先处理 UI 交互，空闲时才解析 Markdown
+  const deferredContent = React.useDeferredValue(content);
+  const processedContent = React.useMemo(() => preProcess(deferredContent), [deferredContent]);
   const handlePreviewCode = React.useCallback(
     (language: string, code: string) => {
       if (!allowCodePreview || !workbench) return;

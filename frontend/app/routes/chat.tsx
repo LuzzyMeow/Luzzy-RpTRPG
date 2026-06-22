@@ -112,6 +112,16 @@ export default function ChatPage() {
   const createBranch = useAppStore((s) => s.createBranch);
   const switchRetryVersion = useAppStore((s) => s.switchRetryVersion);
 
+  // v0.5.4: 组件卸载时中止生成请求，避免向已卸载组件写入状态
+  React.useEffect(() => {
+    return () => {
+      const { abortController, stopGenerating: stop } = useAppStore.getState();
+      if (abortController) {
+        stop();
+      }
+    };
+  }, []);
+
   // 初始化：加载会话列表 + 确保默认角色"鹿溪"存在 + 恢复上次会话状态
   React.useEffect(() => {
     void loadSessions().then(() => {

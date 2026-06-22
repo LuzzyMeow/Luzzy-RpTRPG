@@ -10,8 +10,8 @@
 import type { StateCreator } from "zustand";
 import { v4 as uuidv4 } from "uuid";
 
-import type { Character } from "~/types/luzzy";
-import { getItem, setItem, removeItem } from "~/services/storage";
+import type { Character, WorldInfoEntry, RegexScriptGroup } from "~/types/luzzy";
+import { getItem, setItem, removeItem, getAllKeys } from "~/services/storage";
 import {
   LUXI_CHARACTER_NAME,
   LUXI_CHARACTER_PERSONALITY,
@@ -203,6 +203,106 @@ export const createCharacterSlice: StateCreator<
       await removeItem("chatHistory", uuid);
     } catch (e) {
       console.error("[CharacterSlice] 清理聊天记录失败:", e);
+    }
+
+    // v0.5.4: 级联删除 6 类关联数据，每类独立 try/catch 避免相互影响
+    // 1. 删除 store 中的关联会话（sessions）
+    try {
+      const sessions = get().sessions ?? [];
+      const charSessions = sessions.filter((s) => s.characterId === uuid);
+      if (charSessions.length > 0) {
+        set((state) => ({
+          sessions: state.sessions.filter((s) => s.characterId !== uuid),
+          currentSessionId:
+            charSessions.some((s) => s.id === state.currentSessionId)
+              ? null
+              : state.currentSessionId,
+        }));
+        await get().saveSessions?.();
+      }
+    } catch (e) {
+      console.error("[CharacterSlice] 清理关联会话失败:", e);
+    }
+
+    // 2. 删除向量记忆分片（vector_memory_{uuid} 和 vector_memory_{uuid}_{sessionId}）
+    try {
+      const allKeys = await getAllKeys("memory");
+      const prefix = `vector_memory_${uuid}`;
+      for (const key of allKeys) {
+        const keyStr = String(key);
+        if (keyStr === prefix || keyStr.startsWith(`${prefix}_`)) {
+          await removeItem("memory", keyStr);
+        }
+      }
+    } catch (e) {
+      console.error("[CharacterSlice] 清理向量记忆分片失败:", e);
+    }
+
+    // 3. 删除长期记忆（long_term_memory_{uuid}）
+    try {
+      await removeItem("memory", `long_term_memory_${uuid}`);
+    } catch (e) {
+      console.error("[CharacterSlice] 清理长期记忆失败:", e);
+    }
+
+    // 4. 删除世界书条目（bookId === uuid）
+    try {
+      const allWorldInfo = await getItem<WorldInfoEntry[]>("worldInfo", "worldInfo");
+      if (allWorldInfo && allWorldInfo.length > 0) {
+        const filtered = allWorldInfo.filter((e) => e.bookId !== uuid);
+        if (filtered.length !== allWorldInfo.length) {
+          await setItem("worldInfo", "worldInfo", filtered);
+        }
+      }
+    } catch (e) {
+      console.error("[CharacterSlice] 清理世界书条目失败:", e);
+    }
+
+    // 5. 删除正则脚本组（id.startsWith("{uuid}-regexgrp-")）
+    try {
+      const allRegexGroups = await getItem<RegexScriptGroup[]>("regexScripts", "regexGroups");
+      if (allRegexGroups && allRegexGroups.length > 0) {
+        const prefix = `${uuid}-regexgrp-`;
+        const filtered = allRegexGroups.filter((g) => !g.id.startsWith(prefix));
+        if (filtered.length !== allRegexGroups.length) {
+          await setItem("regexScripts", "regexGroups", filtered);
+        }
+      }
+    } catch (e) {
+      console.error("[CharacterSlice] 清理正则脚本组失败:", e);
+    }
+
+    // 6. 从知识库/技能/内置工具的 enabledForCharacters 中移除 uuid
+    try {
+      // 知识库
+      const knowledgeBases = get().knowledgeBases ?? [];
+      if (knowledgeBases.some((kb) => (kb.enabledForCharacters ?? []).includes(uuid))) {
+        const updated = knowledgeBases.map((kb) => ({
+          ...kb,
+          enabledForCharacters: (kb.enabledForCharacters ?? []).filter((id) => id !== uuid),
+        }));
+        get().setKnowledgeBases?.(updated);
+      }
+      // 技能
+      const skills = get().skills ?? [];
+      if (skills.some((s) => (s.enabledForCharacters ?? []).includes(uuid))) {
+        const updated = skills.map((s) => ({
+          ...s,
+          enabledForCharacters: (s.enabledForCharacters ?? []).filter((id) => id !== uuid),
+        }));
+        get().setSkills?.(updated);
+      }
+      // 内置工具配置
+      const builtinToolConfigs = get().builtinToolConfigs ?? [];
+      if (builtinToolConfigs.some((t) => (t.enabledForCharacters ?? []).includes(uuid))) {
+        const updated = builtinToolConfigs.map((t) => ({
+          ...t,
+          enabledForCharacters: (t.enabledForCharacters ?? []).filter((id) => id !== uuid),
+        }));
+        get().setBuiltinToolConfigs?.(updated);
+      }
+    } catch (e) {
+      console.error("[CharacterSlice] 清理 UI 模板绑定失败:", e);
     }
   },
 

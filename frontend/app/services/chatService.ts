@@ -146,6 +146,11 @@ const COT_OUTPUT_PROTOCOL = `<cot_output_protocol>
 其中 callLabel 为工具调用标签（见系统提示末尾"可用工具"列表），query 为查询内容。
 工具调用标签必须独占一行，且位于 </cot> 标签之前。
 模型可调用工具列表将在系统提示末尾"可用工具"部分列出（若无可省略）。
+
+【reasoning_content 字段兼容 - 可选】
+注意：如果你的推理框架使用 reasoning_content 字段输出思考过程，
+可以不在 content 字段中使用 <cot> 标签，系统会自动从 reasoning 中提取思考内容。
+此情况下 content 字段仅输出正文即可。
 </cot_output_protocol>`;
 
 /**

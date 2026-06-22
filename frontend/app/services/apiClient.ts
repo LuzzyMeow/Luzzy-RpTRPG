@@ -744,6 +744,12 @@ const sendStreamRequestViaXHR = (
     let settled = false;
     let chunkError: Error | null = null;
     let onAbort: (() => void) | null = null;
+    // v0.5.4: 异步处理标志，防止 onprogress 重入导致并发处理
+    let isProcessing = false;
+    // v0.5.4: 待处理的增量数据队列，onprogress 触发时入队，异步处理器消费
+    let pendingChunks: string[] = [];
+    // v0.5.4: onload 完成标志，用于 processIncrementalAsync 退出时处理残留
+    let isLoadComplete = false;
 
     const safeResolve = (value: StreamRequestResult): void => {
       if (settled) return;
@@ -758,96 +764,12 @@ const sendStreamRequestViaXHR = (
       reject(reason);
     };
 
-    // 处理增量数据：从 responseText 提取新增部分，按 SSE 行解析
-    const processIncremental = (): void => {
-      let fullText: string;
-      try {
-        fullText = xhr.responseText || '';
-      } catch {
-        return;
-      }
-      if (fullText.length <= receivedLength) return;
-      const newChunk = fullText.substring(receivedLength);
-      receivedLength = fullText.length;
-
-      buffer += newChunk;
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (!trimmedLine) continue;
-        if (!trimmedLine.startsWith('data:')) continue;
-        const dataStr = trimmedLine.replace(/^data:\s*/, '');
-        if (dataStr === '[DONE]') continue;
-        let parsed: Record<string, unknown>;
-        try {
-          parsed = JSON.parse(dataStr);
-        } catch {
-          continue; // 非 JSON，忽略（可能是注释行或心跳）
-        }
-        try {
-          console.log('[SSE chunk]', Date.now(), JSON.stringify(parsed).slice(0, 80));
-          onChunk(dataStr, parsed);
-        } catch (e) {
-          // onChunk 抛出错误（如 API 错误），中止请求并 reject
-          chunkError = e instanceof Error ? e : new Error(String(e));
-          try {
-            xhr.abort();
-          } catch {
-            /* 忽略 */
-          }
-          return;
-        }
-      }
-    };
-
-    xhr.onprogress = (): void => {
-      if (chunkError) return;
-      try {
-        const newText = xhr.responseText.substring(receivedLength);
-        if (newText.length > 0) {
-          console.log('[XHR Stream] onprogress chunk:', newText.length, 'bytes, total:', xhr.responseText.length);
-          processIncremental();
-        }
-      } catch (e) {
-        console.warn('[XHR Stream] onprogress 处理异常:', e);
-      }
-    };
-
-    xhr.onload = (): void => {
-      // 处理最后可能残留的 buffer（仅当无 chunkError 时）
-      if (!chunkError) {
-        try {
-          processIncremental();
-          // 处理 buffer 中剩余的最后一行
-          if (buffer.trim()) {
-            const trimmedLine = buffer.trim();
-            if (trimmedLine.startsWith('data:')) {
-              const dataStr = trimmedLine.replace(/^data:\s*/, '');
-              if (dataStr !== '[DONE]') {
-                try {
-                  const parsed = JSON.parse(dataStr);
-                  onChunk(dataStr, parsed);
-                } catch (e) {
-                  if (e instanceof Error && !(e instanceof SyntaxError)) {
-                    chunkError = e;
-                  }
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('[XHR Stream] onload 处理异常:', e);
-        }
-      }
-
-      // 优先处理 onChunk 抛出的错误
+    // v0.5.4: onload 最终处理函数，提取为独立函数以支持异步路径调用
+    const finalizeLoad = (): void => {
       if (chunkError) {
         safeReject(chunkError);
         return;
       }
-
       const status = xhr.status;
       const ok = status >= 200 && status < 300;
       if (!ok) {
@@ -857,6 +779,158 @@ const sendStreamRequestViaXHR = (
         return;
       }
       safeResolve({ status, ok: true });
+    };
+
+    // v0.5.4: 处理单行 SSE 数据，返回是否发生错误
+    const processLine = (line: string): boolean => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) return true;
+      if (!trimmedLine.startsWith('data:')) return true;
+      const dataStr = trimmedLine.replace(/^data:\s*/, '');
+      if (dataStr === '[DONE]') return true;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(dataStr);
+      } catch {
+        return true; // 非 JSON，忽略（可能是注释行或心跳）
+      }
+      try {
+        onChunk(dataStr, parsed);
+      } catch (e) {
+        // onChunk 抛出错误（如 API 错误），中止请求并 reject
+        chunkError = e instanceof Error ? e : new Error(String(e));
+        try {
+          xhr.abort();
+        } catch {
+          /* 忽略 */
+        }
+        return false;
+      }
+      return true;
+    };
+
+    // v0.5.4: 异步处理增量数据，每 10 行让出主线程一次，允许浏览器重绘
+    // 解决 Android XHR onprogress 批量触发导致"一下子全部蹦出来"的问题
+    const processIncrementalAsync = async (): Promise<void> => {
+      if (isProcessing) return;
+      isProcessing = true;
+
+      while (pendingChunks.length > 0 && !chunkError && !settled) {
+        const newChunk = pendingChunks.shift()!;
+        buffer += newChunk;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (let i = 0; i < lines.length; i++) {
+          if (signal?.aborted) {
+            isProcessing = false;
+            return;
+          }
+          const ok = processLine(lines[i]);
+          if (!ok) {
+            isProcessing = false;
+            return;
+          }
+          // v0.5.4: 每 10 行让出主线程一次，允许浏览器在 chunk 之间重绘 UI
+          // 这是流式输出的关键——避免同步 burst 导致 16ms 节流失效
+          if (i % 10 === 9) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          }
+        }
+      }
+      isProcessing = false;
+
+      // v0.5.4: 如果 onload 已完成，处理残留 buffer 并 finalizeLoad
+      // 避免 onload 与 processIncrementalAsync 的 buffer 共享竞争
+      if (isLoadComplete && !settled && !chunkError) {
+        processBufferSync();
+        finalizeLoad();
+      }
+    };
+
+    // v0.5.4: 同步处理残留 buffer（用于 onload 最终处理）
+    const processBufferSync = (): void => {
+      if (buffer.trim()) {
+        const trimmedLine = buffer.trim();
+        buffer = '';
+        if (trimmedLine.startsWith('data:')) {
+          const dataStr = trimmedLine.replace(/^data:\s*/, '');
+          if (dataStr !== '[DONE]') {
+            try {
+              const parsed = JSON.parse(dataStr);
+              // v0.5.4: onChunk 抛错时设置 chunkError（修复 C-1：原实现静默吞错）
+              try {
+                onChunk(dataStr, parsed);
+              } catch (e) {
+                chunkError = e instanceof Error ? e : new Error(String(e));
+              }
+            } catch {
+              /* 忽略 JSON 解析错误 */
+            }
+          }
+        }
+      }
+    };
+
+    xhr.onprogress = (): void => {
+      if (chunkError) return;
+      try {
+        const fullText = xhr.responseText || '';
+        if (fullText.length <= receivedLength) return;
+        const newChunk = fullText.substring(receivedLength);
+        receivedLength = fullText.length;
+        if (newChunk.length > 0) {
+          // v0.5.4: 入队待处理数据，触发异步处理
+          pendingChunks.push(newChunk);
+          void processIncrementalAsync();
+        }
+      } catch (e) {
+        console.warn('[XHR Stream] onprogress 处理异常:', e);
+      }
+    };
+
+    xhr.onload = (): void => {
+      // v0.5.4: 处理最后可能残留的增量数据
+      if (!chunkError) {
+        try {
+          const fullText = xhr.responseText || '';
+          if (fullText.length > receivedLength) {
+            const newChunk = fullText.substring(receivedLength);
+            receivedLength = fullText.length;
+            pendingChunks.push(newChunk);
+          }
+        } catch (e) {
+          console.warn('[XHR Stream] onload 处理异常:', e);
+        }
+      }
+
+      // v0.5.4: 如果异步处理仍在进行，设置 isLoadComplete 并返回
+      // processIncrementalAsync 会在退出时处理残留 buffer 并调用 finalizeLoad
+      // 避免 onload 与 processIncrementalAsync 的 buffer 共享竞争（修复 B-2）
+      if (isProcessing) {
+        isLoadComplete = true;
+        return;
+      }
+
+      // v0.5.4: 异步处理已完成，同步处理剩余数据
+      if (!chunkError) {
+        try {
+          while (pendingChunks.length > 0) {
+            const chunk = pendingChunks.shift()!;
+            buffer += chunk;
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+            for (const line of lines) {
+              if (!processLine(line)) break;
+            }
+          }
+          processBufferSync();
+        } catch (e) {
+          console.warn('[XHR Stream] onload 残留处理异常:', e);
+        }
+      }
+
+      finalizeLoad();
     };
 
     xhr.onerror = (): void => {
@@ -968,9 +1042,11 @@ const sendStreamRequestViaFetch = async (
       // JSON 解析失败，尝试作为 SSE 文本解析
     }
     if (!parsedAsJson) {
+      // v0.5.4: SSE 文本解析改为分批处理，每 10 行让出主线程一次，模拟流式效果
       const lines = rawText.split('\n');
-      for (const line of lines) {
-        const trimmedLine = line.trim();
+      for (let i = 0; i < lines.length; i++) {
+        if (signal?.aborted) break;
+        const trimmedLine = lines[i].trim();
         if (!trimmedLine.startsWith('data:')) continue;
         const dataStr = trimmedLine.replace(/^data:\s*/, '');
         if (dataStr === '[DONE]') continue;
@@ -985,6 +1061,10 @@ const sendStreamRequestViaFetch = async (
             onError?.(response.status, dataStr);
             throw new Error(formatApiErrorMessage(response.status, dataStr));
           }
+        }
+        // v0.5.4: 每 10 行让出主线程一次，允许浏览器重绘
+        if (i % 10 === 9) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
       }
     }
@@ -1003,6 +1083,8 @@ const sendStreamRequestViaFetch = async (
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
       for (const line of lines) {
+        // v0.5.4: fetch 流式路径添加 abort 检查（修复 E-3）
+        if (signal?.aborted) break;
         const trimmedLine = line.trim();
         if (!trimmedLine) continue;
         if (!trimmedLine.startsWith('data:')) continue;
@@ -1016,9 +1098,10 @@ const sendStreamRequestViaFetch = async (
           onChunk(dataStr, parsed);
         } catch (e) {
           if (e instanceof ApiError) throw e;
-          if (/error/i.test(dataStr)) {
+          // v0.5.4: 修复 E-1，改用结构化错误检测替代 /error/i 正则误报
+          if (e instanceof Error && e.message.includes('API Error')) {
             onError?.(response.status, dataStr);
-            throw new Error(formatApiErrorMessage(response.status, dataStr));
+            throw e;
           }
           console.warn('Error parsing stream chunk:', e);
         }

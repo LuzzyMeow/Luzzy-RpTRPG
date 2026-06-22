@@ -8,7 +8,7 @@
 > 
 > *Every conversation feels like opening a fresh role-playing novel.*
 
-[![Version](https://img.shields.io/badge/version-v0.5.1-9d4edd?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.5.4-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -114,7 +114,7 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.5.0-debug.apk`
+📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.5.4-debug.apk`
 
 ---
 
@@ -142,6 +142,12 @@ RP-Hub/
 ---
 
 ## 📰 最新动态 · What's New
+
+### v0.5.4
+
+流式输出深度修复：解决 Android 平台"一次性全部蹦出"问题。新增 XHR 异步队列处理（pendingChunks + 每 10 行让出主线程）、React.memo 避免全量重渲染、useDeferredValue 延迟 Markdown 解析（等价 rikkahub 的 mapLatest + flowOn(Default) 后台解析模式）、parseThinkingSteps 始终缓存。三请求架构修复：world-recall enabled 过滤、embedding 懒加载、abort 生命周期、parseCot reasoning 字段兼容。角色卡删除级联清理 6 类关联数据。
+
+> Deep fix for streaming output: resolves Android "all-at-once" issue. Adds XHR async queue processing (pendingChunks + yield main thread every 10 lines), React.memo to prevent full re-renders, useDeferredValue for deferred Markdown parsing (equivalent to rikkahub's mapLatest + flowOn(Default)), and always-on parseThinkingSteps cache. Three-request architecture fixes: world-recall enabled filter, embedding lazy-load, abort lifecycle, parseCot reasoning field compatibility. Character card deletion now cascades to clean 6 categories of related data.
 
 ### v0.5.0
 

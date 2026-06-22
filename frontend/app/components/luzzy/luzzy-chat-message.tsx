@@ -379,8 +379,8 @@ function TranslationCard({
   );
 }
 
-/** LUZZY 聊天消息 */
-export function LuzzyChatMessage({
+/** LUZZY 聊天消息（内部实现，通过 React.memo 导出） */
+function LuzzyChatMessageImpl({
   message,
   avatarUrl,
   avatarName,
@@ -515,9 +515,14 @@ export function LuzzyChatMessage({
             hasError && "border-2 border-destructive",
           )}
           style={
-            highlightSettings.enabled && !isUser
-              ? { "--luzzy-highlight-color": highlightSettings.color } as React.CSSProperties
-              : undefined
+            {
+              // v0.5.4: 流式生成期间禁用文本选择，避免内容追加导致选区错乱
+              // 借鉴 rikkahub 的 SelectionContainer 禁用模式
+              userSelect: message.loading ? 'none' : 'text',
+              ...(highlightSettings.enabled && !isUser
+                ? { "--luzzy-highlight-color": highlightSettings.color } as React.CSSProperties
+                : {}),
+            } as React.CSSProperties
           }
         >
           {isLoading ? (
@@ -722,3 +727,40 @@ export function LuzzyChatMessage({
     </motion.div>
   );
 }
+
+/**
+ * v0.5.4: React.memo 包裹的 LuzzyChatMessage
+ * 自定义比较函数：仅当消息内容、生成状态、是否最后一条变化时才重渲染
+ * 避免流式更新时整个消息列表全量重渲染
+ */
+export const LuzzyChatMessage = React.memo(
+  LuzzyChatMessageImpl,
+  (prev, next) => {
+    // 消息 ID 不同则必须重渲染
+    if (prev.message.id !== next.message.id) return false;
+    // 消息内容变化则重渲染
+    if (prev.message.content !== next.message.content) return false;
+    if (prev.message.cot !== next.message.cot) return false;
+    if (prev.message.loading !== next.message.loading) return false;
+    if (prev.message.error !== next.message.error) return false;
+    // agentSteps 引用变化则重渲染（流式更新时每次新建数组）
+    if (prev.message.agentSteps !== next.message.agentSteps) return false;
+    // v0.5.4: 补充遗漏字段，避免 UI 不更新
+    if (prev.message.translatedContent !== next.message.translatedContent) return false;
+    if (prev.message.translationLanguage !== next.message.translationLanguage) return false;
+    if (prev.message.memoryRecalls !== next.message.memoryRecalls) return false;
+    if (prev.message.tokenUsage !== next.message.tokenUsage) return false;
+    if (prev.message.role !== next.message.role) return false;
+    // 生成状态变化则重渲染
+    if (prev.isGenerating !== next.isGenerating) return false;
+    if (prev.isLast !== next.isLast) return false;
+    // 头像变化则重渲染
+    if (prev.avatarUrl !== next.avatarUrl) return false;
+    if (prev.avatarName !== next.avatarName) return false;
+    // 重试版本变化则重渲染
+    if (prev.retryVersionCount !== next.retryVersionCount) return false;
+    if (prev.retryCurrentIndex !== next.retryCurrentIndex) return false;
+    // 其余情况跳过重渲染
+    return true;
+  }
+);
