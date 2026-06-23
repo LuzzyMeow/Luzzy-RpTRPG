@@ -34,6 +34,16 @@ rikkahub 是 Kotlin/Compose Android 原生应用，与 RP-Hub（TypeScript/React
 - **D1 — parseCot 处理 reasoning 字段**（`chat-slice.ts`）：对 `accumulatedReasoning` 调用 `parseCot`，与 content 的 cot 合并，解决 GLM-5.2 等推理型模型将 CoT 放在 reasoning_content 字段的问题
 - **D2 — COT_OUTPUT_PROTOCOL reasoning 兼容**（`chatService.ts`）：协议末尾增加 reasoning_content 字段兼容说明，告知模型可不在 content 中使用 `<cot>` 标签
 
+### 🔧 三请求架构完美修复（日志溯源 — 4 大结构性缺陷）
+
+> 通过用户日志 `LUZZY-logs-2026-06-23T03-42-39` 溯源定位：请求2(cot)首chunk延迟34秒、cot停在75字符空转1000+条日志、请求1返回的620字正文窜入气泡。根因为三请求共享同一 contextMessages + 输出写入不区分阶段 + CoT提取依赖标签。
+
+- **缺陷A — 请求间结果传递**（`chat-slice.ts`）：请求1的工具决策结果（`NO_TOOLS` 或 `tool_calls` 摘要）此前从未注入后续请求上下文，请求2/3完全看不到请求1发生了什么。修复：请求1完成后将规范化决策作为 `<tool_decision>` assistant 消息追加到 contextMessages，请求2/3即可见
+- **缺陷B — phase=tool 输出隔离**（`chat-slice.ts`）：此前 `phase !== "cot"` 的二分逻辑使 `phase=tool` 走 else 分支，将请求1返回的 `NO_TOOLS\n\n---\n正文` 直接写入 `message.content` 气泡。修复：流式/非流式/最终态三处写入逻辑改为 `tool`/`cot`/`main` 三分支严格隔离，`phase=tool` 仅更新 agentSteps，绝不触碰 content/cot
+- **缺陷C — CoT reasoning 直接显示**（`chat-slice.ts`）：此前对 `reasoning_content` 字段仍调用 `parseCot` 找 `<cot>` 标签，但 API 通过 reasoning 返回的思考链是纯文本无标签，仅模型偶尔自发加标签的前75字符被提取，其余被当 `main` 丢弃。修复：`phase=cot` 时 `accumulatedReasoning` 直接作为 cot 显示（兼容回退：reasoning 为空时用 parseCot 提取 content 中的标签），思考卡片实现真正逐字流式
+- **缺陷D — CoT 阶段设定隔离说明**（`chatService.ts`）：请求2的角色设定/世界书段落此前无隔离说明，模型易混淆用途直接据此生成正文。修复：`phase=2` 时在 `[Character]` 和 `[World Info]` 段落前追加 `[以下设定内容仅为你的 CoT 推理参考素材，本阶段你只输出思考链，不输出正文]` 头部说明
+- **提示词阶段独立性强化**（`chatService.ts`）：`TOOL_DECISION_PROMPT` 新增"不要续写对话"明确禁止模型作为角色输出正文；`COT_OUTPUT_PROTOCOL` 重写为"本阶段唯一任务"开头，明确告知模型处于第2阶段、正文将在第3阶段独立生成，优先推荐 reasoning_content 字段输出（方式A），content 标签为备选（方式B）
+
 ### 🗑️ 数据完整性
 
 - **B1 — 组件卸载中止生成**（`chat.tsx`）：unmount cleanup useEffect 中检查 `abortController`，存在则调用 `stop()` 中止生成

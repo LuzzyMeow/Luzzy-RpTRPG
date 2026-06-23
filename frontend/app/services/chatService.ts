@@ -108,49 +108,37 @@ export interface BuildContextResult {
  * 兼容 LUXI_PROMPT 的 5 步框架：模型根据当前角色选择 Step 数量。
  */
 const COT_OUTPUT_PROTOCOL = `<cot_output_protocol>
-【输出格式强制要求 - 思考链协议】
-在每次回复的正文之前，你必须先输出完整的思考链，严格遵循以下格式：
+【本阶段唯一任务 — CoT 思考链生成】
+你正处于三请求架构的第 2 阶段。本阶段你只需要输出思考链，不需要也不允许输出正文回复。
+正文将在第 3 阶段由独立的请求生成，届时你会有完整的上下文。
+请专注于深度推理，不要急于组织最终回复文本。
 
+【输出格式强制要求 - 思考链协议】
+你可以通过以下两种方式之一输出思考链：
+
+方式 A（推荐）：直接在 reasoning_content 字段输出思考链
+- 你的推理过程直接在思考字段中展开，系统会自动捕获并逐字流式显示
+- content 字段留空或仅输出占位符即可
+- 此方式下思考链可以完整逐字流式显示，无需标签包裹
+
+方式 B：在 content 字段使用 <cot> 标签
 1. 以 <cot> 标签开始思考链
 2. 按系统预设中定义的 Step 顺序，逐一输出每个步骤的思考内容
 3. 每个 Step 必须以 **Step N：步骤标题** 格式开头（N 为步骤编号，与预设中的 Step 编号对应）
 4. 每个 Step 之间必须用空行（双换行 \\n\\n）分隔，确保每个 Step 独立成段
 5. 所有 Step 输出完毕后，必须以 </cot> 标签关闭思考链
-6. 在 </cot> 之后立即输出正文，无任何过渡文本、无元评论、无道歉
+6. 不要在思考链后输出正文（本阶段不生成正文）
 
-输出示例：
-<cot>
-**Step 1：宇宙声明与认知隔离**
-[此处输出 Step1 的具体思考内容]
-
-**Step 2：核心指令加载**
-[此处输出 Step2 的具体思考内容]
-
-...（依此类推，输出预设中定义的所有 Step）
-
-**Step 14：最终执行锁**
-[此处输出 Step14 的具体思考内容]
-</cot>
-[此处直接输出正文，无任何过渡]
-
-强制规则：
-- 思考链内容对用户不可见，仅用于你的内部推理，不影响正文生成质量
-- 所有角色（含鹿溪）统一按 LUZZY 预设的 14 步框架输出（Step 1-14）
+思考链内容要求：
+- 深度分析当前情境、角色状态、可能的剧情走向
+- 所有角色（含鹿溪）统一按 LUZZY 预设的框架输出（Step 1-14）
 - 必须输出完整的所有 Step，不得跳过、合并或缩写
-- <cot> 开始标签和 </cot> 结束标签都必须出现，否则正文无法正常显示
-- 每个 Step 的标题必须与预设中的 Step 标题完全一致
+- 上述角色设定、世界书内容仅作为你推理的参考素材，本阶段不据此生成正文
 
-【工具调用协议 - 可选】
-在思考链输出过程中，若需要调用工具获取信息（如记忆、世界书、联网搜索等），在对应 Step 内输出以下格式的工具调用标签：
-<callLabel:query>
-其中 callLabel 为工具调用标签（见系统提示末尾"可用工具"列表），query 为查询内容。
-工具调用标签必须独占一行，且位于 </cot> 标签之前。
-模型可调用工具列表将在系统提示末尾"可用工具"部分列出（若无可省略）。
-
-【reasoning_content 字段兼容 - 可选】
-注意：如果你的推理框架使用 reasoning_content 字段输出思考过程，
-可以不在 content 字段中使用 <cot> 标签，系统会自动从 reasoning 中提取思考内容。
-此情况下 content 字段仅输出正文即可。
+【reasoning_content 字段优先】
+如果你的推理框架支持 reasoning_content 字段，优先使用方式 A。
+思考链内容将自动从 reasoning 字段提取，无需 <cot> 标签。
+此情况下 content 字段仅输出简短占位符（如 "（思考中...）"）即可。
 </cot_output_protocol>`;
 
 /**
@@ -161,15 +149,20 @@ const COT_OUTPUT_PROTOCOL = `<cot_output_protocol>
  */
 const TOOL_DECISION_PROMPT = `<tool_decision_phase>
 【本阶段唯一任务 — 工具决策】
-根据对话上下文判断是否需要调用外部工具获取信息（如记忆检索、世界书搜索、联网搜索等）。
+你正处于三请求架构的第 1 阶段。你的唯一职责是：根据对话上下文判断是否需要调用外部工具获取信息。
+不要输出任何角色扮演内容、正文回复、思考过程或解释——这些将在后续阶段处理。
 
 如果需要调用工具，严格按以下格式输出（多个工具用竖线 | 分隔）：
 <tool_calls>工具名:查询关键词|工具名2:查询关键词2</tool_calls>
 
 如果不需要任何工具，仅回复一个词：NO_TOOLS
 
-禁止输出任何思考过程、角色扮演内容、正文或解释。
-可用工具列表见下方 <available_tools> 部分。
+【重要：不要续写对话】
+上方的历史消息仅供你理解对话进展和判断工具需求。
+绝对不要作为角色续写回复内容，绝对不要输出任何正文。
+你的输出只能是工具调用标签或 NO_TOOLS，不得包含其他任何文本。
+
+可用工具列表见下方 <available_tools> 部分（若无则为无可用工具，直接回复 NO_TOOLS）。
 </tool_decision_phase>`;
 
 /** extractMemory 参数 */
@@ -569,10 +562,17 @@ export const buildContext = async (
     systemPromptParts.push(presetContents);
   }
 
+  // v0.5.5-arch-fix: phase=2（CoT 阶段）时，角色设定/世界书段落加隔离说明
+  // 明确告知模型：下列设定内容仅为 CoT 推理的参考素材，本阶段不输出正文
+  const isCotPhase = phase === 2;
+  const cotReferenceHeader = isCotPhase
+    ? '[以下设定内容仅为你的 CoT 推理参考素材，本阶段你只输出思考链，不输出正文]\n'
+    : '';
+
   // 3.2 世界书条目（常驻 + 关键词触发）
   if (triggeredWorldInfo.length > 0) {
     systemPromptParts.push(
-      `[World Info]\n${joinWorldInfoContent(triggeredWorldInfo)}`,
+      `${cotReferenceHeader}[World Info]\n${joinWorldInfoContent(triggeredWorldInfo)}`,
     );
   }
 
@@ -587,7 +587,7 @@ export const buildContext = async (
   // 3.4 角色定义
   if (character) {
     const charPrompt = `Name: ${character.name}\nPersonality: ${character.personality}\nScenario: ${character.scenario}`;
-    const charParts: string[] = ['[Character]', charPrompt];
+    const charParts: string[] = [`${cotReferenceHeader}[Character]`, charPrompt];
     if (character.mesExample && character.mesExample.trim()) {
       charParts.push(character.mesExample);
     }

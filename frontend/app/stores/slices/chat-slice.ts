@@ -710,25 +710,40 @@ export const createChatSlice: StateCreator<
                 }
               }
 
-              // v0.3.6: updateMessage 节流（最少 60ms 间隔），避免高频更新导致 UI 卡顿
-              // v0.3.7: 间隔从 60ms 降至 30ms，提升流式输出流畅度（约 33fps）
-              // v0.4.1: 降至 16ms(约 60fps),实现逐字流式输出
+              // v0.5.5-arch-fix: phase 感知的写入逻辑——三阶段严格隔离
+              // - phase=tool: 工具决策阶段，仅更新 agentSteps，绝不写 message.content（避免正文窜入气泡）
+              // - phase=cot: CoT 思考链阶段，reasoning 直接作为 cot 显示（不再过 parseCot 标签提取）
+              //              这样 reasoning_content 字段的全部内容都能逐字流式显示
+              // - phase=main: 正文阶段，写 message.content 气泡
               const now = Date.now();
-              // v0.4.6: 流式诊断日志（记录每次 updateMessage 调用）
               const willUpdate = (now - lastUpdateTick >= 16 || hasClosingTag);
               if (willUpdate) {
                 logger.debug("stream", `update: phase=${phase} cot=${finalCot.length}chars content=${(cotResult?.main || "").length}chars steps=${agentSteps.length}`);
                 lastUpdateTick = now;
-                // 实时 Token 统计估算（4 字符 ≈ 1 token）
                 const elapsedMs = now - requestStartTime;
                 const estimatedTokens = Math.ceil(accumulatedContent.length / 4);
                 const tokPerSec = elapsedMs > 0 ? (estimatedTokens / (elapsedMs / 1000)) : 0;
 
-                // v0.4.1: 根据 phase 控制更新行为
-                if (phase === "cot") {
-                  // CoT 阶段: 仅更新思考卡片(cot),不更新正文(content)
+                if (phase === "tool") {
+                  // 工具决策阶段: 仅更新 agentSteps，不触碰 message.content/cot
+                  // 决策结果由外层逻辑解析处理，避免 NO_TOOLS/正文窜入气泡
                   get().updateMessage(msgId, {
-                    cot: finalCot,
+                    loading: true,
+                    tokenUsage: {
+                      promptTokens: 0,
+                      completionTokens: estimatedTokens,
+                      responseTimeMs: elapsedMs,
+                      tokPerSec: Math.round(tokPerSec * 10) / 10,
+                    },
+                    agentSteps: [...agentSteps],
+                  });
+                } else if (phase === "cot") {
+                  // CoT 阶段: reasoning 直接作为思考卡片内容（逐字流式）
+                  // v0.5.5-arch-fix: 不再依赖 parseCot 标签提取，reasoning_content 全量显示
+                  // 兼容：若 reasoning 为空但 accumulatedContent 含 <cot> 标签，回退到 parseCot 提取
+                  const cotDisplay = accumulatedReasoning || finalCot;
+                  get().updateMessage(msgId, {
+                    cot: cotDisplay,
                     loading: false,
                     tokenUsage: {
                       promptTokens: 0,
@@ -739,8 +754,7 @@ export const createChatSlice: StateCreator<
                     agentSteps: [...agentSteps],
                   });
                 } else {
-                  // 正文阶段: 更新正文气泡(content),不追加 reasoning 到 cot(避免思考内容重复)
-                  // v0.4.1-fix: 第二次请求的 reasoning 不再追加到 cot,避免与第一次 CoT 重复
+                  // 正文阶段: 更新正文气泡
                   get().updateMessage(msgId, {
                     content: cotResult.main || accumulatedContent,
                     loading: false,
@@ -804,17 +818,23 @@ export const createChatSlice: StateCreator<
             });
           }
 
-          // v0.4.1: 根据 phase 控制更新行为
-          if (phase === "cot") {
-            // CoT 阶段: 仅更新思考卡片
+          // v0.5.5-arch-fix: 非流式 phase 感知写入——三阶段隔离
+          if (phase === "tool") {
+            // 工具决策阶段: 仅更新 agentSteps，不触碰 content/cot
             get().updateMessage(msgId, {
-              cot: finalCot,
+              loading: true,
+              agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
+            });
+          } else if (phase === "cot") {
+            // CoT 阶段: reasoning 直接作为思考卡片
+            const cotDisplay = accumulatedReasoning || finalCot;
+            get().updateMessage(msgId, {
+              cot: cotDisplay,
               loading: false,
               agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
             });
           } else {
-            // 正文阶段: 更新正文气泡,不追加 reasoning 到 cot(避免思考内容重复)
-            // v0.4.1-fix: 第二次请求的 reasoning 不再追加到 cot
+            // 正文阶段: 更新正文气泡
             get().updateMessage(msgId, {
               content: cotResult.main || accumulatedContent,
               loading: false,
@@ -843,15 +863,17 @@ export const createChatSlice: StateCreator<
             accumulatedReasoning +
             (finalCotResult.cot ? "\n" + finalCotResult.cot : "")
           ).trim();
-          if (phase === "cot") {
-            // CoT 阶段: 仅更新思考卡片
+          if (phase === "tool") {
+            // 工具决策阶段: 不写 content/cot，由外层解析决策
+          } else if (phase === "cot") {
+            // CoT 阶段: reasoning 直接作为思考卡片
+            const cotDisplay = accumulatedReasoning || finalCotCombined;
             get().updateMessage(msgId, {
-              cot: finalCotCombined,
+              cot: cotDisplay,
               loading: false,
             });
           } else {
-            // 正文阶段: 更新正文气泡,不追加 reasoning 到 cot(避免思考内容重复)
-            // v0.4.1-fix: 第二次请求的 reasoning 不再追加到 cot
+            // 正文阶段: 更新正文气泡
             get().updateMessage(msgId, {
               content: finalCotResult.main || accumulatedContent,
               loading: false,
@@ -1147,6 +1169,31 @@ export const createChatSlice: StateCreator<
         logger.warn("tool", "请求1返回空响应，AI未输出任何工具决策");
       }
       if (abortController?.signal.aborted) return;
+
+      // v0.5.5-arch-fix: 缺陷A修复——请求1结果注入请求2/3上下文
+      // 三请求架构要求阶段间结果可见：请求2/3必须看到请求1的工具决策结果
+      // 将请求1的决策（NO_TOOLS 或 tool_calls 摘要）作为 assistant 消息追加到 contextMessages
+      if (toolDecisionRaw.trim()) {
+        const decisions = parseToolDecisions(toolDecisionRaw);
+        if (decisions.length > 0) {
+          const decisionSummary = decisions
+            .map(d => `${d.toolName}:${d.query}`)
+            .join("|");
+          contextMessages.push({
+            id: uuidv4(),
+            role: "assistant",
+            content: `<tool_decision>${decisionSummary}</tool_decision>`,
+            createdAt: Date.now(),
+          });
+        } else {
+          contextMessages.push({
+            id: uuidv4(),
+            role: "assistant",
+            content: "<tool_decision>NO_TOOLS</tool_decision>",
+            createdAt: Date.now(),
+          });
+        }
+      }
 
       // 请求2: CoT 思考链
       logger.info("api", "API 请求阶段2: CoT 思考链生成");
