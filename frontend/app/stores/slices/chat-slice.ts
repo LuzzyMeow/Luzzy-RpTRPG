@@ -56,7 +56,7 @@ import {
   executeActiveToolCall,
   filterToolsForCharacter,
 } from "~/services/toolService";
-import { loadVectorMemoryShards, searchVectorMemory, searchVectorMemoryWithScore, getEmbedding, cosineSimilarity } from "~/services/memoryService";
+import { loadVectorMemoryShards, searchVectorMemory, searchVectorMemoryWithScore, getEmbedding, cosineSimilarity, removeVectorMemoryShardsByTurn } from "~/services/memoryService";
 import { BUILTIN_PRESET_DEFAULTS } from "~/services/presetContent";
 import { BUILTIN_PROVIDERS } from "~/stores/slices/settings-slice";
 import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
@@ -817,22 +817,22 @@ export const createChatSlice: StateCreator<
           }
 
           // v0.5.5-arch: 非流式 phase 感知写入——三阶段隔离
+          // v0.5.5-fix: agentSteps 仅在非空时设置，避免 undefined 覆盖已有值
           if (phase === "tool") {
             get().updateMessage(msgId, {
               loading: true,
-              agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
+              ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
             });
           } else if (phase === "cot") {
-            // CoT 阶段: 仅更新 agentSteps，不写 content
             get().updateMessage(msgId, {
               loading: false,
-              agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
+              ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
             });
           } else {
             get().updateMessage(msgId, {
               content: cotResult.main || accumulatedContent,
               loading: false,
-              agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
+              ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
             });
           }
         }
@@ -863,10 +863,11 @@ export const createChatSlice: StateCreator<
               agentSteps: [...agentSteps],
             });
           } else {
-            // 正文阶段: 更新正文气泡
+            // 正文阶段: 更新正文气泡，同时保留 agentSteps
             get().updateMessage(msgId, {
               content: finalCotResult.main || accumulatedContent,
               loading: false,
+              ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
             });
           }
         }
@@ -895,7 +896,8 @@ export const createChatSlice: StateCreator<
               tokPerSec,
               cacheHitRate,
             },
-            agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
+            // v0.5.5-fix: agentSteps 仅在非空时设置，避免 undefined 覆盖已有值
+            ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
           });
         } else {
           // 无 usage 数据时，至少更新最终响应时间
@@ -911,24 +913,23 @@ export const createChatSlice: StateCreator<
               responseTimeMs: elapsedMs,
               tokPerSec,
             },
-            agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
+            ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
           });
         }
 
-        // v0.4.1: 返回 cot 字段,供第二次请求使用
-        const finalCotResult = parseCot(accumulatedContent, true);
-        // v0.5.3: 同步流式中的修复——对 reasoning 也调用 parseCot
-        const finalReasoningCotResult = accumulatedReasoning
-          ? parseCot(accumulatedReasoning, true)
-          : { cot: '', main: '', sys: '', isFinished: false };
-        const finalCotCombined = (
-          finalReasoningCotResult.cot +
-          (finalCotResult.cot ? "\n" + finalCotResult.cot : "")
-        ).trim();
+        // v0.5.5-arch: 返回 cot 字段供请求3使用
+        // phase=cot 时，accumulatedContent 就是完整的思考内容（无需 parseCot 标签提取）
+        // 同时合并 reasoning_content（如果模型同时输出了 reasoning 字段）
+        const finalCotForReturn = phase === "cot"
+          ? (accumulatedReasoning ? accumulatedReasoning + "\n" + accumulatedContent : accumulatedContent).trim()
+          : (
+              accumulatedReasoning +
+              (parseCot(accumulatedContent, true).cot ? "\n" + parseCot(accumulatedContent, true).cot : "")
+            ).trim();
         // v0.4.6: 流式诊断日志（记录请求完成状态）
-        logger.info("stream", `请求完成: phase=${phase} 总字符=${accumulatedContent.length} cot=${finalCotCombined.length}chars steps=${agentSteps.length} toolCalls=${accumulatedToolCalls.length}`);
+        logger.info("stream", `请求完成: phase=${phase} 总字符=${accumulatedContent.length} cot=${finalCotForReturn.length}chars steps=${agentSteps.length} toolCalls=${accumulatedToolCalls.length}`);
         // v0.4.4: 返回 toolCalls 字段,供外层工具调用循环使用
-        return { content: accumulatedContent, reasoning: accumulatedReasoning, cot: finalCotCombined, toolCalls: accumulatedToolCalls };
+        return { content: accumulatedContent, reasoning: accumulatedReasoning, cot: finalCotForReturn, toolCalls: accumulatedToolCalls };
       };
 
       // 3. 初始 API 调用
@@ -2323,6 +2324,20 @@ export const createChatSlice: StateCreator<
 
       const oldAssistant = messages[assistantIndex];
       const contextMessages = messages.slice(0, assistantIndex);
+
+      // v0.5.5-fix: 重试前清理 oldAssistant 对应 turn 的向量记忆分片
+      // 避免记忆召回预执行搜索到重试前的旧内容（重大bug修复）
+      const currentCharacter = get().characters?.find(c => c.id === get().currentCharacterId);
+      if (currentCharacter?.uuid) {
+        const turnNumber = contextMessages.filter(m => m.role === "user").length;
+        if (turnNumber > 0) {
+          await removeVectorMemoryShardsByTurn(
+            currentCharacter.uuid,
+            turnNumber,
+            currentSessionId ?? undefined,
+          );
+        }
+      }
 
       // 创建新的 assistant 消息
       const newAssistantMessage: ChatMessage = {

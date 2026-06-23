@@ -727,6 +727,26 @@ export const saveVectorMemoryShards = async (
   await setItem('memory', key, shards);
 };
 
+/**
+ * v0.5.5-fix: 按对话轮次删除向量记忆分片
+ *
+ * 用于消息重试场景：重试前删除 oldAssistant 对应 turn 的分片，
+ * 避免记忆召回预执行搜索到重试前的旧内容。
+ */
+export const removeVectorMemoryShardsByTurn = async (
+  characterUuid: string,
+  turnNumber: number,
+  sessionId?: string,
+): Promise<void> => {
+  if (!characterUuid || turnNumber < 1) return;
+  const existing = await loadVectorMemoryShards(characterUuid, sessionId);
+  const filtered = existing.filter((s) => s.turn !== turnNumber);
+  if (filtered.length !== existing.length) {
+    await saveVectorMemoryShards(characterUuid, filtered, sessionId);
+    logger.info("memory", `removeVectorMemoryShardsByTurn: turn=${turnNumber} 删除=${existing.length - filtered.length}个 剩余=${filtered.length}个`);
+  }
+};
+
 // ============================================================================
 // 记忆压缩
 // ============================================================================

@@ -156,7 +156,10 @@ function CotCard({
 
   // 收起时预览最后一条非空步骤标题
   const preview = React.useMemo(() => {
-    const nonToolAgentSteps = agentSteps?.filter((s) => s.type === "thinking" && s.content?.trim()) ?? [];
+    // v0.5.5-arch: 预览包含 brainstorm/cot_output/thinking 类型
+    const nonToolAgentSteps = agentSteps?.filter(
+      (s) => (s.type === "thinking" || s.type === "brainstorm" || s.type === "cot_output") && s.content?.trim()
+    ) ?? [];
     const lastThinking = nonToolAgentSteps.at(-1);
     if (lastThinking?.content) {
       return lastThinking.content.slice(0, 60) + (lastThinking.content.length > 60 ? "..." : "");

@@ -114,6 +114,31 @@ rikkahub 是 Kotlin/Compose Android 原生应用，与 RP-Hub（TypeScript/React
 
 ---
 
+### 🔧 日志溯源修复（`LUZZY-logs-2026-06-23T04-33-26`）
+
+> 通过第二轮用户日志溯源，定位 4 个残留问题并修复。
+
+#### P0 — 思考卡片消失 + 气泡显示"生成已中止"
+
+- **`finalCotCombined` 为空**（`chat-slice.ts`）：请求2（CoT阶段）返回的 `cot` 字段依赖 `parseCot` 提取 `<cot>` 标签，但模型不使用标签时为空 → 请求3不注入 CoT 上下文 → 模型异常 → 触发 AbortError → 显示"生成已中止"。修复：`phase=cot` 时直接用 `accumulatedContent`（完整输出）作为返回值，不再依赖标签提取
+- **`agentSteps: undefined` 覆盖**（`chat-slice.ts`）：5 处 `agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined` 在局部数组为空时，`undefined` 通过浅合并覆盖已有的 brainstorm/cot_output 节点。修复：改为条件展开 `...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {})`
+- **phase=main 最终更新缺 agentSteps**（`chat-slice.ts`）：正文阶段最终更新只写 content，不写 agentSteps，导致后续 usage 更新的空数组覆盖。修复：补充条件展开的 agentSteps
+- **预览过滤器不匹配新类型**（`luzzy-chat-message.tsx`）：预览过滤 `type === "thinking"` 不匹配 `brainstorm`/`cot_output`。修复：扩展过滤条件
+
+#### P0 — 重试消息仍召回旧剧情（重大bug）
+
+- **`retryMessage` 未清理向量分片**（`chat-slice.ts` + `memoryService.ts`）：重试时只做了内存中消息替换，IndexedDB 中 oldAssistant 对应的向量记忆分片未清理 → 记忆召回预执行搜索到旧内容 → 污染 newAssistant 生成。修复：`memoryService.ts` 新增 `removeVectorMemoryShardsByTurn` 函数；`retryMessage` 在调用 `generateResponse` 之前按 turn 号删除旧分片
+
+#### P1 — 请求1模型续写正文
+
+- **`TOOL_DECISION_PROMPT` 约束不足**（`chatService.ts`）：模型仍作为角色续写正文。强化提示词：新增「绝对禁止」清单 + 「重要提醒」明确告知模型不要写小说/描写场景
+
+#### P2 — 流式输出按段落批量蹦出
+
+- **让出阈值过高**（`apiClient.ts`）：Android XHR `onprogress` 批量触发时，每 10 行让出主线程导致多个 chunk 在一次重绘中渲染。修复：让出阈值从每 10 行降至每 3 行，更频繁重绘 UI
+
+---
+
 ### 🗑️ 数据完整性
 
 - **B1 — 组件卸载中止生成**（`chat.tsx`）：unmount cleanup useEffect 中检查 `abortController`，存在则调用 `stop()` 中止生成

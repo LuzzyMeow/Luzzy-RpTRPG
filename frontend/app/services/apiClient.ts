@@ -831,9 +831,9 @@ const sendStreamRequestViaXHR = (
             isProcessing = false;
             return;
           }
-          // v0.5.4: 每 10 行让出主线程一次，允许浏览器在 chunk 之间重绘 UI
-          // 这是流式输出的关键——避免同步 burst 导致 16ms 节流失效
-          if (i % 10 === 9) {
+          // v0.5.5-fix: 每 3 行让出主线程一次（从 10 降至 3），更频繁重绘 UI
+          // 缓解 Android XHR 批量触发导致的段落批量蹦出现象
+          if (i % 3 === 2) {
             await new Promise<void>((resolve) => setTimeout(resolve, 0));
           }
         }
@@ -1062,8 +1062,8 @@ const sendStreamRequestViaFetch = async (
             throw new Error(formatApiErrorMessage(response.status, dataStr));
           }
         }
-        // v0.5.4: 每 10 行让出主线程一次，允许浏览器重绘
-        if (i % 10 === 9) {
+        // v0.5.5-fix: 每 3 行让出主线程一次（从 10 降至 3），更频繁重绘 UI
+        if (i % 3 === 2) {
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
       }
