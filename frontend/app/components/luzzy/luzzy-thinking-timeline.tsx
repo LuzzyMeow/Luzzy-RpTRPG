@@ -18,6 +18,8 @@ import {
   IconSearch,
   IconClose,
   IconClock,
+  IconLight,
+  IconMessage,
 } from "~/components/luzzy/luzzy-icons";
 import type { AgentStep } from "~/types/luzzy";
 import Markdown from "~/components/markdown/markdown";
@@ -31,6 +33,32 @@ type StepStatus = "running" | "completed" | "error";
 
 interface ThinkingStep {
   type: "thinking";
+  /** 步骤标题 */
+  title: string;
+  /** 步骤内容 */
+  content: string;
+  /** 步骤状态 */
+  status: StepStatus;
+}
+
+/**
+ * v0.5.5-arch: 头脑风暴节点（来自 reasoning_content 字段）
+ */
+interface BrainstormStep {
+  type: "brainstorm";
+  /** 步骤标题 */
+  title: string;
+  /** 步骤内容 */
+  content: string;
+  /** 步骤状态 */
+  status: StepStatus;
+}
+
+/**
+ * v0.5.5-arch: CoT 输出节点（来自请求2的 content 字段）
+ */
+interface CotOutputStep {
+  type: "cot_output";
   /** 步骤标题 */
   title: string;
   /** 步骤内容 */
@@ -63,11 +91,21 @@ interface CombinedToolStep {
 }
 
 /** Timeline 步骤联合类型 */
-type TimelineStep = ThinkingStep | CombinedToolStep;
+type TimelineStep = ThinkingStep | BrainstormStep | CotOutputStep | CombinedToolStep;
 
 /** 类型守卫：判断是否为工具步骤 */
 function isToolStep(step: TimelineStep): step is CombinedToolStep {
   return (step as CombinedToolStep).type === "tool";
+}
+
+/** v0.5.5-arch: 类型守卫：判断是否为头脑风暴步骤 */
+function isBrainstormStep(step: TimelineStep): step is BrainstormStep {
+  return (step as BrainstormStep).type === "brainstorm";
+}
+
+/** v0.5.5-arch: 类型守卫：判断是否为 CoT 输出步骤 */
+function isCotOutputStep(step: TimelineStep): step is CotOutputStep {
+  return (step as CotOutputStep).type === "cot_output";
 }
 
 interface LuzzyThinkingTimelineProps {
@@ -247,21 +285,52 @@ function inferToolCategory(title: string, type?: string): CombinedToolStep["cate
 }
 
 /**
- * 合并相邻的 tool_call + tool_result 为单个 CombinedToolStep
+ * v0.5.5-arch: 合并思考步骤和 agentSteps
  *
- * v0.4.6-UI 重构：工具调用与其结果在 UI 上合并为一张卡片，避免重复节点。
- * memory_inject / knowledge_call 没有成对结果，直接转为独立工具节点。
+ * agentSteps 按 phase 和创建顺序排列，包含：
+ * - brainstorm 节点（reasoning_content，来自各请求阶段）
+ * - cot_output 节点（请求2的 content）
+ * - tool_call/tool_result/memory_inject/knowledge_call 节点
+ * 旧 thinking 节点（已废弃）和来自 cot 字符串解析的 thinkingSteps 一并合并
  */
-function mergeAgentSteps(agentSteps?: AgentStep[]): CombinedToolStep[] {
-  if (!agentSteps || agentSteps.length === 0) return [];
+function mergeSteps(
+  thinkingSteps: ThinkingStep[],
+  agentSteps?: AgentStep[],
+): TimelineStep[] {
+  if (!agentSteps || agentSteps.length === 0) {
+    return [...thinkingSteps];
+  }
 
-  const result: CombinedToolStep[] = [];
+  const result: TimelineStep[] = [];
+  const toolLikeTypes = new Set(["tool_call", "tool_result", "memory_inject", "knowledge_call"]);
   let i = 0;
   while (i < agentSteps.length) {
     const step = agentSteps[i];
-    const isToolCallLike = step.type === "tool_call";
 
-    if (isToolCallLike && i + 1 < agentSteps.length && agentSteps[i + 1].type === "tool_result") {
+    if (step.type === "brainstorm") {
+      result.push({
+        type: "brainstorm",
+        title: step.title,
+        content: step.content || "",
+        status: step.status,
+      });
+      i += 1;
+      continue;
+    }
+
+    if (step.type === "cot_output") {
+      result.push({
+        type: "cot_output",
+        title: step.title,
+        content: step.content || "",
+        status: step.status,
+      });
+      i += 1;
+      continue;
+    }
+
+    // 工具类节点：尝试合并 tool_call + tool_result
+    if (step.type === "tool_call" && i + 1 < agentSteps.length && agentSteps[i + 1].type === "tool_result") {
       const resultStep = agentSteps[i + 1];
       result.push({
         type: "tool",
@@ -277,7 +346,7 @@ function mergeAgentSteps(agentSteps?: AgentStep[]): CombinedToolStep[] {
       continue;
     }
 
-    if (step.type === "tool_call" || step.type === "tool_result" || step.type === "memory_inject" || step.type === "knowledge_call") {
+    if (toolLikeTypes.has(step.type)) {
       result.push({
         type: "tool",
         category: inferToolCategory(step.title, step.type),
@@ -293,26 +362,23 @@ function mergeAgentSteps(agentSteps?: AgentStep[]): CombinedToolStep[] {
       continue;
     }
 
-    // thinking 类型不在这里处理（由 CoT 路径渲染）
+    // 旧 thinking 类型：转为 ThinkingStep（兼容历史数据）
+    if (step.type === "thinking") {
+      result.push({
+        type: "thinking",
+        title: step.title,
+        content: step.content || "",
+        status: step.status,
+      });
+      i += 1;
+      continue;
+    }
+
     i += 1;
   }
 
-  return result;
-}
-
-/**
- * 合并 thinking 步骤和 agentSteps
- *
- * 工具步骤在前（force 预执行在 API 调用之前），思考步骤在后（CoT 在 API 调用之后生成）。
- */
-function mergeSteps(
-  thinkingSteps: ThinkingStep[],
-  agentSteps?: AgentStep[],
-): TimelineStep[] {
-  const toolSteps = mergeAgentSteps(
-    agentSteps?.filter((s) => s.type !== "thinking"),
-  );
-  return [...toolSteps, ...thinkingSteps];
+  // cot 字符串解析的 thinkingSteps 追加在末尾（兼容旧 message.cot 数据）
+  return [...result, ...thinkingSteps];
 }
 
 // ============================================================================
@@ -388,6 +454,8 @@ interface ThinkingNodeProps {
   isExpanded: boolean;
   onToggle: () => void;
   isLast: boolean;
+  /** v0.5.5-arch: 节点类型（用于区分图标和配色） */
+  nodeType?: "thinking" | "brainstorm" | "cot_output";
 }
 
 interface ToolNodeProps {
@@ -398,8 +466,35 @@ interface ToolNodeProps {
   isLast: boolean;
 }
 
-function ThinkingNode({ step, isExpanded, onToggle, isLast }: ThinkingNodeProps) {
+function ThinkingNode({ step, isExpanded, onToggle, isLast, nodeType = "thinking" }: ThinkingNodeProps) {
   const isRunning = step.status === "running";
+
+  // v0.5.5-arch: 按 nodeType 区分图标和配色
+  const nodeIconConfig = (() => {
+    switch (nodeType) {
+      case "brainstorm":
+        return {
+          icon: <IconLight className="size-3.5 text-amber-500 dark:text-amber-400" />,
+          accentClass: "border-amber-500/30 bg-amber-500/[0.03]",
+          runningAccentClass: "border-amber-500/40 bg-amber-500/[0.05]",
+          titleClass: isRunning ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+        };
+      case "cot_output":
+        return {
+          icon: <IconMessage className="size-3.5 text-violet-500 dark:text-violet-400" />,
+          accentClass: "border-violet-500/30 bg-violet-500/[0.03]",
+          runningAccentClass: "border-violet-500/40 bg-violet-500/[0.05]",
+          titleClass: isRunning ? "text-violet-600 dark:text-violet-400" : "text-muted-foreground",
+        };
+      default:
+        return {
+          icon: null,
+          accentClass: "border-border/60 hover:border-border",
+          runningAccentClass: "border-primary/30 bg-primary/[0.03]",
+          titleClass: isRunning ? "text-primary" : "text-muted-foreground",
+        };
+    }
+  })();
 
   return (
     <div className="relative w-full">
@@ -410,9 +505,7 @@ function ThinkingNode({ step, isExpanded, onToggle, isLast }: ThinkingNodeProps)
         transition={isRunning ? { duration: 0 } : { duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
         className={cn(
           "group relative w-full overflow-hidden rounded-lg border bg-card/60 p-2.5 shadow-sm backdrop-blur-sm transition-colors",
-          isRunning
-            ? "border-primary/30 bg-primary/[0.03]"
-            : "border-border/60 hover:border-border",
+          isRunning ? nodeIconConfig.runningAccentClass : nodeIconConfig.accentClass,
         )}
       >
         {/* 头部 */}
@@ -422,9 +515,10 @@ function ThinkingNode({ step, isExpanded, onToggle, isLast }: ThinkingNodeProps)
           className="flex w-full min-w-0 items-center gap-2.5 text-left"
         >
           <StatusIcon status={step.status} />
+          {nodeIconConfig.icon}
           <span className={cn(
             "min-w-0 flex-1 truncate text-xs font-medium",
-            isRunning ? "text-primary" : "text-muted-foreground",
+            nodeIconConfig.titleClass,
           )}>
             {isRunning ? "思考中..." : step.title}
           </span>
@@ -626,14 +720,23 @@ export function LuzzyThinkingTimeline({ cot, isGenerating, agentSteps }: LuzzyTh
               />
             );
           }
+          // v0.5.5-arch: brainstorm/cot_output/thinking 都用 ThinkingNode 渲染
+          // 通过 type 字段在 ThinkingNode 内部区分图标和配色
+          const thinkingLikeStep: ThinkingStep = {
+            type: "thinking",
+            title: step.title,
+            content: step.content,
+            status: step.status,
+          };
           return (
             <ThinkingNode
               key={idx}
-              step={step}
+              step={thinkingLikeStep}
               index={idx}
               isExpanded={isExpanded}
               onToggle={onToggle}
               isLast={idx === allSteps.length - 1}
+              nodeType={isBrainstormStep(step) ? "brainstorm" : isCotOutputStep(step) ? "cot_output" : "thinking"}
             />
           );
         })}

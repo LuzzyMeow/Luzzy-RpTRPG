@@ -486,14 +486,13 @@ function LuzzyChatMessageImpl({
         )}
       >
         {/* 思考链 + 工具节点统一卡片(v0.4.4: 修复两个思考卡片并存 bug) */}
-        {/* 即使 cot 为空(force 预执行阶段)也渲染 CotCard,让工具节点始终落在卡内 */}
+        {/* v0.5.5-arch: 即使 cot 为空(force 预执行阶段)也渲染 CotCard,让工具节点始终落在卡内 */}
+        {/* v0.5.5-arch: 不再过滤 thinking 类型，brainstorm/cot_output 节点由 agentSteps 直接渲染 */}
         {!isUser && (message.cot || (message.agentSteps && message.agentSteps.length > 0)) && (
           <CotCard
             cot={message.cot ?? ""}
             isGenerating={Boolean(isGenerating && isLast)}
-            agentSteps={message.agentSteps?.filter(
-              (s) => !(s.type === "thinking" && message.cot)
-            )}
+            agentSteps={message.agentSteps}
           />
         )}
 

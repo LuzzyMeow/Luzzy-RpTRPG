@@ -67,7 +67,7 @@ export interface TokenUsage {
 /** Agent 执行步骤 */
 export interface AgentStep {
   id: string;
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'memory_inject' | 'knowledge_call';
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'memory_inject' | 'knowledge_call' | 'brainstorm' | 'cot_output';
   title: string;
   content?: string;
   status: 'running' | 'completed' | 'error';

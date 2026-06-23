@@ -571,8 +571,6 @@ export const createChatSlice: StateCreator<
         // 避免第二次请求(callApiAndUpdate)覆盖第一次请求已写入的 force 预执行/记忆召回步骤
         const existingMsg = get().messages.find(m => m.id === msgId);
         const agentSteps: AgentStep[] = existingMsg?.agentSteps ? [...existingMsg.agentSteps] : [];
-        // v0.5.1: 三阶段 thinking 节点标题映射（phase 感知，不再合并覆盖）
-        const THINKING_TITLES: Record<string, string> = { tool: "工具决策分析", cot: "深度推理", main: "组织回复" };
         // v0.4.4: 累积原生 tool_calls（流式增量合并）
         const accumulatedToolCalls: Array<{
           id: string;
@@ -605,28 +603,51 @@ export const createChatSlice: StateCreator<
               if (chunk.reasoningContent) {
                 accumulatedReasoning += chunk.reasoningContent;
                 set({ isThinking: true });
-                // v0.5.1: 阶段感知的 thinking 节点——首次推理内容时创建
-                const existingPhaseThinking = agentSteps.find(
-                  (s) => s.type === "thinking" && s.phase === phaseNumber
+                // v0.5.5-arch: reasoning_content 创建「头脑风暴」节点（type=brainstorm）
+                // 每次请求的 reasoning 独立成节点，按 phase 区分，流式实时更新
+                const existingBrainstorm = agentSteps.find(
+                  (s) => s.type === "brainstorm" && s.phase === phaseNumber
                 );
-                if (!existingPhaseThinking) {
+                if (!existingBrainstorm) {
                   agentSteps.push({
                     id: uuidv4(),
-                    type: "thinking",
-                    title: THINKING_TITLES[phase] || "模型思考",
+                    type: "brainstorm",
+                    title: "头脑风暴",
                     content: accumulatedReasoning,
                     status: "running",
                     startedAt: Date.now(),
                     phase: phaseNumber,
                   });
                 } else {
-                  existingPhaseThinking.content = accumulatedReasoning;
+                  existingBrainstorm.content = accumulatedReasoning;
                 }
               }
 
               if (chunk.content) {
                 accumulatedContent += chunk.content;
                 set({ isThinking: false, isReceiving: true });
+                // v0.5.5-arch: content 按 phase 创建不同节点
+                // - phase=tool: 不创建节点（工具决策由外层解析处理）
+                // - phase=cot: 创建「CoT 输出」节点（type=cot_output），流式实时更新
+                // - phase=main: 不创建节点（正文写入气泡）
+                if (phase === "cot") {
+                  const existingCotOutput = agentSteps.find(
+                    (s) => s.type === "cot_output" && s.phase === phaseNumber
+                  );
+                  if (!existingCotOutput) {
+                    agentSteps.push({
+                      id: uuidv4(),
+                      type: "cot_output",
+                      title: "CoT 输出",
+                      content: accumulatedContent,
+                      status: "running",
+                      startedAt: Date.now(),
+                      phase: phaseNumber,
+                    });
+                  } else {
+                    existingCotOutput.content = accumulatedContent;
+                  }
+                }
               }
               // v0.4.6: phase="main" 时，reasoning_content 也计入正文
               // DeepSeek-R1 等模型在第二次请求仍输出 reasoning 而非 content
@@ -680,53 +701,25 @@ export const createChatSlice: StateCreator<
                 lastParseLength = accumulatedContent.length;
               }
               const cotResult = lastCotResult!;
-              // v0.5.3: 对 reasoning 也调用 parseCot，提取其中的 <cot> 标签内容
-              // 解决 GLM-5.2 等推理型模型将 CoT 放在 reasoning 字段的问题
-              const reasoningCotResult = accumulatedReasoning
-                ? parseCot(accumulatedReasoning, false, true)
-                : { cot: '', main: '', sys: '', isFinished: false };
-              const finalCot = (
-                reasoningCotResult.cot +
-                (cotResult.cot ? "\n" + cotResult.cot : "")
-              ).trim();
-
-              // v0.5.1: 三阶段 thinking 节点独立——按 phase 匹配，不再覆盖不同阶段的思考内容
-              if (finalCot) {
-                const existingPhaseThinking = agentSteps.find(
-                  (s) => s.type === "thinking" && s.phase === phaseNumber
-                );
-                if (!existingPhaseThinking) {
-                  agentSteps.push({
-                    id: uuidv4(),
-                    type: "thinking",
-                    title: THINKING_TITLES[phase] || "模型思考",
-                    content: finalCot,
-                    status: "running",
-                    startedAt: Date.now(),
-                    phase: phaseNumber,
-                  });
-                } else {
-                  existingPhaseThinking.content = finalCot;
-                }
-              }
+              // v0.5.5-arch: parseCot 仅用于正文阶段提取 <cot> 标签外的 main 内容
+              // reasoning 和 content 已分别创建 brainstorm/cot_output 节点，不再合并到 thinking 节点
 
               // v0.5.5-arch-fix: phase 感知的写入逻辑——三阶段严格隔离
-              // - phase=tool: 工具决策阶段，仅更新 agentSteps，绝不写 message.content（避免正文窜入气泡）
-              // - phase=cot: CoT 思考链阶段，reasoning 直接作为 cot 显示（不再过 parseCot 标签提取）
-              //              这样 reasoning_content 字段的全部内容都能逐字流式显示
-              // - phase=main: 正文阶段，写 message.content 气泡
+              // - phase=tool: 仅更新 agentSteps，绝不写 message.content（避免正文窜入气泡）
+              // - phase=cot: 仅更新 agentSteps（brainstorm + cot_output 节点），不写 message.content
+              //              思考卡片内容来自 agentSteps，不再依赖 message.cot 字符串
+              // - phase=main: 写 message.content 气泡
               const now = Date.now();
               const willUpdate = (now - lastUpdateTick >= 16 || hasClosingTag);
               if (willUpdate) {
-                logger.debug("stream", `update: phase=${phase} cot=${finalCot.length}chars content=${(cotResult?.main || "").length}chars steps=${agentSteps.length}`);
+                logger.debug("stream", `update: phase=${phase} reasoning=${accumulatedReasoning.length}chars content=${accumulatedContent.length}chars steps=${agentSteps.length}`);
                 lastUpdateTick = now;
                 const elapsedMs = now - requestStartTime;
-                const estimatedTokens = Math.ceil(accumulatedContent.length / 4);
+                const estimatedTokens = Math.ceil((accumulatedContent.length + accumulatedReasoning.length) / 4);
                 const tokPerSec = elapsedMs > 0 ? (estimatedTokens / (elapsedMs / 1000)) : 0;
 
                 if (phase === "tool") {
-                  // 工具决策阶段: 仅更新 agentSteps，不触碰 message.content/cot
-                  // 决策结果由外层逻辑解析处理，避免 NO_TOOLS/正文窜入气泡
+                  // 工具决策阶段: 仅更新 agentSteps
                   get().updateMessage(msgId, {
                     loading: true,
                     tokenUsage: {
@@ -738,12 +731,9 @@ export const createChatSlice: StateCreator<
                     agentSteps: [...agentSteps],
                   });
                 } else if (phase === "cot") {
-                  // CoT 阶段: reasoning 直接作为思考卡片内容（逐字流式）
-                  // v0.5.5-arch-fix: 不再依赖 parseCot 标签提取，reasoning_content 全量显示
-                  // 兼容：若 reasoning 为空但 accumulatedContent 含 <cot> 标签，回退到 parseCot 提取
-                  const cotDisplay = accumulatedReasoning || finalCot;
+                  // CoT 阶段: 仅更新 agentSteps（brainstorm + cot_output 节点）
+                  // 不写 message.content，避免思考内容窜入气泡
                   get().updateMessage(msgId, {
-                    cot: cotDisplay,
                     loading: false,
                     tokenUsage: {
                       promptTokens: 0,
@@ -800,41 +790,45 @@ export const createChatSlice: StateCreator<
           }
 
           const cotResult = parseCot(accumulatedContent);
-          const finalCot = (
-            accumulatedReasoning +
-            (cotResult.cot ? "\n" + cotResult.cot : "")
-          ).trim();
-
-          // 非流式：若有推理内容或 CoT，添加思考步骤
-          if (finalCot.trim()) {
+          // v0.5.5-arch: 非流式也分别创建 brainstorm/cot_output 节点
+          if (accumulatedReasoning.trim()) {
             agentSteps.push({
               id: uuidv4(),
-              type: "thinking",
-              title: "模型思考",
-              content: finalCot,
+              type: "brainstorm",
+              title: "头脑风暴",
+              content: accumulatedReasoning,
               status: "completed",
               startedAt: requestStartTime,
               endedAt: Date.now(),
+              phase: phaseNumber,
+            });
+          }
+          if (phase === "cot" && accumulatedContent.trim()) {
+            agentSteps.push({
+              id: uuidv4(),
+              type: "cot_output",
+              title: "CoT 输出",
+              content: accumulatedContent,
+              status: "completed",
+              startedAt: requestStartTime,
+              endedAt: Date.now(),
+              phase: phaseNumber,
             });
           }
 
-          // v0.5.5-arch-fix: 非流式 phase 感知写入——三阶段隔离
+          // v0.5.5-arch: 非流式 phase 感知写入——三阶段隔离
           if (phase === "tool") {
-            // 工具决策阶段: 仅更新 agentSteps，不触碰 content/cot
             get().updateMessage(msgId, {
               loading: true,
               agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
             });
           } else if (phase === "cot") {
-            // CoT 阶段: reasoning 直接作为思考卡片
-            const cotDisplay = accumulatedReasoning || finalCot;
+            // CoT 阶段: 仅更新 agentSteps，不写 content
             get().updateMessage(msgId, {
-              cot: cotDisplay,
               loading: false,
               agentSteps: agentSteps.length > 0 ? [...agentSteps] : undefined,
             });
           } else {
-            // 正文阶段: 更新正文气泡
             get().updateMessage(msgId, {
               content: cotResult.main || accumulatedContent,
               loading: false,
@@ -843,13 +837,13 @@ export const createChatSlice: StateCreator<
           }
         }
 
-        // 流式结束后，用精确的 usage 替换估算值
-        // 同时将思考步骤标记为已完成
+        // v0.5.5-arch: 将 brainstorm/cot_output 节点标记为已完成
         const finalElapsedMs = Date.now() - requestStartTime;
-        const thinkingStep = agentSteps.find((s) => s.type === "thinking");
-        if (thinkingStep && thinkingStep.status === "running") {
-          thinkingStep.status = "completed";
-          thinkingStep.endedAt = Date.now();
+        for (const step of agentSteps) {
+          if ((step.type === "brainstorm" || step.type === "cot_output") && step.status === "running") {
+            step.status = "completed";
+            step.endedAt = Date.now();
+          }
         }
 
         // v0.4.0-patch4: 流式结束后强制以"最终态"重新解析并写回 content/cot
@@ -857,20 +851,16 @@ export const createChatSlice: StateCreator<
         // 导致 message.content 停留在中间态（例如未闭合 <think> 被吞），气泡空白
         // 此处用 useCache=true 走完成态缓存，确保最终内容正确写回 message
         // v0.4.1: 根据 phase 控制最终更新行为
+        // v0.5.5-arch: 流式结束后最终态写入——三阶段隔离
         if (get().stream) {
           const finalCotResult = parseCot(accumulatedContent, true);
-          const finalCotCombined = (
-            accumulatedReasoning +
-            (finalCotResult.cot ? "\n" + finalCotResult.cot : "")
-          ).trim();
           if (phase === "tool") {
             // 工具决策阶段: 不写 content/cot，由外层解析决策
           } else if (phase === "cot") {
-            // CoT 阶段: reasoning 直接作为思考卡片
-            const cotDisplay = accumulatedReasoning || finalCotCombined;
+            // CoT 阶段: 仅更新 agentSteps，不写 content
             get().updateMessage(msgId, {
-              cot: cotDisplay,
               loading: false,
+              agentSteps: [...agentSteps],
             });
           } else {
             // 正文阶段: 更新正文气泡

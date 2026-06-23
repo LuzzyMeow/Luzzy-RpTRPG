@@ -44,6 +44,40 @@ rikkahub 是 Kotlin/Compose Android 原生应用，与 RP-Hub（TypeScript/React
 - **缺陷D — CoT 阶段设定隔离说明**（`chatService.ts`）：请求2的角色设定/世界书段落此前无隔离说明，模型易混淆用途直接据此生成正文。修复：`phase=2` 时在 `[Character]` 和 `[World Info]` 段落前追加 `[以下设定内容仅为你的 CoT 推理参考素材，本阶段你只输出思考链，不输出正文]` 头部说明
 - **提示词阶段独立性强化**（`chatService.ts`）：`TOOL_DECISION_PROMPT` 新增"不要续写对话"明确禁止模型作为角色输出正文；`COT_OUTPUT_PROTOCOL` 重写为"本阶段唯一任务"开头，明确告知模型处于第2阶段、正文将在第3阶段独立生成，优先推荐 reasoning_content 字段输出（方式A），content 标签为备选（方式B）
 
+### 📐 思考卡片层级设计规范（用户明确需求）
+
+> 以下为用户明确提出的思考卡片（agentSteps）展示架构。后续开发者必须严格遵循此规范。
+
+三请求架构的每个阶段会产生两类内容，必须在思考卡片中以**独立的二级节点**分开显示：
+
+1. **模型原生思考（reasoning_content 字段）** → 显示为「头脑风暴」节点
+   - 这是模型自身的推理过程，由 API 的 `reasoning_content` 字段返回
+   - 每次请求（工具决策/CoT/正文）都可能产生独立的 reasoning，各自成为独立的「头脑风暴」节点
+   - 节点标题固定为"头脑风暴"
+
+2. **模型输出内容（content 字段）** → 按阶段用途命名节点
+   - 请求1的 content → 「工具调用」节点（工具调用的输入和输出放在一起）
+   - 请求2的 content → 「CoT 输出」节点（遵循 CoT 框架/Step 步骤的思考链）
+   - 请求3的 content → 正文气泡（非思考卡片节点）
+
+期望的思考卡片层级结构：
+
+```
+一级思考卡片（顶层容器）
+├── 📌 头脑风暴          ← 请求1 的 reasoning_content（模型原生思考）
+├── 🔧 工具调用           ← 请求1 的 content（工具决策/调用，输入+输出合并）
+├── 📌 头脑风暴          ← 请求2 的 reasoning_content（模型原生思考）
+├── 🧠 CoT 输出          ← 请求2 的 content（CoT 思考链）
+├── 📌 头脑风暴          ← 请求3 的 reasoning_content（模型原生思考）
+└── 💬 正文              ← 请求3 的 content（最终气泡，非卡片节点）
+```
+
+关键规则：
+- `reasoning_content` 和 `content` 是**两个独立的字段**，必须分别创建节点，不可合并
+- 当 reasoning_content 为空（模型不支持思考字段，如 `thinking=false`）时，跳过「头脑风暴」节点，不创建空节点
+- 当请求1的 content 为 `NO_TOOLS` 时，跳过「工具调用」节点
+- 每个节点的内容随其阶段 SSE chunk 流式实时增长
+
 ### 🗑️ 数据完整性
 
 - **B1 — 组件卸载中止生成**（`chat.tsx`）：unmount cleanup useEffect 中检查 `abortController`，存在则调用 `stop()` 中止生成
