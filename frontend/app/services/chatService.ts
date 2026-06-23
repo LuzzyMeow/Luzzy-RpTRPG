@@ -810,13 +810,16 @@ export const buildContext = async (
   // v0.5.4-fix: phase=1 时仅保留最后一条 user 消息，避免完整历史对话引导模型续写正文
   // v0.5.5-arch-fix: phase=2（CoT）时同样高度截断历史，不暴露 assistant 剧情回复，
   //   避免模型把前文的剧情文本当作续写模板。CoT 阶段只需要用户输入和工具结果。
+  // v0.6.2-fix: 排除 memory_recall_result 注入的 user 消息，优先保留真实用户输入
+  //   （memory_recall_result 在 chat-slice.ts 中作为 user 消息 push 到 contextMessages 末尾，
+  //    若不排除会挤掉原始用户消息，导致 Phase 1 工具决策只能看到召回结果）
   if (phase === 1 || phase === 2) {
-    const recentUserMsgs = [...limitedMessages]
+    const realUserMsgs = [...limitedMessages]
       .reverse()
-      .filter((m) => m.role === "user")
+      .filter((m) => m.role === "user" && !m.content.startsWith("<memory_recall_result>"))
       .slice(0, phase === 1 ? 1 : 3)
       .reverse();
-    for (const msg of recentUserMsgs) {
+    for (const msg of realUserMsgs) {
       apiMessages.push({ role: "user", content: msg.content });
     }
     // phase=2 时额外追加工具结果，保证 CoT 推理能看到检索到的素材
@@ -828,6 +831,10 @@ export const buildContext = async (
             content: msg.content,
             tool_call_id: msg.metadata.toolCallId,
           });
+        }
+        // v0.6.2-fix: 同时保留 memory_recall_result 注入的 user 消息（CoT 推理需要召回素材）
+        if (msg.role === 'user' && msg.content.startsWith("<memory_recall_result>")) {
+          apiMessages.push({ role: 'user', content: msg.content });
         }
       }
     }

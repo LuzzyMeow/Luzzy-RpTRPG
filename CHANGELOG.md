@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.6.2
+
+### 🐛 修复
+
+> 基于 59 个故障点核查，修复 5 个确认存在的真实故障。
+
+- **删除死代码 `longTermMemoryEnabledForCharacter`**（故障 #4，致命）
+  - 该变量声明后全文件无任何引用，是死代码
+  - 长期记忆功能已在 v0.5.9 锁定，`extractMemory` 只检查 `memorySettings.enabled` 全局开关
+  - 删除避免误导后续维护者认为"按角色启用长期记忆"仍在生效
+- **修复 Phase 1 截断丢弃原始用户消息**（故障 #13，高）
+  - memory-recall 预执行将 `<memory_recall_result>` 作为 user 消息 push 到 contextMessages 末尾
+  - Phase 1 只保留最后 1 条 user 消息，导致原始用户消息被挤掉，工具决策只能看到召回结果
+  - 修复：Phase 1/2 截断时排除 `<memory_recall_result>` 注入的 user 消息，优先保留真实用户输入
+  - Phase 2 额外追加 memory_recall_result（CoT 推理需要召回素材）
+- **修复 world-recall 懒加载不写入分片**（故障 #58，中）
+  - world-recall 工具懒加载嵌入只写 worldInfo store，记忆页面看不到懒加载的嵌入
+  - `generateWorldInfoEmbeddings` 批量函数会同时写两处，两条路径行为不一致
+  - 修复：懒加载后同步更新 worldVectorMemory 分片，保持与批量函数行为一致
+- **修复保存侧无 fallback 导致孤儿数据**（故障 #3，中）
+  - 加载侧 `loadVectorMemoryShards` 有 fallback（会话级键为空时回退到角色级键）
+  - 但保存侧 `saveVectorMemoryShards` 只写会话级键，旧角色级键的分片不会被清理
+  - 修复：保存到会话级键后，检查并清理角色级键的旧数据
+- **添加 currentCharacter 为 null 时的诊断日志**（故障 #1，高）
+  - `currentCharacter` 为 null 时向量分片加载为空数组，整个 pipeline 静默停摆
+  - 修复：添加 warn 日志，便于用户感知和诊断
+
+### 🔍 故障点核查结论
+
+59 个故障点核查结果：
+- **确认存在 5 个**：#4、#13、#58、#3、#1（均已修复）
+- **不存在/已修复约 15 个**：
+  - #20-27（extractMemory early return 已有 logger.debug，v0.5.9 修复）
+  - #33（buildVectorMemory 无模型时已是 warn 级别，v0.5.9 升级）
+  - #48（embedding 缓存不会缓存空向量，requestEmbeddings 会抛错拦截）
+- **部分存在 1 个**：#5（world-recall 懒加载只写 worldInfo，已通过修复 #58 解决）
+- **行号定位有误但逻辑成立 1 个**：#13（buildContext 实际在 chatService.ts 而非 chat-slice.ts）
+- 其余为低优先级设计行为或影响极小的边角竞态，暂不处理
+
 ## v0.6.1
 
 ### 🐛 修复

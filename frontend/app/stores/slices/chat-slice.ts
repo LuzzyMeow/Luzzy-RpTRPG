@@ -55,7 +55,7 @@ import {
   executeActiveToolCall,
   filterToolsForCharacter,
 } from "~/services/toolService";
-import { loadVectorMemoryShards, searchVectorMemory, searchVectorMemoryWithScore, getEmbedding, cosineSimilarity, removeVectorMemoryShardsByTurn } from "~/services/memoryService";
+import { loadVectorMemoryShards, searchVectorMemory, searchVectorMemoryWithScore, getEmbedding, cosineSimilarity, removeVectorMemoryShardsByTurn, loadWorldVectorMemoryShards, saveWorldVectorMemoryShards } from "~/services/memoryService";
 import { BUILTIN_PRESET_DEFAULTS } from "~/services/presetContent";
 import { BUILTIN_PROVIDERS } from "~/stores/slices/settings-slice";
 import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
@@ -310,15 +310,11 @@ export const createChatSlice: StateCreator<
       }
       const memorySettings = memorySettingsData ?? DEFAULT_MEMORY_SETTINGS;
       const vectorMemoryShards = vectorMemoryShardsData ?? [];
+      // v0.6.2-fix: currentCharacter 为空时记录诊断日志，避免 pipeline 静默停摆
+      if (!currentCharacter?.uuid) {
+        logger.warn("memory", "generateResponse: currentCharacter 为空，向量记忆分片加载为空数组");
+      }
       logger.debug("memory", `向量记忆分片加载: ${vectorMemoryShards.length} 个`);
-
-      // v0.5.6: longTermMemoryCharacterIds 过滤逻辑
-      // v0.5.9: 空列表 = 全部禁用，非空列表 = 仅启用列出的角色
-      const longTermMemoryEnabledForCharacter = (() => {
-        const ids = memorySettings?.longTermMemoryCharacterIds;
-        if (!ids || ids.length === 0) return false;
-        return currentCharacter ? ids.includes(currentCharacter.uuid) : false;
-      })();
 
       // v0.3.0 新增：从 store 读取内置工具配置
       const builtinToolConfigs = get().builtinToolConfigs;
@@ -1451,6 +1447,32 @@ export const createChatSlice: StateCreator<
                   return match && match.embedding ? { ...wi, embedding: match.embedding } : wi;
                 });
                 await setItem("worldInfo", "worldInfo", updated);
+
+                // v0.6.2-fix: 同步更新 worldVectorMemory 分片，保持与 generateWorldInfoEmbeddings 行为一致
+                const updatedEntries = updated.filter(wi => wi.embedding && wi.embedding.length > 0);
+                const bookGroups = new Map<string, WorldInfoEntry[]>();
+                for (const wi of updatedEntries) {
+                  const bid = wi.bookId || "__global__";
+                  if (!bookGroups.has(bid)) bookGroups.set(bid, []);
+                  bookGroups.get(bid)!.push(wi);
+                }
+                for (const [bookId, groupEntries] of bookGroups) {
+                  const shards: VectorMemoryShard[] = groupEntries.map(e => ({
+                    id: e.id,
+                    content: e.content,
+                    turn: 0,
+                    embedding: e.embedding!,
+                    createdAt: Date.now(),
+                  }));
+                  const existing = await loadWorldVectorMemoryShards(bookId);
+                  const merged = [...existing];
+                  for (const s of shards) {
+                    const idx = merged.findIndex(m => m.id === s.id);
+                    if (idx >= 0) merged[idx] = s;
+                    else merged.push(s);
+                  }
+                  await saveWorldVectorMemoryShards(bookId, merged);
+                }
               }
             } catch { /* 持久化失败不影响工具结果 */ }
             return sorted.map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`).join('\n\n');

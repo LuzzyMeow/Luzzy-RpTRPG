@@ -703,6 +703,18 @@ export const saveVectorMemoryShards = async (
     : `${VECTOR_MEMORY_STORAGE_KEY_PREFIX}${characterUuid}`;
   logger.info("memory", `saveVectorMemoryShards: key=${key} 分片数=${shards.length}`);
   await setItem('memory', key, shards);
+
+  // v0.6.2-fix: 保存到会话级键后，清理可能存在的旧角色级键孤儿数据
+  // （旧版保存时 currentSessionId 可能为 null，分片存到了角色级键；
+  //  现在保存到会话级键后，旧角色级键的数据已成为孤儿，应清理）
+  if (sessionId) {
+    const characterLevelKey = `${VECTOR_MEMORY_STORAGE_KEY_PREFIX}${characterUuid}`;
+    const oldData = await getItem<VectorMemoryShard[]>('memory', characterLevelKey);
+    if (oldData && oldData.length > 0) {
+      logger.info("memory", `saveVectorMemoryShards: 清理旧角色级键孤儿数据 key=${characterLevelKey} 旧分片数=${oldData.length}`);
+      await setItem('memory', characterLevelKey, []);
+    }
+  }
 };
 
 /**
