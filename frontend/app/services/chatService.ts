@@ -97,24 +97,38 @@ export interface BuildContextResult {
  * 兼容 LUXI_PROMPT 的 5 步框架：模型根据当前角色选择 Step 数量。
  */
 const COT_OUTPUT_PROTOCOL = `<cot_output_protocol>
-【绝对禁令 — 本阶段只输出思考链，禁止输出正文】
-你正处于三请求架构的第 2 阶段。你的唯一职责是输出内部思考链（CoT）。
-本阶段不需要、不允许、禁止输出任何剧情正文、角色对话、场景描写或面向用户的回复文本。
-正文将在第 3 阶段由独立请求生成，届时你会有完整上下文。
-如果你发现自己正在写小说、描写场景、组织最终回复或以角色身份说话，请立即停止——你走错阶段了。
+【致命禁令 — 本阶段输出正文将导致整个生成流程失败】
+你正处于三请求架构的第 2 阶段（CoT 思考链）。第 3 阶段是独立请求，拥有完整上下文。
+如果你在本阶段输出了任何正文、角色对话或场景描写，系统将丢弃所有这些内容，
+并因为三阶段分离设计而无法将它们传递到第 3 阶段——它们会永远消失，用户看不到任何回复。
+
+这是 HARD GATE，不是建议。本阶段是专门用来组织内部推理的"安全沙箱"，
+你在这里写正文就像把邮件投进了不存在的地址——你白写了，用户也看不到。
+
+【本阶段唯一允许的输出】
+1. reasoning_content 字段（方式 A）或 <cot> 标签内部（方式 B）的思考步骤
+2. content 字段只能为空或只有一个占位符"（思考中...）"
+
+本阶段不允许、不需要、禁止：
+- 任何剧情正文、角色对话、场景描写
+- 任何面向用户的回复文本
+- 任何以角色身份说的话
+- 任何"接下来我来写..."、"以下是我的回复..."之类的过渡语
+- 任何与上方历史消息文风相似的叙事段落
+- </cot> 标签之外出现任何可见文本
 
 【输出格式强制要求 — 二选一】
 
 方式 A（强烈推荐）：使用 reasoning_content 字段
 - 将所有推理过程写到 reasoning_content 字段
 - content 字段必须留空，或只输出一个占位符："（思考中...）"
-- 禁止在 content 字段写任何推理或正文
+- 禁止在 content 字段写任何正文或推理
 
 方式 B（仅当不支持 reasoning_content 时使用）：content 字段必须被 <cot> 标签完整包裹
 1. 以 <cot> 开始，以 </cot> 结束
 2. 标签内按系统预设的 Step 顺序输出，每个 Step 以 **Step N：步骤标题** 开头
 3. Step 之间用空行分隔
-4. </cot> 之后不得有任何字符——任何 <cot> 标签外的内容都会被系统丢弃
+4. </cot> 之后不得有任何字符——</cot> 标签外的任何内容都会在第 3 阶段被系统丢弃
 
 【必须遵守的格式示例】
 <example_A>
@@ -125,9 +139,23 @@ reasoning_content: Step 1: ...\n\nStep 2: ...
 content: <cot>Step 1: ...\n\nStep 2: ...</cot>
 </example_B>
 
-【历史消息说明】
-上方聊天记录中的 assistant 回复仅供你掌握剧情事实，不是让你模仿或续写。本阶段不要复述、不要续写、不要引用这些回复的文本。
-</cot_output_protocol>`;
+【违规示例 — 以下行为会导致你的输出被丢弃】
+<violation_1>❌ 错误：在 CoT 后开始写正文
+<cot>Step 1...</cot>
+巷子里的光已经暗下来了...（这是第 3 阶段才该输出的内容！）
+</violation_1>
+
+<violation_2>❌ 错误：以角色身份说话
+<cot>Step 1...</cot>
+"你好，我是..."（角色对话属于正文，不应出现在 CoT 阶段）
+</violation_2>
+
+<violation_3>❌ 错误：在 CoT 标签外写过渡语
+<cot>Step 1...</cot>
+以上是我的思考。以下是我的回复：（正文会丢失！）
+</violation_3>
+
+【通用提示】上方历史消息仅供你理解剧情事实，不是让你模仿或续写。本阶段不输出剧情，不输出对话，不输出描写。</cot_output_protocol>`;
 
 /**
  * v0.5.1: 三请求架构 — 请求 1 工具决策阶段的内部提示词
@@ -136,76 +164,61 @@ content: <cot>Step 1: ...\n\nStep 2: ...</cot>
  * 不含任何角色扮演设定、文风约束或 CoT 框架。
  */
 const TOOL_DECISION_PROMPT = `<tool_decision_phase>
-【本阶段唯一任务 — 工具决策】
-你正处于三请求架构的第 1 阶段。你的唯一职责是：根据对话上下文判断是否需要调用外部工具获取信息。
+【致命禁令 — 本阶段只输出工具调用或 NO_TOOLS】
+你正处于三请求架构的第 1 阶段（工具决策）。本阶段是纯粹的决策层。
+任何剧情正文、角色对话、场景描写或思考过程都不会被传递到后续阶段——它们会被丢弃，
+因为后续阶段有独立的设计目标，不会接收本阶段的额外输出。
+
+你的输出只能是以下两种格式之一，绝不能包含任何其他内容：
 
 【输出格式 — 严格遵守】
-如果需要调用工具，仅输出以下格式（多个工具用竖线 | 分隔）：
-<tool_calls>工具名:查询关键词|工具名2:查询关键词2</tool_calls>
+格式 1 — 需要调用工具：
+<tool_calls>工具名:关键词1 关键词2|工具名2:关键词3 关键词4</tool_calls>
 
-如果不需要任何工具，仅回复一个词：
+格式 2 — 不需要任何工具：
 NO_TOOLS
 
+注意：即使你认为"不需要工具，但已经想到了回复内容"，你也只能输出 NO_TOOLS 四个字母。
+你的正文回复将在第 3 阶段由独立请求生成，届时你自然可以输出它。本阶段输出正文没有任何意义。
+
+【输出长度硬限制】
+你的总输出长度不得超过 200 个字符。超过此限制意味着你正在输出不该输出的内容。
+多段落输出、长篇解释、角色身份说话——这些在本阶段一律无效且会被丢弃。
+
 【查询关键词拆分规则 — 极其重要】
-工具的 query 参数必须为空格分隔的多个关键词，而非自然语言短语。
-你必须从用户消息、开场白、世界书、历史对话中提取具体实体名称，而非泛化描述词。
+query 参数必须为空格分隔的多个关键词，从上下文中提取具体实体名称，禁止泛化描述词。
 
-严格禁止使用的无效泛化词（这类词无法匹配任何内容）：
-"当前" "现在" "地点" "设定" "信息" "情况" "环境描述" "背景" "上下文" "内容" "场景设定"
+禁止词（无效泛化）："当前" "现在" "地点" "设定" "信息" "情况" "背景" "上下文"
+正确做法：从开场白/世界书/历史对话中提取地名、人名、物品、事件、概念等具体名词。
 
-你必须使用的具体实体词（从上下文中实际提取）：
-- 地名：从开场白/世界书中提取（如"第2区""华宗山""清龙城""市集"）
-- 人名：从对话/角色卡中提取
-- 物品：从场景描写中提取（如"摊位""灯笼""石板路""卷帘门"）
-- 事件：从对话中提取（如"应龙帝坠落""论经""修炼"）
-- 概念：从设定中提取（如"道教""佛门""妖怪""能源"）
+错误：world-recall:周围环境场景设定
+正确：world-recall:环境 场景 第2区 人类 摊位 街区 市场 华宗山
 
-错误做法（自然语言短语 + 泛化词，无法匹配）：
-- world-recall:周围环境场景设定
-- vector-memory:上次酒馆的对话
-- world-recall:环境 场景 当前 地点 设定
+错误：world-recall:环境 场景 当前 地点 设定
+正确：world-search:清龙城 第2区 市集 摊位 人类
 
-正确做法（空格分隔的具体实体关键词）：
-- world-recall:环境 场景 第2区 人类 摊位 街区 市场 华宗山
-- vector-memory:酒馆 对话 上次 论经 道士 僧人
-- world-search:清龙城 第2区 市集 摊位 人类
+【可用工具说明】
+具体的工具列表、调用名称（callLabel）、功能介绍和返回条数请参考下方 <available_tools> 部分。
+该列表由系统根据当前启用的内置工具、SKILL 工具和 MCP 工具动态生成。
+当没有可用工具时，直接回复 NO_TOOLS。
 
-【绝对禁止】
-- 禁止作为角色续写对话内容
-- 禁止输出任何正文、剧情、场景描写
-- 禁止输出思考过程或解释
-- 禁止模仿历史消息的文风
-- 你的输出长度必须极短（NO_TOOLS 或一行工具调用标签），不得输出多段落内容
+【违规示例 — 以下行为无效】
+❌ 错误：输出正文
+NO_TOOLS
+好的，让我来描写这个场景...（正文会被丢弃！只识别到 NO_TOOLS）
 
-【重要提醒】
-上方历史消息仅供你理解对话进展以判断工具需求，绝不是为了让你续写剧情。
-正文回复和思考链将在后续阶段独立生成，本阶段你不需要也不应该输出这些内容。
-如果你发现自己正在写小说、描写场景或以角色身份说话，请立即停止——你走错方向了。
+❌ 错误：输出解释
+<tool_calls>world-recall:环境 第2区</tool_calls>
+我认为这里需要召回世界观信息...（多余解释会被丢弃）
 
-可用工具列表见下方 <available_tools> 部分（若无则为无可用工具，直接回复 NO_TOOLS）。
-
-【工具用途速查】
-- world-recall / world-search：搜索世界书中的世界观设定、场景、NPC 等信息。当需要了解当前环境、世界观背景时调用
-- vector-memory / keyword-search：搜索当前会话的历史对话记忆。当需要回忆之前讨论过的内容时调用
-- anysearch：联网搜索外部实时信息。当需要查询最新资讯、事实核查时调用
-
-【示例】
-用户输入："（四处看看）"
-正确输出：NO_TOOLS
-
-用户输入："你还记得我们上次在酒馆的对话吗？"
-正确输出：<tool_calls>vector-memory:酒馆 对话 上次</tool_calls>
-
-用户输入："（探索周围的环境）"
-（开场白提到了"第2区""市场""人类""摊位""华宗山""清龙城"等设定）
-正确输出：<tool_calls>world-recall:环境 场景 第2区 人类 摊位 街区 市场 华宗山</tool_calls>
-
-用户输入："这个世界的政治格局是怎样的？"
-正确输出：<tool_calls>world-recall:政治 格局 权力 统治 政府</tool_calls>
+❌ 错误：以角色身份说话
+<tool_calls>world-recall:环境 场景</tool_calls>
+（角色名）环顾四周，心想...（正文会被丢弃！）
 
 【再次强调】
-你的输出只能是 NO_TOOLS 或 <tool_calls>...</tool_calls>，绝不能是其他任何内容。
-query 参数必须是空格分隔的、从上下文中提取的具体实体关键词，而非自然语言句子或泛化描述词。
+你的输出只能是 NO_TOOLS 或 <tool_calls>...</tool_calls>。
+任何多余的字符——哪怕是一个句号、一个换行、一个字——都会被视为输出错误。
+输出长度超过 200 字符即视为违规，所有超出内容将被系统丢弃。
 </tool_decision_phase>`;
 
 /** extractMemory 参数 */
@@ -299,6 +312,7 @@ const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
  *
  * v0.4.3: 提升模型主动调用工具的概率
  * v0.4.6: 同时列出内置工具和用户工具，统一标签格式
+ * v0.5.8: 按工具类型分组动态输出，支持 SKILL/MCP 自动出现在列表中
  */
 function buildToolDescriptions(
   builtinConfigs: BuiltinToolConfig[] | undefined,
@@ -310,25 +324,64 @@ function buildToolDescriptions(
 
   const lines: string[] = [
     '<available_tools>',
-    '可用工具列表（在思考链 Step 内使用 <callLabel:query> 格式调用）：',
+    '以下是当前可用的所有工具。调用格式：<tool_calls>callLabel:关键词1 关键词2|callLabel2:关键词3</tool_calls>',
+    '请优先查看每个工具的描述，选择最适合当前需求的工具。',
   ];
 
-  // v0.4.6: 内置工具（跳过 memory-recall，它被动触发不暴露给 AI）
-  for (const c of enabledBuiltin) {
-    if (c.type === 'memory-recall') continue; // 被动触发，不让 AI 调用
-    const info = BUILTIN_TOOL_INFO[c.type];
-    if (info) {
-      lines.push(`- ${info.callLabel}: ${info.description}（返回 ${c.resultCount} 条结果）`);
+  // 内置记忆/搜索工具
+  const memorySearchBuiltins = enabledBuiltin.filter(
+    (c) => c.type === 'vector-memory' || c.type === 'keyword-search',
+  );
+  // 内置世界书工具
+  const worldBuiltins = enabledBuiltin.filter(
+    (c) => c.type === 'world-recall' || c.type === 'world-search',
+  );
+  // 内置联网工具
+  const webBuiltins = enabledBuiltin.filter(
+    (c) => c.type === 'anysearch',
+  );
+  // 其他内置工具（排除已分类和被动触发的 memory-recall）
+  const otherBuiltins = enabledBuiltin.filter(
+    (c) => !['vector-memory', 'keyword-search', 'world-recall', 'world-search', 'anysearch', 'memory-recall'].includes(c.type),
+  );
+
+  // 按工具类型分组的用户工具
+  const skillTools = enabledActive.filter((t) => t.type === 'skill' || t.type === 'skill_readfile');
+  const mcpTools = enabledActive.filter((t) => t.type === 'mcp_http');
+  const webUserTools = enabledActive.filter((t) => t.type === 'web');
+  const vectorUserTools = enabledActive.filter((t) => t.type === 'vector' || t.type === 'keyword');
+  const worldUserTools = enabledActive.filter((t) => t.type === 'world');
+  const otherUserTools = enabledActive.filter(
+    (t) => !(['skill', 'skill_readfile', 'mcp_http', 'web', 'vector', 'keyword', 'world'] as string[]).includes(t.type),
+  );
+
+  const addGroup = (title: string, configs: typeof enabledBuiltin, tools?: typeof enabledActive) => {
+    const items: string[] = [];
+    for (const c of configs) {
+      if (c.type === 'memory-recall') continue;
+      const info = BUILTIN_TOOL_INFO[c.type];
+      if (info) items.push(`- \`${info.callLabel}\`: ${info.description}（返回 ${c.resultCount} 条）`);
     }
-  }
+    if (tools) {
+      for (const t of tools) {
+        const callLabel = t.callName || t.name;
+        items.push(`- \`${callLabel}\`: ${t.description}（返回 ${t.resultCount} 条）`);
+      }
+    }
+    if (items.length > 0) {
+      lines.push(`\n${title}`);
+      lines.push(...items);
+    }
+  };
 
-  // v0.4.6: 用户工具（MCP/SKILL/Web）
-  for (const t of enabledActive) {
-    const callLabel = t.callName || t.name;
-    lines.push(`- ${callLabel}: ${t.description}（返回 ${t.resultCount} 条结果）`);
-  }
+  addGroup('【历史记忆搜索】', memorySearchBuiltins, vectorUserTools);
+  addGroup('【世界书设定检索】', worldBuiltins, worldUserTools);
+  addGroup('【联网搜索】', webBuiltins, webUserTools);
+  addGroup('【MCP 外部工具】', otherBuiltins.filter(c => c.type.startsWith('mcp')), mcpTools);
+  addGroup('【SKILL 技能工具】', otherBuiltins.filter(c => c.type.startsWith('skill')), skillTools);
+  addGroup('【其他工具】', otherBuiltins.filter(c => !c.type.startsWith('mcp') && !c.type.startsWith('skill')), otherUserTools);
 
-  lines.push('</available_tools>');
+  lines.push('\n</available_tools>');
   return lines.join('\n');
 }
 
