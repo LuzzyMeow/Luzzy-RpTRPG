@@ -1553,23 +1553,6 @@ function BuiltinToolsTab() {
                         </motion.div>
                       )}
 
-                      {/* 检索全局记忆（v0.3.7: 仅 vector-memory 和 memory-recall 显示） */}
-                      {(toolType === "vector-memory" || toolType === "memory-recall") && (
-                        <div className="flex items-center justify-between">
-                          <label className="text-sm font-medium">
-                            检索全局记忆
-                          </label>
-                          <Switch
-                            checked={config.searchGlobalMemory}
-                            onCheckedChange={(v) =>
-                              updateBuiltinToolConfig(toolType, {
-                                searchGlobalMemory: v,
-                              })
-                            }
-                          />
-                        </div>
-                      )}
-
                       {/* 角色卡绑定 */}
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium">

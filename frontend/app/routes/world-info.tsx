@@ -33,8 +33,10 @@ import {
   IconExclamation,
 } from "~/components/luzzy/luzzy-icons";
 import { useConfirm } from "~/components/luzzy/luzzy-confirm";
+import { useBindingDeleteConfirm } from "~/components/luzzy/luzzy-binding-delete-dialog";
 
-import type { WorldInfoEntry } from "~/types/luzzy";
+import type { WorldInfoEntry, Character } from "~/types/luzzy";
+import { useAppStore } from "~/stores";
 import { getItem, setItem } from "~/services/storage";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { Button } from "~/components/ui/button";
@@ -250,6 +252,8 @@ export default function WorldInfoPage() {
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const confirm = useConfirm();
+  const confirmBindingDelete = useBindingDeleteConfirm();
+  const deleteCharacter = useAppStore((s) => s.deleteCharacter);
 
   /** 页面加载时从 IndexedDB 读取 */
   React.useEffect(() => {
@@ -362,6 +366,54 @@ export default function WorldInfoPage() {
   /** 删除世界书（含其下所有条目） */
   const handleDeleteBook = React.useCallback(
     async (bookId: string, bookName: string) => {
+      // v0.5.6: 检查是否有角色卡绑定此世界书
+      let bindingCharacters: Character[] = [];
+      try {
+        const charactersData = await getItem<Character[]>("characters", "characters");
+        bindingCharacters = (charactersData ?? []).filter(
+          (c) => (c.extensions?.worldInfoId as string) === bookId,
+        );
+      } catch {
+        // 忽略查询失败，按无绑定处理
+      }
+
+      if (bindingCharacters.length > 0) {
+        const bindingName = bindingCharacters.map((c) => c.name).join("、");
+        const action = await confirmBindingDelete({
+          title: "删除世界书",
+          description: `确定删除世界书「${bookName}」及其所有条目吗？此操作不可撤销。`,
+          bindingName,
+          bindingType: "角色卡",
+        });
+
+        if (action === "cancel") return;
+        updateEntries((prev) => prev.filter((e) => e.bookId !== bookId));
+
+        if (action === "syncDelete") {
+          // 同步删除绑定的角色卡
+          for (const c of bindingCharacters) {
+            await deleteCharacter(c.uuid);
+          }
+          toast.success(`已删除世界书及 ${bindingCharacters.length} 个绑定角色卡`);
+        } else {
+          // 仅删除世界书，清理角色卡的 worldInfoId 引用
+          try {
+            const charactersData = await getItem<Character[]>("characters", "characters");
+            const updated = (charactersData ?? []).map((c) =>
+              (c.extensions?.worldInfoId as string) === bookId
+                ? { ...c, extensions: { ...c.extensions, worldInfoId: null } }
+                : c,
+            );
+            await setItem("characters", "characters", updated);
+          } catch (e) {
+            console.error("[WorldInfo] 清理角色卡绑定引用失败:", e);
+          }
+          toast.success("世界书已删除，已清理角色卡绑定");
+        }
+        return;
+      }
+
+      // 无绑定，走原有流程
       const ok = await confirm({
         title: "操作确认",
         description: `确定删除世界书「${bookName}」及其所有条目吗？此操作不可撤销。`,
@@ -371,7 +423,7 @@ export default function WorldInfoPage() {
       updateEntries((prev) => prev.filter((e) => e.bookId !== bookId));
       toast.success("世界书已删除");
     },
-    [updateEntries, confirm],
+    [updateEntries, confirm, confirmBindingDelete, deleteCharacter],
   );
 
   /** 新建条目（指定世界书） */

@@ -18,6 +18,7 @@ import { ThemeProvider } from "./components/theme-provider";
 import { LuzzySplash } from "./components/luzzy/luzzy-splash";
 import { GlobalTrpgIframe } from "./components/luzzy/luzzy-global-trpg-iframe";
 import { ConfirmProvider } from "./components/luzzy/luzzy-confirm";
+import { BindingDeleteConfirmProvider } from "./components/luzzy/luzzy-binding-delete-dialog";
 import { initLogger, logger } from "./services/logger";
 import { useAppStore } from "./stores";
 
@@ -155,20 +156,22 @@ function AppContent() {
   return (
     <ThemeProvider defaultTheme="system">
       <ConfirmProvider>
-        {showSplash ? (
-          <LuzzySplash
-            onComplete={() => {
-              setShowSplash(false);
-              sessionStorage.setItem("luzzy-splash-shown", "1");
-            }}
-          />
-        ) : (
-          <>
-            <Outlet />
-            <GlobalTrpgIframe />
-            <Toaster position="top-center" />
-          </>
-        )}
+        <BindingDeleteConfirmProvider>
+          {showSplash ? (
+            <LuzzySplash
+              onComplete={() => {
+                setShowSplash(false);
+                sessionStorage.setItem("luzzy-splash-shown", "1");
+              }}
+            />
+          ) : (
+            <>
+              <Outlet />
+              <GlobalTrpgIframe />
+              <Toaster position="top-center" />
+            </>
+          )}
+        </BindingDeleteConfirmProvider>
       </ConfirmProvider>
     </ThemeProvider>
   );

@@ -134,25 +134,36 @@ function CotCard({
 }) {
   // v0.4.6: 生成中默认展开，生成完成后自动收起
   const [expanded, setExpanded] = React.useState(true);
+  // v0.5.5-arch-fix: 进入正文阶段时立即折叠一级思考卡片
+  const isMainPhase = useAppStore((s) => s.isMainPhase);
 
   React.useEffect(() => {
-    if (!isGenerating) {
+    if (isMainPhase) {
+      setExpanded(false);
+    } else if (!isGenerating) {
       setExpanded(false);
     }
-  }, [isGenerating]);
+  }, [isGenerating, isMainPhase]);
 
   const handleToggle = () => setExpanded((prev) => !prev);
 
   // 步骤计数：优先取 agentSteps 中的非 thinking 步骤 + CoT 中的思考步骤
   const toolStepCount = React.useMemo(
-    () => (agentSteps?.filter((s) => s.type !== "thinking").length ?? 0),
+    () =>
+      agentSteps?.some((s) =>
+        ["tool_call", "tool_result", "memory_inject", "knowledge_call"].includes(s.type),
+      )
+        ? 1
+        : 0,
     [agentSteps],
   );
-  const thinkingStepCount = React.useMemo(() => {
-    if (!cot.trim()) return 0;
-    const markers = cot.match(/\*\*\s*Step\s*\d+|【\s*Step\s*\d+/gi);
-    return markers ? markers.length : 1;
-  }, [cot]);
+  const thinkingStepCount = React.useMemo(
+    () =>
+      agentSteps?.filter((s) =>
+        ["brainstorm", "cot_output", "thinking"].includes(s.type),
+      ).length ?? 0,
+    [agentSteps],
+  );
 
   // 收起时预览最后一条非空步骤标题
   const preview = React.useMemo(() => {
@@ -509,6 +520,7 @@ function LuzzyChatMessageImpl({
 
         {/* 消息正文 */}
         <div
+          data-luzzy-message-bubble
           className={cn(
             "rounded-2xl px-4 py-2.5 text-sm",
             isUser
@@ -531,7 +543,8 @@ function LuzzyChatMessageImpl({
             <TypingIndicator />
           ) : message.content ? (
             // v0.4.3: isAnimating 动态化,生成中且为最后一条消息时启用流式动画
-            <Markdown content={message.content} isAnimating={isGenerating && isLast && !message.content?.endsWith("*-- 生成已中止 --*")} />
+            // v0.5.5-arch-fix: 正文阶段也必须保持流式动画,直到生成结束
+            <Markdown content={message.content} isAnimating={isGenerating && isLast} />
           ) : isGenerating && isLast && message.cot ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <IconRefresh className="size-3 animate-spin" />

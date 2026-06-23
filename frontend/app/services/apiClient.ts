@@ -831,11 +831,10 @@ const sendStreamRequestViaXHR = (
             isProcessing = false;
             return;
           }
-          // v0.5.5-fix: 每 3 行让出主线程一次（从 10 降至 3），更频繁重绘 UI
-          // 缓解 Android XHR 批量触发导致的段落批量蹦出现象
-          if (i % 3 === 2) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 0));
-          }
+          // v0.5.6: 每行让出主线程，允许 React 重绘
+          // 原因：React 18 自动批处理将同宏任务内的 setState 合并
+          // setTimeout(0) 将后续处理推到新宏任务，打破批处理
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
       }
       isProcessing = false;
@@ -1062,10 +1061,8 @@ const sendStreamRequestViaFetch = async (
             throw new Error(formatApiErrorMessage(response.status, dataStr));
           }
         }
-        // v0.5.5-fix: 每 3 行让出主线程一次（从 10 降至 3），更频繁重绘 UI
-        if (i % 3 === 2) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
+        // v0.5.6: 非流式回退也每行让出，允许 React 重绘
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
     }
     return { status: response.status, ok: true };
@@ -1094,7 +1091,6 @@ const sendStreamRequestViaFetch = async (
           const parsed = JSON.parse(dataStr) as Record<string, unknown>;
           const apiError = extractApiErrorMessage(parsed, response.status);
           if (apiError) throw new ApiError(apiError);
-          console.log('[SSE chunk]', Date.now(), JSON.stringify(parsed).slice(0, 80));
           onChunk(dataStr, parsed);
         } catch (e) {
           if (e instanceof ApiError) throw e;
@@ -1133,19 +1129,25 @@ const sendStreamRequestViaFetch = async (
 /**
  * 统一流式请求入口
  *
- * 原生平台使用 XMLHttpRequest + 本地代理（绕过 CapacitorHttp 的 fetch patch），
- * 浏览器使用 fetch + ReadableStream。
+ * v0.5.6: 优先使用 Fetch API（Capacitor 已移除，无 fetch patch），
+ * 若 Fetch 失败（CORS/代理问题），原生平台回退到 XHR + 本地代理。
+ * 浏览器环境直接使用 fetch + ReadableStream。
  *
  * @param params - 流式请求参数
  * @returns 请求结果（含状态码与是否成功）
  */
-export const sendStreamRequest = (
+export const sendStreamRequest = async (
   params: StreamRequestParams,
 ): Promise<StreamRequestResult> => {
-  if (isNativePlatform()) {
-    return sendStreamRequestViaXHR(params);
+  try {
+    return await sendStreamRequestViaFetch(params);
+  } catch (fetchErr) {
+    if (isNativePlatform()) {
+      console.warn('[Stream] Fetch 流式失败，回退到 XHR + 本地代理:', fetchErr);
+      return sendStreamRequestViaXHR(params);
+    }
+    throw fetchErr;
   }
-  return sendStreamRequestViaFetch(params);
 };
 
 // ============================================================================
@@ -1167,14 +1169,18 @@ export interface RequestOptions {
 }
 
 /**
- * 发送非流式 API 请求
+ * 发送非流式 API 请求（Fetch 实现）
+ *
+ * v0.5.6: 从 sendRequest 拆分为 sendRequestViaFetch + sendRequestViaXHR + sendRequest 调度器。
+ * 原生平台（Android）fetch 可能被 patch 或 CORS 失败，sendRequest 会先尝试 Fetch，
+ * 失败后原生平台回退到 XHR + 本地代理。
  *
  * @param params - 请求参数
  * @returns fetch Response 对象（已校验 response.ok）
  * @throws {ApiError} API 返回的业务错误
  * @throws {Error} 网络错误或格式化后的 API 错误
  */
-export const sendRequest = async (
+const sendRequestViaFetch = async (
   params: RequestOptions,
 ): Promise<Response> => {
   const { url, apiKey, body, signal, headers } = params;
@@ -1209,4 +1215,172 @@ export const sendRequest = async (
   }
 
   return response;
+};
+
+/**
+ * 原生平台非流式请求（XMLHttpRequest + 本地代理）
+ *
+ * v0.5.6 新增：与 sendStreamRequestViaXHR 相同的 XHR + 本地代理模式，
+ * 但非流式版本——等待 onload 后一次性读取 responseText。
+ * 解决翻译等非流式功能在原生平台 fetch 失败（fail to fetch）的问题。
+ *
+ * 请求路径：XHR → http://localhost:18527/v1/chat/completions?_target=<真实API> → 真实API
+ *
+ * @param params - 请求参数
+ * @returns 模拟的 Response 对象（含 ok、status、text() 方法）
+ */
+const sendRequestViaXHR = (
+  params: RequestOptions,
+): Promise<Response> => {
+  const { url, apiKey, body, signal, headers } = params;
+
+  return new Promise<Response>((resolve, reject) => {
+    // 构建本地代理 URL：将真实 API URL 作为 _target 参数传递
+    let proxyUrl: string;
+    try {
+      const targetUrl = new URL(url);
+      const pathname = targetUrl.pathname;
+      const versionMatch = pathname.match(/^(\/v\d+)(\/.*)$/);
+      const endpointPath = versionMatch ? versionMatch[2] : pathname;
+      const targetBase = versionMatch
+        ? `${targetUrl.origin}${versionMatch[1]}`
+        : targetUrl.origin;
+      proxyUrl = `${NATIVE_PROXY_BASE}${endpointPath}?_target=${encodeURIComponent(targetBase)}`;
+      if (targetUrl.search) {
+        proxyUrl += '&' + targetUrl.search.replace(/^\?/, '');
+      }
+    } catch (e) {
+      console.warn('[XHR Non-Stream] URL 解析失败，回退直连:', e);
+      proxyUrl = url;
+    }
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', proxyUrl, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Accept', 'application/json');
+    if (apiKey) {
+      xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
+    }
+    if (headers) {
+      for (const [key, value] of Object.entries(headers)) {
+        xhr.setRequestHeader(key, value);
+      }
+    }
+    xhr.responseType = 'text';
+    xhr.timeout = 300000; // 非流式请求 5 分钟超时
+
+    let settled = false;
+
+    const safeResolve = (value: Response): void => {
+      if (settled) return;
+      settled = true;
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve(value);
+    };
+    const safeReject = (reason: unknown): void => {
+      if (settled) return;
+      settled = true;
+      if (signal) signal.removeEventListener('abort', onAbort);
+      reject(reason);
+    };
+
+    const onAbort = (): void => {
+      try { xhr.abort(); } catch { /* 忽略 */ }
+      safeReject(new DOMException('The user aborted a request.', 'AbortError'));
+    };
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener('abort', onAbort);
+    }
+
+    xhr.onload = (): void => {
+      const status = xhr.status;
+      const responseText = xhr.responseText || '';
+      const ok = status >= 200 && status < 300;
+
+      // 构造模拟 Response 对象
+      const mockResponse: Response = {
+        ok,
+        status,
+        statusText: xhr.statusText,
+        headers: new Headers(),
+        url,
+        type: 'basic' as ResponseType,
+        redirected: false,
+        body: null,
+        bodyUsed: false,
+        clone: () => mockResponse,
+        blob: async () => new Blob([responseText], { type: 'application/json' }),
+        arrayBuffer: async () => new TextEncoder().encode(responseText).buffer,
+        formData: async () => new FormData(),
+        text: async () => responseText,
+        json: async () => JSON.parse(responseText) as unknown,
+      } as Response;
+
+      if (!ok) {
+        let errorDetail = '';
+        try {
+          const errorJson = JSON.parse(responseText) as unknown;
+          const apiError = extractApiErrorMessage(errorJson, status);
+          if (apiError) {
+            safeReject(new ApiError(apiError));
+            return;
+          }
+          errorDetail = responseText;
+        } catch (e) {
+          if (e instanceof ApiError) {
+            safeReject(e);
+            return;
+          }
+          errorDetail = responseText;
+        }
+        safeReject(new Error(formatApiErrorMessage(status, errorDetail)));
+        return;
+      }
+
+      safeResolve(mockResponse);
+    };
+
+    xhr.onerror = (): void => {
+      safeReject(new Error('XHR 请求失败：网络错误或代理不可用'));
+    };
+
+    xhr.ontimeout = (): void => {
+      safeReject(new Error('XHR 请求超时（5 分钟）'));
+    };
+
+    try {
+      xhr.send(JSON.stringify(body));
+    } catch (e) {
+      safeReject(e);
+    }
+  });
+};
+
+/**
+ * 发送非流式 API 请求（统一入口）
+ *
+ * v0.5.6: 优先使用 Fetch API，若 Fetch 失败（CORS/代理问题），
+ * 原生平台回退到 XHR + 本地代理。浏览器环境直接使用 fetch。
+ *
+ * @param params - 请求参数
+ * @returns Response 对象（已校验 response.ok）
+ * @throws {ApiError} API 返回的业务错误
+ * @throws {Error} 网络错误或格式化后的 API 错误
+ */
+export const sendRequest = async (
+  params: RequestOptions,
+): Promise<Response> => {
+  try {
+    return await sendRequestViaFetch(params);
+  } catch (fetchErr) {
+    if (isNativePlatform()) {
+      console.warn('[Non-Stream] Fetch 失败，回退到 XHR + 本地代理:', fetchErr);
+      return sendRequestViaXHR(params);
+    }
+    throw fetchErr;
+  }
 };

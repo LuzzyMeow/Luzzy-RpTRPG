@@ -236,7 +236,6 @@ export function LuzzyChatInput({
             whileTap={{ scale: 0.92 }}
           >
             <Button
-              variant="ghost"
               size="icon"
               onClick={() => setShowFullscreen(true)}
               disabled={disabled}

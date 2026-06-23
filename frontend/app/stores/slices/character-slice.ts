@@ -191,7 +191,7 @@ export const createCharacterSlice: StateCreator<
     await get().saveCharacters();
   },
 
-  deleteCharacter: async (uuid) => {
+  deleteCharacter: async (uuid, options) => {
     set((state) => ({
       characters: state.characters.filter((c) => c.uuid !== uuid),
       currentCharacterUuid:
@@ -246,16 +246,19 @@ export const createCharacterSlice: StateCreator<
     }
 
     // 4. 删除世界书条目（bookId === uuid）
-    try {
-      const allWorldInfo = await getItem<WorldInfoEntry[]>("worldInfo", "worldInfo");
-      if (allWorldInfo && allWorldInfo.length > 0) {
-        const filtered = allWorldInfo.filter((e) => e.bookId !== uuid);
-        if (filtered.length !== allWorldInfo.length) {
-          await setItem("worldInfo", "worldInfo", filtered);
+    // v0.5.6: 仅当 syncDeleteWorldBook 为 true 时执行
+    if (options?.syncDeleteWorldBook) {
+      try {
+        const allWorldInfo = await getItem<WorldInfoEntry[]>("worldInfo", "worldInfo");
+        if (allWorldInfo && allWorldInfo.length > 0) {
+          const filtered = allWorldInfo.filter((e) => e.bookId !== uuid);
+          if (filtered.length !== allWorldInfo.length) {
+            await setItem("worldInfo", "worldInfo", filtered);
+          }
         }
+      } catch (e) {
+        console.error("[CharacterSlice] 清理世界书条目失败:", e);
       }
-    } catch (e) {
-      console.error("[CharacterSlice] 清理世界书条目失败:", e);
     }
 
     // 5. 删除正则脚本组（id.startsWith("{uuid}-regexgrp-")）
@@ -281,7 +284,7 @@ export const createCharacterSlice: StateCreator<
           ...kb,
           enabledForCharacters: (kb.enabledForCharacters ?? []).filter((id) => id !== uuid),
         }));
-        get().setKnowledgeBases?.(updated);
+        set((state) => ({ knowledgeBases: updated }));
       }
       // 技能
       const skills = get().skills ?? [];
@@ -290,7 +293,7 @@ export const createCharacterSlice: StateCreator<
           ...s,
           enabledForCharacters: (s.enabledForCharacters ?? []).filter((id) => id !== uuid),
         }));
-        get().setSkills?.(updated);
+        set((state) => ({ skills: updated }));
       }
       // 内置工具配置
       const builtinToolConfigs = get().builtinToolConfigs ?? [];
@@ -299,7 +302,7 @@ export const createCharacterSlice: StateCreator<
           ...t,
           enabledForCharacters: (t.enabledForCharacters ?? []).filter((id) => id !== uuid),
         }));
-        get().setBuiltinToolConfigs?.(updated);
+        set((state) => ({ builtinToolConfigs: updated }));
       }
     } catch (e) {
       console.error("[CharacterSlice] 清理 UI 模板绑定失败:", e);

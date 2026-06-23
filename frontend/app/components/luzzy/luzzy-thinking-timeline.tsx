@@ -68,26 +68,33 @@ interface CotOutputStep {
 }
 
 /**
- * 合并后的工具节点（v0.4.6-UI 重构：tool_call + tool_result 合并为一张卡片）
+ * v0.5.5-arch: 合并后的工具节点（所有工具调用聚合为单一节点）
  */
 interface CombinedToolStep {
   type: "tool";
-  /** 工具类别（用于图标/颜色） */
-  category: "memory" | "search" | "web" | "tool";
   /** 工具显示名称 */
   title: string;
-  /** 调用参数/查询 */
-  callContent: string;
-  /** 调用结果 */
-  resultContent?: string;
-  /** 错误信息 */
-  errorContent?: string;
+  /** 工具类别（用于图标/颜色） */
+  category: "memory" | "search" | "web" | "tool";
+  /** 多工具聚合子项 */
+  subItems?: {
+    toolName: string;
+    category: "memory" | "search" | "web" | "tool";
+    callContent: string;
+    resultContent?: string;
+    errorContent?: string;
+    status: StepStatus;
+  }[];
   /** 节点状态 */
   status: StepStatus;
   /** 开始时间 */
   startedAt?: number;
   /** 结束时间 */
   endedAt?: number;
+  // 保留单工具字段兼容
+  callContent?: string;
+  resultContent?: string;
+  errorContent?: string;
 }
 
 /** Timeline 步骤联合类型 */
@@ -287,11 +294,11 @@ function inferToolCategory(title: string, type?: string): CombinedToolStep["cate
 /**
  * v0.5.5-arch: 合并思考步骤和 agentSteps
  *
- * agentSteps 按 phase 和创建顺序排列，包含：
- * - brainstorm 节点（reasoning_content，来自各请求阶段）
- * - cot_output 节点（请求2的 content）
- * - tool_call/tool_result/memory_inject/knowledge_call 节点
- * 旧 thinking 节点（已废弃）和来自 cot 字符串解析的 thinkingSteps 一并合并
+ * 固定 5 节点布局：头脑风暴(p1) → 工具调用（聚合） → 头脑风暴(p2) → CoT 输出(p2) → 头脑风暴(p3)
+ * - brainstorm 节点按 phase 分组
+ * - 所有工具类节点（tool_call/tool_result/memory_inject/knowledge_call）聚合为单一"工具调用"节点
+ * - cot_output 节点独立显示
+ * - 旧 thinking 节点和 cot 字符串解析的 thinkingSteps 追加在末尾（兼容旧数据）
  */
 function mergeSteps(
   thinkingSteps: ThinkingStep[],
@@ -301,84 +308,126 @@ function mergeSteps(
     return [...thinkingSteps];
   }
 
-  const result: TimelineStep[] = [];
   const toolLikeTypes = new Set(["tool_call", "tool_result", "memory_inject", "knowledge_call"]);
-  let i = 0;
-  while (i < agentSteps.length) {
-    const step = agentSteps[i];
 
+  // Phase 1: 收集——按类型/phase 归类，工具类暂存
+  const brainstormP1: BrainstormStep[] = [];
+  const brainstormP2: BrainstormStep[] = [];
+  const brainstormP3: BrainstormStep[] = [];
+  const cotOutputs: CotOutputStep[] = [];
+  const toolItems: AgentStep[] = [];
+  const oldThinkings: ThinkingStep[] = [];
+
+  for (const step of agentSteps) {
     if (step.type === "brainstorm") {
-      result.push({
+      const bs: BrainstormStep = {
         type: "brainstorm",
         title: step.title,
         content: step.content || "",
         status: step.status,
-      });
-      i += 1;
+      };
+      if (step.phase === 1) brainstormP1.push(bs);
+      else if (step.phase === 2) brainstormP2.push(bs);
+      else if (step.phase === 3) brainstormP3.push(bs);
+      else brainstormP2.push(bs); // 默认归入 p2
       continue;
     }
 
     if (step.type === "cot_output") {
-      result.push({
+      cotOutputs.push({
         type: "cot_output",
         title: step.title,
         content: step.content || "",
         status: step.status,
       });
-      i += 1;
-      continue;
-    }
-
-    // 工具类节点：尝试合并 tool_call + tool_result
-    if (step.type === "tool_call" && i + 1 < agentSteps.length && agentSteps[i + 1].type === "tool_result") {
-      const resultStep = agentSteps[i + 1];
-      result.push({
-        type: "tool",
-        category: inferToolCategory(step.title, step.type),
-        title: step.title,
-        callContent: step.content || "",
-        resultContent: resultStep.content || "",
-        status: step.status === "error" || resultStep.status === "error" ? "error" : "completed",
-        startedAt: step.startedAt,
-        endedAt: resultStep.endedAt ?? step.endedAt,
-      });
-      i += 2;
       continue;
     }
 
     if (toolLikeTypes.has(step.type)) {
-      result.push({
-        type: "tool",
-        category: inferToolCategory(step.title, step.type),
-        title: step.title,
-        callContent: step.type === "tool_result" ? "" : (step.content || ""),
-        resultContent: step.type === "tool_result" ? (step.content || "") : undefined,
-        errorContent: step.status === "error" ? (step.content || "") : undefined,
-        status: step.status,
-        startedAt: step.startedAt,
-        endedAt: step.endedAt,
-      });
-      i += 1;
+      toolItems.push(step);
       continue;
     }
 
     // 旧 thinking 类型：转为 ThinkingStep（兼容历史数据）
     if (step.type === "thinking") {
-      result.push({
+      oldThinkings.push({
         type: "thinking",
         title: step.title,
         content: step.content || "",
         status: step.status,
       });
-      i += 1;
       continue;
     }
-
-    i += 1;
   }
 
+  // Phase 2: 排序输出——固定 5 节点顺序
+  // 头脑风暴(p1) → 工具调用（聚合） → 头脑风暴(p2) → CoT输出(p2) → 头脑风暴(p3)
+  // 注意：必须按此顺序 push，cot_output 不能跑到 brainstormP3 后面
+  const result: TimelineStep[] = [];
+  result.push(...brainstormP1);
+  // 工具节点聚合为单一"工具调用"节点，插入到 brainstorm(p1) 之后
+  if (toolItems.length > 0) {
+    const subItems: NonNullable<CombinedToolStep["subItems"]> = [];
+    let i = 0;
+    while (i < toolItems.length) {
+      const step = toolItems[i];
+      if (
+        step.type === "tool_call" &&
+        i + 1 < toolItems.length &&
+        toolItems[i + 1].type === "tool_result"
+      ) {
+        const resultStep = toolItems[i + 1];
+        subItems.push({
+          toolName: step.title,
+          category: inferToolCategory(step.title, step.type),
+          callContent: step.content || "",
+          resultContent: resultStep.content || "",
+          status:
+            step.status === "error" || resultStep.status === "error"
+              ? "error"
+              : "completed",
+        });
+        i += 2;
+      } else {
+        subItems.push({
+          toolName: step.title,
+          category: inferToolCategory(step.title, step.type),
+          callContent: step.type === "tool_result" ? "" : (step.content || ""),
+          resultContent:
+            step.type === "tool_result" ? (step.content || "") : undefined,
+          errorContent: step.status === "error" ? (step.content || "") : undefined,
+          status: step.status,
+        });
+        i += 1;
+      }
+    }
+
+    const anyRunning = subItems.some((s) => s.status === "running");
+    const anyError = subItems.some((s) => s.status === "error");
+    const toolStep: CombinedToolStep = {
+      type: "tool",
+      title: "工具调用",
+      category: "tool",
+      subItems,
+      status: anyRunning ? "running" : anyError ? "error" : "completed",
+      startedAt: toolItems[0].startedAt,
+      endedAt: toolItems[toolItems.length - 1].endedAt,
+    };
+    result.push(toolStep);
+  }
+  result.push(...brainstormP2);
+  result.push(...cotOutputs);
+  result.push(...brainstormP3);
+  result.push(...oldThinkings);
+
+  // 空节点跳过，不占位（工具节点保留）
+  const filtered = result.filter((step) => {
+    if (isToolStep(step)) return true;
+    return step.content.trim().length > 0;
+  });
+
   // cot 字符串解析的 thinkingSteps 追加在末尾（兼容旧 message.cot 数据）
-  return [...result, ...thinkingSteps];
+  return [...filtered, ...thinkingSteps];
 }
 
 // ============================================================================
@@ -615,52 +664,124 @@ function ToolNode({ step, isExpanded, onToggle, isLast }: ToolNodeProps) {
               transition={isRunning ? { duration: 0 } : { duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
               className="overflow-hidden"
             >
-              <div className="mt-2 max-h-[320px] overflow-y-auto overscroll-contain space-y-2">
-                {/* 调用参数 */}
-                {step.callContent ? (
-                  <div className="rounded-md border border-blue-500/10 bg-blue-500/[0.04] p-2">
-                    <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-blue-600/80 dark:text-blue-400/80">
-                      <IconToolKit className="size-3" />
-                      <span>调用参数</span>
-                    </div>
-                    <div className="max-h-[120px] overflow-y-auto text-xs text-muted-foreground">
-                      <Markdown content={step.callContent} isAnimating={false} />
-                    </div>
-                  </div>
-                ) : null}
+              <div className="mt-2 max-h-[360px] overflow-y-auto overscroll-contain space-y-2">
+                {step.subItems && step.subItems.length > 0 ? (
+                  // v0.5.5-arch: 多工具聚合渲染
+                  step.subItems.map((sub, idx) => (
+                    <div key={idx} className="space-y-2 rounded-md border border-border/40 bg-muted/20 p-2">
+                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                        <IconToolKit className="size-3" />
+                        <span>{sub.toolName}</span>
+                        {sub.status === "running" && (
+                          <span className="ml-auto inline-flex items-center text-primary">
+                            <span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-primary" />
+                            执行中
+                          </span>
+                        )}
+                        {sub.status === "error" && (
+                          <span className="ml-auto text-red-600 dark:text-red-400">失败</span>
+                        )}
+                        {sub.status === "completed" && (
+                          <span className="ml-auto text-green-600 dark:text-green-400">完成</span>
+                        )}
+                      </div>
 
-                {/* 执行结果 */}
-                {step.resultContent ? (
-                  <div className="rounded-md border border-green-500/10 bg-green-500/[0.04] p-2">
-                    <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-green-600/80 dark:text-green-400/80">
-                      <IconCheck className="size-3" />
-                      <span>执行结果</span>
-                    </div>
-                    <div className="max-h-[200px] overflow-y-auto text-xs text-muted-foreground">
-                      <Markdown content={step.resultContent} isAnimating={false} />
-                    </div>
-                  </div>
-                ) : null}
+                      {/* 调用参数 */}
+                      {sub.callContent ? (
+                        <div className="rounded-md border border-blue-500/10 bg-blue-500/[0.04] p-2">
+                          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-blue-600/80 dark:text-blue-400/80">
+                            <IconToolKit className="size-3" />
+                            <span>调用参数</span>
+                          </div>
+                          <div className="max-h-[120px] overflow-y-auto text-xs text-muted-foreground">
+                            <Markdown content={sub.callContent} isAnimating={false} />
+                          </div>
+                        </div>
+                      ) : null}
 
-                {/* 错误信息 */}
-                {step.errorContent ? (
-                  <div className="rounded-md border border-red-500/10 bg-red-500/[0.04] p-2">
-                    <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-red-600/80 dark:text-red-400/80">
-                      <IconClose className="size-3" />
-                      <span>执行失败</span>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      <Markdown content={step.errorContent} isAnimating={false} />
-                    </div>
-                  </div>
-                ) : null}
+                      {/* 执行结果 */}
+                      {sub.resultContent ? (
+                        <div className="rounded-md border border-green-500/10 bg-green-500/[0.04] p-2">
+                          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-green-600/80 dark:text-green-400/80">
+                            <IconCheck className="size-3" />
+                            <span>执行结果</span>
+                          </div>
+                          <div className="max-h-[200px] overflow-y-auto text-xs text-muted-foreground">
+                            <Markdown content={sub.resultContent} isAnimating={false} />
+                          </div>
+                        </div>
+                      ) : null}
 
-                {/* 无内容占位 */}
-                {!step.callContent && !step.resultContent && !step.errorContent ? (
-                  <div className="rounded-md border border-border/40 bg-muted/30 p-2 text-xs text-muted-foreground opacity-60">
-                    无内容
-                  </div>
-                ) : null}
+                      {/* 错误信息 */}
+                      {sub.errorContent ? (
+                        <div className="rounded-md border border-red-500/10 bg-red-500/[0.04] p-2">
+                          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-red-600/80 dark:text-red-400/80">
+                            <IconClose className="size-3" />
+                            <span>执行失败</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            <Markdown content={sub.errorContent} isAnimating={false} />
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {/* 无内容占位 */}
+                      {!sub.callContent && !sub.resultContent && !sub.errorContent ? (
+                        <div className="rounded-md border border-border/40 bg-muted/30 p-2 text-xs text-muted-foreground opacity-60">
+                          无内容
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <>
+                    {/* 调用参数 */}
+                    {step.callContent ? (
+                      <div className="rounded-md border border-blue-500/10 bg-blue-500/[0.04] p-2">
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-blue-600/80 dark:text-blue-400/80">
+                          <IconToolKit className="size-3" />
+                          <span>调用参数</span>
+                        </div>
+                        <div className="max-h-[120px] overflow-y-auto text-xs text-muted-foreground">
+                          <Markdown content={step.callContent} isAnimating={false} />
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* 执行结果 */}
+                    {step.resultContent ? (
+                      <div className="rounded-md border border-green-500/10 bg-green-500/[0.04] p-2">
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-green-600/80 dark:text-green-400/80">
+                          <IconCheck className="size-3" />
+                          <span>执行结果</span>
+                        </div>
+                        <div className="max-h-[200px] overflow-y-auto text-xs text-muted-foreground">
+                          <Markdown content={step.resultContent} isAnimating={false} />
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* 错误信息 */}
+                    {step.errorContent ? (
+                      <div className="rounded-md border border-red-500/10 bg-red-500/[0.04] p-2">
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-red-600/80 dark:text-red-400/80">
+                          <IconClose className="size-3" />
+                          <span>执行失败</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          <Markdown content={step.errorContent} isAnimating={false} />
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* 无内容占位 */}
+                    {!step.callContent && !step.resultContent && !step.errorContent ? (
+                      <div className="rounded-md border border-border/40 bg-muted/30 p-2 text-xs text-muted-foreground opacity-60">
+                        无内容
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </div>
             </motion.div>
           )}

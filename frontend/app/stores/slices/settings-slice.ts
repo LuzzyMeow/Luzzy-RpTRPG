@@ -140,42 +140,36 @@ export const DEFAULT_BUILTIN_TOOL_CONFIGS: BuiltinToolConfig[] = [
     type: "vector-memory",
     enabled: true,
     resultCount: 8,
-    searchGlobalMemory: false,
     enabledForCharacters: [],
   },
   {
     type: "keyword-search",
     enabled: true,
     resultCount: 8,
-    searchGlobalMemory: false,
     enabledForCharacters: [],
   },
   {
     type: "memory-recall",
     enabled: true,
     resultCount: 8,
-    searchGlobalMemory: false,
     enabledForCharacters: [],
   },
   {
     type: "world-recall", // v0.4.3 新增:世界书召回（嵌入模型）
     enabled: true, // v0.5.0: 默认开启
     resultCount: 8,
-    searchGlobalMemory: false,
     enabledForCharacters: [],
   },
   {
     type: "world-search", // v0.4.3 新增:世界书检索（关键词）
     enabled: true, // 默认开启，无需嵌入模型
     resultCount: 8,
-    searchGlobalMemory: false,
     enabledForCharacters: [],
   },
   {
     type: "anysearch",
     enabled: false,
     resultCount: 8,
-    searchGlobalMemory: false,
     enabledForCharacters: [],
     anysearchToken: "",
   },

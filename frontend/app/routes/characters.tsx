@@ -83,6 +83,7 @@ import { LUXI_CHARACTER_NAME } from "~/services/presetContent";
 import { toast } from "sonner";
 import { cn } from "~/lib/utils";
 import { useConfirm } from "~/components/luzzy/luzzy-confirm";
+import { useBindingDeleteConfirm } from "~/components/luzzy/luzzy-binding-delete-dialog";
 // v0.4.5: 方案 D - 使用 NativeBridge 替代 Capacitor Filesystem/Share
 import { isNativePlatform, writeFile, shareFile } from "~/services/nativeBridge";
 
@@ -350,6 +351,7 @@ export default function CharactersPage() {
   const importCharacterFromCard = useAppStore((s) => s.importCharacterFromCard);
   const searchCharacters = useAppStore((s) => s.searchCharacters);
   const confirm = useConfirm();
+  const confirmBindingDelete = useBindingDeleteConfirm();
   const navigate = useNavigate();
 
   // v0.3.4: 单击角色卡跳转聊天所需 store actions
@@ -497,6 +499,38 @@ export default function CharactersPage() {
   /** 删除 */
   const handleDelete = React.useCallback(
     async (c: Character) => {
+      // v0.5.6: 检查角色卡是否绑定世界书
+      const worldInfoId = c.extensions?.worldInfoId as string | undefined;
+      if (worldInfoId) {
+        // 查找绑定的世界书名称
+        let bindingName = worldInfoId;
+        try {
+          const worldInfoEntries = await getItem<WorldInfoEntry[]>("worldInfo", "worldInfo");
+          const bindingBook = (worldInfoEntries ?? []).find((e) => e.bookId === worldInfoId);
+          if (bindingBook?.bookName) bindingName = bindingBook.bookName;
+          else if (bindingBook?.name) bindingName = bindingBook.name;
+        } catch {
+          // 忽略查询失败，使用 worldInfoId 作为名称
+        }
+
+        const action = await confirmBindingDelete({
+          title: "删除角色卡",
+          description: `确定删除角色卡「${c.name}」吗？此操作不可撤销。`,
+          bindingName,
+          bindingType: "世界书",
+        });
+
+        if (action === "cancel") return;
+        try {
+          await deleteCharacter(c.uuid, { syncDeleteWorldBook: action === "syncDelete" });
+          toast.success(action === "syncDelete" ? "已删除角色卡及绑定世界书" : "已删除");
+        } catch (e) {
+          toast.error("删除失败：" + (e as Error).message);
+        }
+        return;
+      }
+
+      // 无绑定，走原有流程
       const ok = await confirm({
         title: "删除角色卡",
         description: `确定删除角色卡「${c.name}」吗？此操作不可撤销。`,
@@ -510,7 +544,7 @@ export default function CharactersPage() {
         toast.error("删除失败：" + (e as Error).message);
       }
     },
-    [deleteCharacter, confirm],
+    [deleteCharacter, confirm, confirmBindingDelete],
   );
 
   /** v0.3.4: 导出 PNG 角色卡（SillyTavern v2 格式 + 世界书同步写入 + 保存到相册） */

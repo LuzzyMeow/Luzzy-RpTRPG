@@ -1,10 +1,9 @@
 /**
  * 记忆页面（v0.2.0 重构）
  *
- * 三级架构 Tab：
+ * 两级架构 Tab：
  * 1. 会话记忆：当前会话的向量记忆分片查看（按角色 + 会话筛选）
  * 2. 长期记忆：跨会话级别记忆条目查看与检索
- * 3. 全局记忆：MEMORY.md 编辑与导出
  *
  * 顶部固定记忆设置卡片（启用开关 / 嵌入模型 / 嵌入供应商 / 召回深度 /
  * 向量 Top-K / 相似度阈值 / 记忆压缩）。
@@ -17,15 +16,7 @@ import {
   IconBook,
   IconSave,
   IconSearch,
-  IconDownload,
   IconClock,
-  IconGlobe,
-  IconPlus,
-  IconEdit,
-  IconTrash,
-  IconCheck,
-  IconClose,
-  IconPause,
   IconInfo,
   IconRefresh,
 } from "~/components/luzzy/luzzy-icons";
@@ -35,8 +26,6 @@ import type {
   VectorMemoryShard,
   MemoryEntry,
   ApiSettings,
-  AceSkill,
-  AceSkillbook,
   ApiProvider,
   Character,
 } from "~/types/luzzy";
@@ -49,22 +38,11 @@ import {
   searchAllMemory,
   type MemorySearchResult,
 } from "~/services/memoryService";
-import {
-  loadSkillbook,
-  saveSkillbook,
-  addSkill,
-  updateSkill,
-  removeSkill,
-  hardDeleteSkill,
-  getActiveSkills,
-  sortSkills,
-} from "~/services/aceSkillbookService";
 import { useAppStore } from "~/stores";
 import { parseModelName } from "~/services/providerService";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Textarea } from "~/components/ui/textarea";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -72,7 +50,6 @@ import {
   CardTitle,
   CardContent,
 } from "~/components/ui/card";
-import { Switch } from "~/components/ui/switch";
 import { Slider } from "~/components/ui/slider";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
@@ -82,14 +59,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogClose,
-} from "~/components/ui/dialog";
 import {
   Empty,
   EmptyHeader,
@@ -128,15 +97,13 @@ const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   compressionEnabled: false,
   compressionKeepRecent: 20,
   longTermMemoryCharacterIds: [],
-  globalMemoryCharacterIds: [],
 };
 
-type TabKey = "session" | "long-term" | "global";
+type TabKey = "session" | "long-term";
 
 const TABS: { key: TabKey; label: string; icon: typeof IconBook }[] = [
   { key: "session", label: "会话记忆", icon: IconBook },
   { key: "long-term", label: "长期记忆", icon: IconClock },
-  { key: "global", label: "全局记忆", icon: IconGlobe },
 ];
 
 /** 格式化时间戳 */
@@ -262,7 +229,6 @@ export default function MemoryPage() {
                 {activeTab === "long-term" && (
                   <LongTermMemoryTab settings={settings} />
                 )}
-                {activeTab === "global" && <GlobalMemoryTab />}
               </motion.div>
             </AnimatePresence>
           </div>
@@ -279,7 +245,7 @@ export default function MemoryPage() {
 interface MemorySettingsCardProps {
   settings: MemorySettings;
   providers: ApiProvider[];
-  /** v0.4.4: 角色卡列表(用于长期记忆/全局记忆的角色卡启用选择) */
+  /** v0.4.4: 角色卡列表(用于长期记忆的角色卡启用选择) */
   characters: Character[];
   onUpdate: <K extends keyof MemorySettings>(
     key: K,
@@ -450,12 +416,12 @@ function MemorySettingsCard({
                   长期记忆启用角色卡
                   <span className="ml-2 text-xs text-muted-foreground">
                     {(settings.longTermMemoryCharacterIds ?? []).length === 0
-                      ? "全部角色卡"
+                      ? "全部禁用"
                       : `${(settings.longTermMemoryCharacterIds ?? []).length} 个角色卡`}
                   </span>
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  选择启用长期记忆的角色卡(不选则对所有角色卡启用)
+                  选择启用长期记忆的角色卡(不选则全部角色卡均不启用)
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {characters.length === 0 ? (
@@ -473,51 +439,6 @@ function MemorySettingsCard({
                               ? current.filter((id) => id !== c.uuid)
                               : [...current, c.uuid];
                             onUpdate("longTermMemoryCharacterIds", next);
-                          }}
-                          className={cn(
-                            "rounded-md border px-2 py-1 text-xs transition-colors",
-                            selected
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-border bg-background text-muted-foreground hover:bg-muted/50",
-                          )}
-                        >
-                          {c.name}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* v0.4.4: 全局记忆角色卡启用选择 */}
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">
-                  全局记忆启用角色卡
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {(settings.globalMemoryCharacterIds ?? []).length === 0
-                      ? "全部角色卡"
-                      : `${(settings.globalMemoryCharacterIds ?? []).length} 个角色卡`}
-                  </span>
-                </label>
-                <p className="text-xs text-muted-foreground">
-                  选择启用全局记忆(ACE Skillbook)的角色卡(不选则对所有角色卡启用)
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {characters.length === 0 ? (
-                    <span className="text-xs text-muted-foreground">暂无角色卡</span>
-                  ) : (
-                    characters.map((c) => {
-                      const selected = (settings.globalMemoryCharacterIds ?? []).includes(c.uuid);
-                      return (
-                        <button
-                          key={c.uuid}
-                          type="button"
-                          onClick={() => {
-                            const current = settings.globalMemoryCharacterIds ?? [];
-                            const next = selected
-                              ? current.filter((id) => id !== c.uuid)
-                              : [...current, c.uuid];
-                            onUpdate("globalMemoryCharacterIds", next);
                           }}
                           className={cn(
                             "rounded-md border px-2 py-1 text-xs transition-colors",
@@ -1016,497 +937,6 @@ function LongTermMemoryTab({ settings }: LongTermMemoryTabProps) {
           </CardContent>
         </Card>
     </div>
-  );
-}
-
-// ============================================================================
-// 全局记忆 Tab（v0.3.0 ACE Skillbook 卡片列表）
-// ============================================================================
-
-function GlobalMemoryTab() {
-  const [skillbook, setSkillbook] = React.useState<AceSkillbook | null>(null);
-  const [editingSkill, setEditingSkill] = React.useState<AceSkill | null>(null);
-  const [isAddingNew, setIsAddingNew] = React.useState(false);
-  const [loaded, setLoaded] = React.useState(false);
-
-  /** 加载 Skillbook */
-  React.useEffect(() => {
-    void (async () => {
-      try {
-        const book = await loadSkillbook();
-        setSkillbook(book);
-      } catch (e) {
-        toast.error("加载全局记忆失败：" + (e as Error).message);
-      } finally {
-        setLoaded(true);
-      }
-    })();
-  }, []);
-
-  /** 保存 Skillbook */
-  const handleSave = React.useCallback(async (book: AceSkillbook) => {
-    try {
-      await saveSkillbook(book);
-      setSkillbook({ ...book });
-    } catch (e) {
-      toast.error("保存失败：" + (e as Error).message);
-    }
-  }, []);
-
-  /** 新增策略 */
-  const handleAddNew = React.useCallback(() => {
-    setIsAddingNew(true);
-    setEditingSkill(null);
-  }, []);
-
-  /** 编辑策略 */
-  const handleEdit = React.useCallback((skill: AceSkill) => {
-    setEditingSkill(skill);
-    setIsAddingNew(false);
-  }, []);
-
-  /** 保存编辑（新增或更新） */
-  const handleSaveEdit = React.useCallback(
-    async (data: { category: string; content: string; active: boolean }) => {
-      if (!skillbook) return;
-      const book = { ...skillbook, skills: [...skillbook.skills] };
-      if (isAddingNew) {
-        addSkill(book, data.content, data.category, "manual");
-        toast.success("已新增策略");
-      } else if (editingSkill) {
-        updateSkill(book, editingSkill.id, {
-          category: data.category,
-          content: data.content,
-          active: data.active,
-        });
-        toast.success("已保存");
-      }
-      await handleSave(book);
-      setEditingSkill(null);
-      setIsAddingNew(false);
-    },
-    [skillbook, isAddingNew, editingSkill, handleSave],
-  );
-
-  /** 切换启用/停用 */
-  const handleToggleActive = React.useCallback(
-    async (skill: AceSkill) => {
-      if (!skillbook) return;
-      const book = { ...skillbook, skills: [...skillbook.skills] };
-      updateSkill(book, skill.id, { active: !skill.active });
-      await handleSave(book);
-    },
-    [skillbook, handleSave],
-  );
-
-  /** 软删除 */
-  const handleSoftDelete = React.useCallback(
-    async (skill: AceSkill) => {
-      if (!skillbook) return;
-      const book = { ...skillbook, skills: [...skillbook.skills] };
-      removeSkill(book, skill.id);
-      await handleSave(book);
-      setEditingSkill(null);
-      toast.success("已停用策略");
-    },
-    [skillbook, handleSave],
-  );
-
-  /** 硬删除 */
-  const handleHardDelete = React.useCallback(
-    async (skill: AceSkill) => {
-      if (!skillbook) return;
-      const book = { ...skillbook, skills: [...skillbook.skills] };
-      hardDeleteSkill(book, skill.id);
-      await handleSave(book);
-      setEditingSkill(null);
-      toast.success("已删除策略");
-    },
-    [skillbook, handleSave],
-  );
-
-  /** 导出全部策略为 markdown */
-  const handleExport = React.useCallback(async () => {
-    if (!skillbook) return;
-    const active = getActiveSkills(skillbook);
-    const text = active.map((s) => `- [${s.category}] ${s.content}`).join("\n");
-    const blob = new Blob([text || "# (空)"], {
-      type: "text/markdown;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "MEMORY.md";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast.success("已导出 MEMORY.md");
-  }, [skillbook]);
-
-  const sortedSkills = React.useMemo(
-    () => (skillbook ? sortSkills(skillbook.skills) : []),
-    [skillbook],
-  );
-  const activeCount = sortedSkills.filter((s) => s.active).length;
-  const inactiveCount = sortedSkills.length - activeCount;
-
-  if (!loaded) {
-    return (
-      <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-        加载中...
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-4 p-4 pb-8">
-        {/* 顶部统计栏 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <IconGlobe className="size-4" />
-                全局记忆
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleExport()}
-                  disabled={sortedSkills.length === 0}
-                  {...pressable}
-                >
-                  <IconDownload className="mr-1.5 size-4" />
-                  导出
-                </Button>
-                <Button size="sm" onClick={handleAddNew} {...pressable}>
-                  <IconPlus className="mr-1.5 size-4" />
-                  新增
-                </Button>
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              <span>
-                全部策略{" "}
-                <span className="font-semibold text-foreground">
-                  {sortedSkills.length}
-                </span>{" "}
-                条
-              </span>
-              <span className="text-muted-foreground/50">·</span>
-              <span>
-                启用{" "}
-                <span className="font-semibold text-green-500">
-                  {activeCount}
-                </span>
-              </span>
-              <span className="text-muted-foreground/50">·</span>
-              <span>
-                停用{" "}
-                <span className="font-semibold text-muted-foreground">
-                  {inactiveCount}
-                </span>
-              </span>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              全局记忆将注入到所有对话的系统提示中。v0.3.0
-              升级为 ACE 策略手册，支持分类、评分与自动反思。
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* 策略卡片列表 */}
-        {sortedSkills.length === 0 ? (
-          <EmptyState
-            icon={<IconGlobe className="size-8" />}
-            title="暂无全局记忆策略"
-            description="点击右上角「新增」添加第一条策略，或在聊天中由 ACE 自动反思生成。"
-          />
-        ) : (
-          <div className="flex flex-col gap-2">
-            {sortedSkills.map((skill, idx) => (
-              <motion.div
-                key={skill.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.03, duration: 0.2 }}
-              >
-                <SkillCard
-                  skill={skill}
-                  onEdit={() => handleEdit(skill)}
-                  onToggleActive={() => void handleToggleActive(skill)}
-                />
-              </motion.div>
-            ))}
-          </div>
-        )}
-
-        {/* 编辑/新增 Dialog */}
-        <SkillEditDialog
-          open={isAddingNew || editingSkill !== null}
-          skill={editingSkill}
-          isAddingNew={isAddingNew}
-          onSave={handleSaveEdit}
-          onClose={() => {
-            setEditingSkill(null);
-            setIsAddingNew(false);
-          }}
-          onSoftDelete={editingSkill ? () => void handleSoftDelete(editingSkill) : undefined}
-          onHardDelete={editingSkill ? () => void handleHardDelete(editingSkill) : undefined}
-        />
-    </div>
-  );
-}
-
-// ============================================================================
-// 策略卡片组件
-// ============================================================================
-
-interface SkillCardProps {
-  skill: AceSkill;
-  onEdit: () => void;
-  onToggleActive: () => void;
-}
-
-function SkillCard({ skill, onEdit, onToggleActive }: SkillCardProps) {
-  const score = skill.helpfulCount - skill.harmfulCount;
-  return (
-    <Card
-      className={`cursor-pointer transition-all hover:shadow-md ${
-        !skill.active ? "opacity-60" : ""
-      }`}
-      onClick={onEdit}
-    >
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex flex-1 flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="text-xs">
-                {skill.category}
-              </Badge>
-              {skill.source === "manual" ? (
-                <Badge variant="outline" className="text-xs">
-                  手动
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="text-xs text-blue-500">
-                  自动
-                </Badge>
-              )}
-              {!skill.active && (
-                <Badge variant="outline" className="text-xs text-muted-foreground">
-                  已停用
-                </Badge>
-              )}
-            </div>
-            <p className="text-sm leading-relaxed">{skill.content}</p>
-            <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-0.5">
-                <IconCheck className="size-3 text-green-500" />
-                {skill.helpfulCount}
-              </span>
-              <span className="flex items-center gap-0.5">
-                <IconClose className="size-3 text-red-500" />
-                {skill.harmfulCount}
-              </span>
-              <span className="flex items-center gap-0.5">
-                <IconPause className="size-3" />
-                {skill.neutralCount}
-              </span>
-              {score !== 0 && (
-                <span
-                  className={`font-medium ${score > 0 ? "text-green-500" : "text-red-500"}`}
-                >
-                  分数 {score > 0 ? "+" : ""}
-                  {score}
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleActive();
-              }}
-              title={skill.active ? "停用" : "启用"}
-            >
-              {skill.active ? (
-                <IconPause className="size-4" />
-              ) : (
-                <IconCheck className="size-4" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-            >
-              <IconEdit className="size-4" />
-            </Button>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ============================================================================
-// 策略编辑 Dialog
-// ============================================================================
-
-interface SkillEditDialogProps {
-  open: boolean;
-  skill: AceSkill | null;
-  isAddingNew: boolean;
-  onSave: (data: { category: string; content: string; active: boolean }) => void;
-  onClose: () => void;
-  onSoftDelete?: () => void;
-  onHardDelete?: () => void;
-}
-
-function SkillEditDialog({
-  open,
-  skill,
-  isAddingNew,
-  onSave,
-  onClose,
-  onSoftDelete,
-  onHardDelete,
-}: SkillEditDialogProps) {
-  const [category, setCategory] = React.useState("");
-  const [content, setContent] = React.useState("");
-  const [active, setActive] = React.useState(true);
-
-  React.useEffect(() => {
-    if (open) {
-      if (skill) {
-        setCategory(skill.category);
-        setContent(skill.content);
-        setActive(skill.active);
-      } else {
-        setCategory("general");
-        setContent("");
-        setActive(true);
-      }
-    }
-  }, [open, skill]);
-
-  const handleSave = () => {
-    if (!content.trim()) {
-      toast.error("策略内容不能为空");
-      return;
-    }
-    onSave({ category: category.trim() || "general", content: content.trim(), active });
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[90vh] min-w-0 overflow-hidden max-w-md">
-        <DialogHeader>
-          <DialogTitle>
-            {isAddingNew ? "新增策略" : "编辑策略"}
-          </DialogTitle>
-        </DialogHeader>
-        <ScrollArea className="flex-1 min-h-0 pr-2">
-        <div className="flex flex-col gap-4 py-2">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">分类</label>
-            <Input
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              placeholder="如：tone, format, safety, context"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">策略内容</label>
-            <Textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder="可复用的策略描述，将注入到所有对话的系统提示中..."
-              rows={5}
-              className="resize-y"
-            />
-          </div>
-          {!isAddingNew && skill && (
-            <>
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">启用状态</span>
-                  <span className="text-xs text-muted-foreground">
-                    停用后不再注入，但保留数据
-                  </span>
-                </div>
-                <Switch checked={active} onCheckedChange={setActive} />
-              </div>
-              <div className="flex items-center gap-4 rounded-lg border p-3 text-xs text-muted-foreground">
-                <span className="flex items-center gap-0.5">
-                  <IconCheck className="size-3 text-green-500" />
-                  有帮助 {skill.helpfulCount}
-                </span>
-                <span className="flex items-center gap-0.5">
-                  <IconClose className="size-3 text-red-500" />
-                  有害 {skill.harmfulCount}
-                </span>
-                <span className="flex items-center gap-0.5">
-                  <IconPause className="size-3" />
-                  中性 {skill.neutralCount}
-                </span>
-                {skill.source && (
-                  <span>来源：{skill.source === "manual" ? "手动" : "自动"}</span>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-        </ScrollArea>
-        {/* v0.4.0: 移除 flex-row 强制覆盖，恢复移动端默认 flex-col-reverse 布局，修复按钮重叠 */}
-        <DialogFooter>
-          <div className="flex gap-1">
-            {!isAddingNew && skill && onSoftDelete && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                onClick={onSoftDelete}
-                disabled={!skill.active}
-              >
-                <IconPause className="mr-1 size-4" />
-                停用
-              </Button>
-            )}
-            {!isAddingNew && skill && onHardDelete && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive"
-                onClick={onHardDelete}
-              >
-                <IconTrash className="mr-1 size-4" />
-                删除
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <DialogClose asChild>
-              <Button variant="outline">取消</Button>
-            </DialogClose>
-            <Button onClick={handleSave}>
-              <IconSave className="mr-1.5 size-4" />
-              保存
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

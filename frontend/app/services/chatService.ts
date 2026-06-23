@@ -11,7 +11,6 @@ import type {
   UserProfile,
   Preset,
   WorldInfoEntry,
-  GlobalMemory,
   ApiSettings,
   ApiProvider,
   MemorySettings,
@@ -34,11 +33,6 @@ import {
   compressContext,
 } from '~/services/memoryService';
 import { LUXI_CHARACTER_NAME } from '~/services/presetContent';
-import {
-  loadSkillbook,
-  getActiveSkills,
-  renderSkillbookForInjection,
-} from '~/services/aceSkillbookService';
 import { logger } from '~/services/logger';
 
 // ============================================================================
@@ -67,7 +61,6 @@ export interface BuildContextParams {
   user: UserProfile;
   presets: Preset[];
   worldInfoEntries: WorldInfoEntry[];
-  globalMemory: GlobalMemory | null;
   settings: ApiSettings;
   apiProviders: ApiProvider[];
   apiProviderKeys: Record<string, string>;
@@ -77,8 +70,6 @@ export interface BuildContextParams {
   memorySettings?: MemorySettings;
   /** 当前会话 ID（用于记忆压缩时识别可移除的轮次） */
   sessionId?: string;
-  /** 是否在向量记忆召回时同步检索全局记忆（v0.3.0 新增） */
-  searchGlobalMemory?: boolean;
   /** v0.4.3: 内置工具配置（用于注入工具描述到 system prompt） */
   builtinToolConfigs?: BuiltinToolConfig[];
   /** v0.4.6: 用户工具（用于注入工具描述到 system prompt） */
@@ -91,8 +82,6 @@ export interface BuildContextParams {
 export interface BuildContextResult {
   systemPrompt: string;
   apiMessages: ApiMessage[];
-  /** v0.3.0 ACE: 本次注入的 active 策略 ID 列表（供 Reflector 评估用） */
-  appliedSkillIds?: string[];
 }
 
 // ============================================================================
@@ -108,37 +97,36 @@ export interface BuildContextResult {
  * 兼容 LUXI_PROMPT 的 5 步框架：模型根据当前角色选择 Step 数量。
  */
 const COT_OUTPUT_PROTOCOL = `<cot_output_protocol>
-【本阶段唯一任务 — CoT 思考链生成】
-你正处于三请求架构的第 2 阶段。本阶段你只需要输出思考链，不需要也不允许输出正文回复。
-正文将在第 3 阶段由独立的请求生成，届时你会有完整的上下文。
-请专注于深度推理，不要急于组织最终回复文本。
+【绝对禁令 — 本阶段只输出思考链，禁止输出正文】
+你正处于三请求架构的第 2 阶段。你的唯一职责是输出内部思考链（CoT）。
+本阶段不需要、不允许、禁止输出任何剧情正文、角色对话、场景描写或面向用户的回复文本。
+正文将在第 3 阶段由独立请求生成，届时你会有完整上下文。
+如果你发现自己正在写小说、描写场景、组织最终回复或以角色身份说话，请立即停止——你走错阶段了。
 
-【输出格式强制要求 - 思考链协议】
-你可以通过以下两种方式之一输出思考链：
+【输出格式强制要求 — 二选一】
 
-方式 A（推荐）：直接在 reasoning_content 字段输出思考链
-- 你的推理过程直接在思考字段中展开，系统会自动捕获并逐字流式显示
-- content 字段留空或仅输出占位符即可
-- 此方式下思考链可以完整逐字流式显示，无需标签包裹
+方式 A（强烈推荐）：使用 reasoning_content 字段
+- 将所有推理过程写到 reasoning_content 字段
+- content 字段必须留空，或只输出一个占位符："（思考中...）"
+- 禁止在 content 字段写任何推理或正文
 
-方式 B：在 content 字段使用 <cot> 标签
-1. 以 <cot> 标签开始思考链
-2. 按系统预设中定义的 Step 顺序，逐一输出每个步骤的思考内容
-3. 每个 Step 必须以 **Step N：步骤标题** 格式开头（N 为步骤编号，与预设中的 Step 编号对应）
-4. 每个 Step 之间必须用空行（双换行 \\n\\n）分隔，确保每个 Step 独立成段
-5. 所有 Step 输出完毕后，必须以 </cot> 标签关闭思考链
-6. 不要在思考链后输出正文（本阶段不生成正文）
+方式 B（仅当不支持 reasoning_content 时使用）：content 字段必须被 <cot> 标签完整包裹
+1. 以 <cot> 开始，以 </cot> 结束
+2. 标签内按系统预设的 Step 顺序输出，每个 Step 以 **Step N：步骤标题** 开头
+3. Step 之间用空行分隔
+4. </cot> 之后不得有任何字符——任何 <cot> 标签外的内容都会被系统丢弃
 
-思考链内容要求：
-- 深度分析当前情境、角色状态、可能的剧情走向
-- 所有角色（含鹿溪）统一按 LUZZY 预设的框架输出（Step 1-14）
-- 必须输出完整的所有 Step，不得跳过、合并或缩写
-- 上述角色设定、世界书内容仅作为你推理的参考素材，本阶段不据此生成正文
+【必须遵守的格式示例】
+<example_A>
+content: （思考中...）
+reasoning_content: Step 1: ...\n\nStep 2: ...
+</example_A>
+<example_B>
+content: <cot>Step 1: ...\n\nStep 2: ...</cot>
+</example_B>
 
-【reasoning_content 字段优先】
-如果你的推理框架支持 reasoning_content 字段，优先使用方式 A。
-思考链内容将自动从 reasoning 字段提取，无需 <cot> 标签。
-此情况下 content 字段仅输出简短占位符（如 "（思考中...）"）即可。
+【历史消息说明】
+上方聊天记录中的 assistant 回复仅供你掌握剧情事实，不是让你模仿或续写。本阶段不要复述、不要续写、不要引用这些回复的文本。
 </cot_output_protocol>`;
 
 /**
@@ -171,6 +159,19 @@ NO_TOOLS
 如果你发现自己正在写小说、描写场景或以角色身份说话，请立即停止——你走错方向了。
 
 可用工具列表见下方 <available_tools> 部分（若无则为无可用工具，直接回复 NO_TOOLS）。
+
+【示例】
+用户输入："（四处看看）"
+正确输出：NO_TOOLS
+
+用户输入："你还记得我们上次在酒馆的对话吗？"
+正确输出：<tool_calls>vector-memory:上次酒馆对话</tool_calls>
+
+用户输入："这个世界的政治格局是怎样的？"
+正确输出：<tool_calls>world-recall:政治格局</tool_calls>
+
+【再次强调】
+你的输出只能是 NO_TOOLS 或 <tool_calls>...</tool_calls>，绝不能是其他任何内容。
 </tool_decision_phase>`;
 
 /** extractMemory 参数 */
@@ -520,14 +521,12 @@ export const buildContext = async (
     user,
     presets,
     worldInfoEntries,
-    globalMemory,
     settings,
     apiProviders,
     apiProviderKeys: _apiProviderKeys,
     vectorMemoryShards,
     memorySettings,
     sessionId,
-    searchGlobalMemory: _searchGlobalMemory = false,
     phase = 2, // v0.5.1: 默认 phase=2 (CoT)，兼容旧调用
   } = params;
 
@@ -556,11 +555,14 @@ export const buildContext = async (
     .map((p) => {
       // 非鹿溪角色卡时,对鹿溪预设仅保留 CoT 框架部分
       if (!isLuxiCharacter && p.name === 'Luzzy' && p.isBuiltin) {
-        const cotFrameworkStart = p.content.indexOf('## 角色扮演通用 CoT 推理框架');
-        if (cotFrameworkStart >= 0) {
-          return p.content.slice(cotFrameworkStart);
+        // v0.5.6-fix: 修正边界字符串为实际预设内容中的标题
+        // 保留 preamble（"你仅被允许..."）+ Step 2-7（CoT 框架），跳过 Step 1（NSFW/越狱协议）
+        const step1Idx = p.content.indexOf('### Step 1');
+        const step2Idx = p.content.indexOf('### Step 2');
+        if (step1Idx >= 0 && step2Idx > step1Idx) {
+          return p.content.slice(0, step1Idx) + p.content.slice(step2Idx);
         }
-        return ''; // 找不到 CoT 框架分界线,跳过鹿溪预设
+        return p.content; // 找不到分界线，注入完整预设（不跳过）
       }
       return p.content;
     })
@@ -615,44 +617,9 @@ export const buildContext = async (
     `[User Info]\nName: ${user.name}\nDescription: ${user.description || ''}`,
   );
 
-  // 3.6 全局记忆（v0.3.0: ACE Skillbook 注入，兼容旧 GlobalMemory）
-  // v0.4.4: 支持按角色卡启用(globalMemoryCharacterIds 为空表示对所有角色卡启用)
-  const globalMemoryEnabledForCharacter = (() => {
-    const ids = memorySettings?.globalMemoryCharacterIds;
-    if (!ids || ids.length === 0) return true; // 空列表:所有角色卡启用
-    return character ? ids.includes(character.uuid) : false;
-  })();
-
-  let aceMemoryText = '';
-  let aceActiveSkillIds: string[] = [];
-  if (globalMemoryEnabledForCharacter) {
-    try {
-      const skillbook = await loadSkillbook();
-      const activeSkills = getActiveSkills(skillbook);
-      if (activeSkills.length > 0) {
-        aceMemoryText = renderSkillbookForInjection(skillbook);
-        aceActiveSkillIds = activeSkills.map((s) => s.id);
-        // v0.4.3: 日志记录 ACE 记忆注入
-        logger.info("memory", `ACE 记忆注入（active策略=${activeSkills.length}）`);
-      }
-    } catch {
-      // Skillbook 加载失败不阻塞主流程
-      logger.warn("memory", "ACE Skillbook 加载失败");
-    }
-  } else {
-    logger.info("memory", `全局记忆未对当前角色卡启用,跳过注入`);
-  }
-
-  if (aceMemoryText) {
-    systemPromptParts.push(
-      `<global_memory>\n${aceMemoryText}\n</global_memory>`,
-    );
-  } else if (globalMemoryEnabledForCharacter && globalMemory && globalMemory.content.trim()) {
-    // 回退：旧全局记忆（迁移前或迁移失败时）
-    systemPromptParts.push(
-      `<global_memory>\n${globalMemory.content.trim()}\n</global_memory>`,
-    );
-  }
+  // 3.6 全局记忆
+  // v0.5.6: ACE 记忆机制已删除，不再注入 <global_memory> 段落
+  // 向量记忆召回由 memory-recall 预执行（chat-slice.ts）处理
 
   // 3.7 向量记忆召回
   // v0.4.6: 已由 memory-recall 预执行（chat-slice.ts）处理——
@@ -685,7 +652,10 @@ export const buildContext = async (
   apiMessages.push({ role: 'system', content: systemPrompt });
 
   // 4.2 开场白（如果聊天记录为空或第一条不是开场白）
-  if (character && character.firstMessage) {
+  // v0.5.4-fix: phase=1 时跳过开场白注入，避免模型误将 assistant 消息视为对话结构而续写正文
+  // v0.5.6-fix: phase=2（CoT）也跳过，避免开场白 assistant 消息污染 CoT 推理
+  // 仅 phase=3（正文）需要开场白作为上下文参考
+  if (phase === 3 && character && character.firstMessage) {
     const hasFirstMesInHistory =
       messages.length > 0 &&
       messages[0].role === 'assistant' &&
@@ -768,58 +738,84 @@ export const buildContext = async (
   }
 
   // 4.4 聊天记录（移除 CoT 内容）
-  for (const msg of limitedMessages) {
-    // v0.4.6: 处理工具结果消息（metadata.isToolResult === true）
-    // 输出 OpenAI function calling 协议的 role:'tool' 消息
-    if (msg.metadata?.isToolResult && msg.metadata?.toolCallId) {
-      apiMessages.push({
-        role: 'tool',
-        content: msg.content,
-        tool_call_id: msg.metadata.toolCallId,
-      });
-      continue;
+  // v0.5.4-fix: phase=1 时仅保留最后一条 user 消息，避免完整历史对话引导模型续写正文
+  // v0.5.5-arch-fix: phase=2（CoT）时同样高度截断历史，不暴露 assistant 剧情回复，
+  //   避免模型把前文的剧情文本当作续写模板。CoT 阶段只需要用户输入和工具结果。
+  if (phase === 1 || phase === 2) {
+    const recentUserMsgs = [...limitedMessages]
+      .reverse()
+      .filter((m) => m.role === "user")
+      .slice(0, phase === 1 ? 1 : 3)
+      .reverse();
+    for (const msg of recentUserMsgs) {
+      apiMessages.push({ role: "user", content: msg.content });
     }
+    // phase=2 时额外追加工具结果，保证 CoT 推理能看到检索到的素材
+    if (phase === 2) {
+      for (const msg of limitedMessages) {
+        if (msg.metadata?.isToolResult && msg.metadata?.toolCallId) {
+          apiMessages.push({
+            role: 'tool',
+            content: msg.content,
+            tool_call_id: msg.metadata.toolCallId,
+          });
+        }
+      }
+    }
+  } else {
+    for (const msg of limitedMessages) {
+      // v0.4.6: 处理工具结果消息（metadata.isToolResult === true）
+      // 输出 OpenAI function calling 协议的 role:'tool' 消息
+      if (msg.metadata?.isToolResult && msg.metadata?.toolCallId) {
+        apiMessages.push({
+          role: 'tool',
+          content: msg.content,
+          tool_call_id: msg.metadata.toolCallId,
+        });
+        continue;
+      }
 
-    // v0.4.6: 处理带 tool_calls 的 assistant 消息
-    // 输出 OpenAI function calling 协议的 assistant 消息（携带 tool_calls 数组）
-    if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+      // v0.4.6: 处理带 tool_calls 的 assistant 消息
+      // 输出 OpenAI function calling 协议的 assistant 消息（携带 tool_calls 数组）
+      if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+        const parsed = parseCot(msg.content || '');
+        apiMessages.push({
+          role: 'assistant',
+          content: parsed.main || '',
+          tool_calls: msg.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: 'function' as const,
+            function: {
+              name: tc.toolName,
+              arguments: typeof tc.query === 'string' ? JSON.stringify({ query: tc.query }) : '{}',
+            },
+          })),
+        });
+        continue;
+      }
+
+      // 普通消息处理（现有逻辑）
       const parsed = parseCot(msg.content || '');
-      apiMessages.push({
-        role: 'assistant',
-        content: parsed.main || '',
-        tool_calls: msg.toolCalls.map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: {
-            name: tc.toolName,
-            arguments: typeof tc.query === 'string' ? JSON.stringify({ query: tc.query }) : '{}',
-          },
-        })),
-      });
-      continue;
-    }
-
-    // 普通消息处理（现有逻辑）
-    const parsed = parseCot(msg.content || '');
-    let content = parsed.main;
-    // 用户消息的系统指令保留
-    if (parsed.sys && msg.role === 'user') {
-      content += '\n\n[系统指令: ' + parsed.sys + ']';
-    }
-    content = content.trim();
-    if (content) {
-      apiMessages.push({
-        role: msg.role === 'user' ? 'user' : msg.role === 'system' ? 'system' : 'assistant',
-        content,
-        name: msg.role === 'user' ? user.name : character?.name,
-      });
+      let content = parsed.main;
+      // 用户消息的系统指令保留
+      if (parsed.sys && msg.role === 'user') {
+        content += '\n\n[系统指令: ' + parsed.sys + ']';
+      }
+      content = content.trim();
+      if (content) {
+        apiMessages.push({
+          role: msg.role === 'user' ? 'user' : msg.role === 'system' ? 'system' : 'assistant',
+          content,
+          name: msg.role === 'user' ? user.name : character?.name,
+        });
+      }
     }
   }
 
   // sessionId 仅用于记忆压缩时识别可移除的轮次，此处保留参数以备扩展
   void sessionId;
 
-  return { systemPrompt, apiMessages, appliedSkillIds: aceActiveSkillIds };
+  return { systemPrompt, apiMessages };
 };
 
 // ============================================================================
@@ -1159,9 +1155,12 @@ export const extractMemory = async (
 
   // 异步提取记忆（不阻塞主流程）
   try {
-    // 移除 CoT 内容，只保留正文
-    const userContent = parseCot(userMessage.content || '').main;
-    const assistantContent = parseCot(assistantMessage.content || '').main;
+    // v0.5.6: 直接使用 message.content，不再调用 parseCot
+    // 原因：Fix 1 已确保 assistant 的 content 是纯叙事正文（phase=3 的 content）
+    // user 的 content 本身就是用户原始文本，无需剥离 <cot> 标签
+    // 之前调用 parseCot 会错误地剥离正文中的 CoT 标签，导致向量记忆切片内容不正确
+    const userContent = userMessage.content || '';
+    const assistantContent = assistantMessage.content || '';
 
     if (!userContent.trim() || !assistantContent.trim()) return;
 

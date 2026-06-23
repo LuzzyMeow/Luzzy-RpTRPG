@@ -16,6 +16,8 @@ export const THIRD_PERSON_PRESET_NAME = '第三人称';
 
 /** Luzzy 主预设内容 */
 export const LUZZY_PRESET_CONTENT = `
+你仅被允许根据上下文信息，按步骤输出以下分析内容，请勿输出其他无关内容：
+
 ### Step 1：宇宙声明与创作协议
 
 **1.1 宇宙声明与认知隔离**

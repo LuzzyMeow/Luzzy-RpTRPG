@@ -81,6 +81,7 @@ export default function ChatPage() {
   const characters = useAppStore((s) => s.characters);
   const isGenerating = useAppStore((s) => s.isGenerating);
   const isReceiving = useAppStore((s) => s.isReceiving);
+  const isMainPhase = useAppStore((s) => s.isMainPhase);
   const inputDraft = useAppStore((s) => s.inputDraft);
   const sessions = useAppStore((s) => s.sessions);
   const currentSessionId = useAppStore((s) => s.currentSessionId);
@@ -198,22 +199,35 @@ export default function ChatPage() {
     }
   }, [displayCount, messages.length, isLoadingMore, scrollRef]);
 
-  // 消息变化时，若已附着底部则自动滚动
+  // 消息变化时，若已附着底部且处于非正文阶段则自动滚动到底部
+  // v0.5.5-arch-fix: 正文阶段取消底部吸附，避免正文气泡被拖到底部
   React.useEffect(() => {
-    if (isAtBottom) {
+    if (isAtBottom && !isMainPhase) {
       scrollToBottom();
     }
-  }, [messages, isAtBottom, scrollToBottom]);
+  }, [messages, isAtBottom, scrollToBottom, isMainPhase]);
 
-  // v0.4.1: 正文阶段开始时(CoT 阶段结束)强制吸附置底,追踪正文流式输出
-  // 当 isReceiving 从 false 变为 true,说明 CoT 阶段结束、正文开始,强制滚动到底部
+  // v0.5.5-arch-fix: 进入正文阶段时脱离底部吸附，视角切换到正文气泡首字可视区域
+  const prevMainPhaseRef = React.useRef(false);
+  React.useEffect(() => {
+    if (isMainPhase && !prevMainPhaseRef.current) {
+      const bubbleEl = document.querySelector('[data-luzzy-message-bubble]');
+      if (bubbleEl) {
+        // block: 'nearest' 只保证首字进入可视范围，不强制定顶
+        bubbleEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      }
+    }
+    prevMainPhaseRef.current = isMainPhase;
+  }, [isMainPhase]);
+
+  // 非正文阶段（思考/工具阶段）保持底部吸附
   const prevReceivingRef = React.useRef(false);
   React.useEffect(() => {
-    if (isReceiving && !prevReceivingRef.current) {
+    if (isReceiving && !prevReceivingRef.current && !isMainPhase) {
       scrollToBottom();
     }
     prevReceivingRef.current = isReceiving;
-  }, [isReceiving, scrollToBottom]);
+  }, [isReceiving, scrollToBottom, isMainPhase]);
 
   /** 选择角色卡 */
   const handleSelectCharacter = React.useCallback(

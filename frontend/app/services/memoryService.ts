@@ -21,7 +21,6 @@ import type {
   ChatMessage,
   Character,
   MemorySettings,
-  GlobalMemory,
   VectorMemoryShard,
   ApiSettings,
   ApiProvider,
@@ -46,9 +45,6 @@ const MEMORY_VECTOR_BATCH_SIZE = 16;
 
 /** 嵌入 API 默认版本路径(仅当 baseUrl 不含版本时回退使用) */
 const EMBEDDING_API_DEFAULT_VERSION = 'v1';
-
-/** 全局记忆在 IndexedDB 中的存储键 */
-const GLOBAL_MEMORY_STORAGE_KEY = 'global_memory';
 
 // ============================================================================
 // Embedding 缓存层
@@ -644,37 +640,6 @@ export const searchVectorMemoryWithScore = async (
 };
 
 // ============================================================================
-// 全局记忆管理
-// ============================================================================
-
-/**
- * 获取全局记忆 MEMORY.md
- *
- * 从 IndexedDB 读取全局记忆内容。
- *
- * @returns 全局记忆对象，不存在则返回 null
- */
-export const getGlobalMemory = async (): Promise<GlobalMemory | null> => {
-  const data = await getItem<GlobalMemory>('memory', GLOBAL_MEMORY_STORAGE_KEY);
-  return data ?? null;
-};
-
-/**
- * 保存全局记忆
- *
- * 将全局记忆内容写入 IndexedDB，自动更新 updatedAt 时间戳。
- *
- * @param content - 全局记忆文本内容
- */
-export const setGlobalMemory = async (content: string): Promise<void> => {
-  const data: GlobalMemory = {
-    content,
-    updatedAt: Date.now(),
-  };
-  await setItem('memory', GLOBAL_MEMORY_STORAGE_KEY, data);
-};
-
-// ============================================================================
 // 向量记忆分片持久化
 // ============================================================================
 
@@ -1015,8 +980,6 @@ export const searchAllMemory = async (
   const sessionShards = await loadVectorMemoryShards(characterId, sessionId);
   // 加载长期记忆
   const longTermEntries = await loadLongTermMemory(characterId);
-  // 加载全局记忆
-  const globalMemory = await getGlobalMemory();
 
   if (type === 'keyword') {
     // 关键词匹配：会话记忆
@@ -1043,14 +1006,6 @@ export const searchAllMemory = async (
           turn: entry.turn,
         });
       }
-    }
-    // 关键词匹配：全局记忆
-    if (globalMemory?.content && globalMemory.content.toLowerCase().includes(qLower)) {
-      results.push({
-        scope: 'global',
-        content: globalMemory.content,
-        score: 1,
-      });
     }
   } else {
     // 语义搜索：会话向量记忆
@@ -1086,14 +1041,6 @@ export const searchAllMemory = async (
       providerKeys,
     );
     results.push(...longTermResults);
-    // 全局记忆做关键词匹配（全局记忆无嵌入向量）
-    if (globalMemory?.content && globalMemory.content.toLowerCase().includes(qLower)) {
-      results.push({
-        scope: 'global',
-        content: globalMemory.content,
-        score: 1,
-      });
-    }
   }
 
   return results;

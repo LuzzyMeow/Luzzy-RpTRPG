@@ -1,6 +1,165 @@
 # Changelog
 
-## v0.5.4
+## v0.5.6
+
+### 🎯 用户需求闭环：ACE 记忆机制删除、长期记忆过滤、绑定删除弹窗
+
+> 用户明确要求：删除 ACE 记忆机制及相关设置；长期记忆设置从"不选则全局启用"改为"不选则全部禁用"；
+> 角色卡/世界书绑定时删除弹窗提示是否同步删除。
+
+#### 删除 ACE 记忆机制（新增 4）
+
+- **完整删除 ACE 三服务**：`aceSkillbookService.ts`（509 行）、`aceReflectorService.ts`（293 行）、`aceSkillManagerService.ts`（168 行）全部移除
+- **chat-slice.ts**：移除 ACE 反思流程、`GlobalMemory` 类型导入、`globalMemoryCharacterIds` 默认值、`searchGlobalMemory` 变量计算、`globalMemory`/`searchGlobalMemory` 从 `buildContext` 调用中移除
+- **chatService.ts**：移除 `GlobalMemory` 类型导入、`globalMemory`/`searchGlobalMemory` 从 `BuildContextParams` 接口和 `buildContext` 解构中移除
+- **types/luzzy.ts**：移除 `GlobalMemory` 接口、`globalMemoryCharacterIds` 字段、`searchGlobalMemory` 字段、所有 ACE 类型定义（`AceSkillSource`、`AceSkillVerdict`、`AceSkill`、`AceSkillbook`、`AceSkillEvaluation`、`AceNewSkill`、`AceReflection`、`AceExecutionTrace`）
+- **memoryService.ts**：移除 `GLOBAL_MEMORY_STORAGE_KEY`、`getGlobalMemory`/`setGlobalMemory` 函数、`searchAllMemory` 中的全局记忆关键词匹配和语义搜索分支
+- **settings-slice.ts**：移除 6 个 `DEFAULT_BUILTIN_TOOL_CONFIGS` 中的 `searchGlobalMemory: false` 字段
+- **memory.tsx**：移除 ACE 服务导入、全局记忆 Tab、`GlobalMemoryTab`/`SkillCard`/`SkillEditDialog` 三个组件定义（约 490 行）、`globalMemoryCharacterIds` 默认值
+- **tools.tsx**：移除 `searchGlobalMemory` 开关 UI
+
+#### 长期记忆设置变更（新增 5）
+
+- **chat-slice.ts**：新增 `longTermMemoryEnabledForCharacter` 辅助变量，实现 `longTermMemoryCharacterIds` 过滤逻辑
+  - 空列表 = 所有角色卡的向量记忆均不启用
+  - 非空列表 = 仅启用列出的角色卡
+  - 应用到 4 处调用点：memory-recall 预执行条件、memory-recall 工具执行、vector-memory 工具执行、extractMemory 调用
+- **memory.tsx**：UI 文案修改 — 空列表显示"全部禁用"而非"全部角色卡"，提示文案改为"不选则全部角色卡均不启用"
+
+#### 角色卡/世界书绑定删除弹窗（新增 6）
+
+- **新建 `luzzy-binding-delete-dialog.tsx`**：基于 `luzzy-confirm.tsx` 的 Context + Hook 模式，扩展为三选一（取消 / 仅删除 / 同步删除）确认弹窗
+  - 使用 glassmorphism 风格，图标来自 game-icon-pack（IconLink、IconExclamation、IconTrash、IconClose）
+  - 三态丝滑动画：进入（spring scale + fade）、交互（pressable）、退出（fade out + scale down）
+  - 在 `root.tsx` 中 `ConfirmProvider` 内嵌套 `BindingDeleteConfirmProvider`
+- **characters.tsx**：删除角色卡时检查 `extensions.worldInfoId` 绑定，若有绑定则弹出绑定删除确认弹窗
+  - 选择"仅删除"：仅删除角色卡，保留绑定世界书
+  - 选择"同步删除"：删除角色卡 + 删除绑定的世界书条目
+- **character-slice.ts**：`deleteCharacter` 新增 `options?: { syncDeleteWorldBook?: boolean }` 参数，仅当 `syncDeleteWorldBook` 为 true 时执行世界书条目删除
+- **world-info.tsx**：删除世界书时检查是否有角色卡绑定此世界书，若有绑定则弹出绑定删除确认弹窗
+  - 选择"仅删除"：仅删除世界书条目，清理角色卡的 `worldInfoId` 引用
+  - 选择"同步删除"：删除世界书条目 + 删除绑定的角色卡
+
+#### 流式输出验证（Fix 3）
+
+- 经研究确认，流式输出修复实际已完整：
+  - **apiClient.ts**：XHR 每行让出 + 非流式回退让出 + Fetch 优先 + XHR 回退
+  - **markdown.tsx**：`useDeferredValue` 已存在（v0.5.4 添加）
+  - **luzzy-chat-message.tsx**：`React.memo` 自定义比较函数已存在
+- rikkahub 使用 Kotlin Flow + `mapLatest + flowOn(Dispatchers.Default)`，技术栈不同（Kotlin/Compose vs TypeScript/React），无法直接复制代码。设计模式已通过 React 18 `useDeferredValue` 移植，等价于 rikkahub 的后台 markdown 解析
+
+#### 翻译 fail to fetch 修复（新增 1）
+
+- **apiClient.ts**：新增 `sendRequestViaXHR` 和 `sendRequestViaFetch` 函数
+  - Fetch 优先，XHR 回退（Android WebView 兼容）
+  - 火山方舟 CodingPlan 供应商的翻译功能不再出现 fail to fetch
+
+#### 输入框对齐修复（新增 2）
+
+- **luzzy-chat-input.tsx**：移除全屏按钮的 `variant="ghost"`，使全屏按钮和发送按钮在同一水平线上
+
+#### 向量记忆切片修复（新增 3）
+
+- **chatService.ts**：移除 `parseCot` 调用，直接使用 `message.content` 进行向量记忆切片
+  - 现在切片内容为 user 原始文本和 AI 回复的正文，不再包含思考步骤内的文本
+
+---
+
+## v0.5.5
+
+### 🎯 用户需求闭环：流式输出、节点顺序、正文阶段滚动与折叠
+
+> 用户明确要求：所有输出内容（卡片内、卡片外、每个节点内部、正文气泡）都必须是流式输出；
+> 节点按顺序展示、未输出的节点不展示、到哪个步骤才蹦出哪个节点；
+> 所有节点输出完毕进入正文阶段时，自动取消底部吸附，把用户视角放在正文气泡首字位置（在屏幕显示范围内即可，不强制定顶）；
+> 自动折叠一级思考卡片；正文气泡也要从首字到尾字流式输出。
+
+#### 每个节点内部从首字到尾字流式输出（已验证并强化）
+
+- **`chat-slice.ts`**：`chunk.reasoningContent` 实时追加到 `accumulatedReasoning` 并同步更新 `brainstorm` 节点的 `content`；`chunk.content`（phase=cot）实时追加到 `accumulatedContent` 并同步更新 `cot_output` 节点的 `content`
+- **`luzzy-thinking-timeline.tsx`**：`ThinkingNode` 直接渲染 `step.content`，`Markdown isAnimating={isRunning}` 启用 Streamdown 按词淡入动画，节点内容随 SSE chunk 从首字到尾字增长，零滞后
+- **节点按顺序出现**：`brainstorm` / `cot_output` / `tool_call` / `tool_result` 等节点仅在对应 phase 收到第一个 chunk 时才 push 进 `agentSteps`，未输出的节点不会占位
+
+#### 思考卡片顺序编排修复
+
+- **`luzzy-thinking-timeline.tsx` 重写 `mergeSteps`**：此前使用 `splice(insertIndex, 0, toolStep)` 在已构建数组中插入工具节点，因后续空节点过滤导致索引错位，出现「头脑风暴→工具→头脑风暴→头脑风暴→CoT输出」的乱序
+- 修复后严格按固定顺序 push：
+  ```
+  头脑风暴(p1) → 工具调用（聚合） → 头脑风暴(p2) → CoT输出(p2) → 头脑风暴(p3)
+  ```
+- 空节点（无 content）在最终过滤时被剔除，不占位
+
+#### 正文阶段滚动与一级思考卡片折叠
+
+- **`chat.tsx`**：
+  - 新增 `prevMainPhaseRef`，监听 `isMainPhase` 从 `false → true` 触发正文阶段切换
+  - 进入正文阶段时调用 `bubbleEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })`，只保证正文气泡首字进入可视范围，不再强制定顶
+  - 正文阶段取消底部吸附：消息变化时的自动滚底仅在 `!isMainPhase` 时生效
+  - 非正文阶段（思考/工具阶段）仍保持底部吸附
+- **`luzzy-chat-message.tsx` 的 `CotCard`**：
+  - 读取 `isMainPhase` 状态，进入正文阶段立即 `setExpanded(false)` 折叠一级思考卡片
+  - 生成完全结束后也保持折叠
+
+#### 正文气泡流式输出强化
+
+- **`luzzy-chat-message.tsx`**：移除 `message.content?.endsWith("*-- 生成已中止 --*")` 对流式动画的关闭判断，正文 `Markdown` 的 `isAnimating` 在生成中且为最后一条消息时始终保持 `true`，确保正文气泡从首字到尾字持续流式动画
+
+---
+
+### 🧠 CoT 阶段不听话续写剧情修复
+
+> 用户反馈：即使经过 v0.5.4 修复，CoT 阶段模型仍会续写剧情，且思考卡片顺序混乱、气泡出现思考内容。
+> 根因：phase=2 历史消息仍保留 assistant 剧情回复，模型会模仿续写；`finalCotForReturn` 把 `<cot>` 标签外的剧情正文也带给了请求 3；请求 3 末尾指令太像任务说明，模型复述英文内心独白。
+
+#### 上下文隔离
+
+- **`chatService.ts`**：`phase=2` 时聊天记录不再保留完整 assistant 剧情回复，仅保留最近 3 条 `user` 消息 + 工具结果，彻底消除模型可模仿的续写模板
+
+#### CoT 输出严格过滤
+
+- **`chat-slice.ts` 的 `finalCotForReturn`**：phase=cot 时只取 `<cot>` 标签内内容 或 `reasoning_content`，`<cot>` 标签外的剧情正文直接丢弃，防止污染请求 3
+
+#### Prompt 强化
+
+- **`chatService.ts` 的 `COT_OUTPUT_PROTOCOL`**：
+  - 改为「绝对禁令」开头，明确告知本阶段只输出思考链、禁止输出任何剧情正文/角色对话/场景描写
+  - 提供方式 A（`reasoning_content` 字段）和方式 B（`<cot>` 标签）的强制格式示例
+  - 新增历史消息说明：assistant 回复仅供掌握剧情事实，不是让模型模仿续写
+- **`chat-slice.ts` 的 phase=3 末尾 user 指令**：从「基于以上思考过程，现在请直接输出正文回复」改为「以上是你的内部思考过程，仅供参考。现在请直接延续剧情输出正文回复，不要复述任务、不要解释你在做什么、不要输出英文计划或‘用户想要我…’之类的内心独白」
+
+#### 工具决策解析兼容
+
+- **`chat-slice.ts` 的 `parseToolDecisions`**：模型可能输出 `<vector-memory:query|keyword-search:query>` 形式的标签，此前只识别 `<tool_calls>...</tool_calls>` 或 `NO_TOOLS`。修复后同时兼容两种格式，确保工具调用链不被中断
+
+---
+
+### 🧠 思考卡片层级与流式行为修复（v0.5.4 补丁）
+
+#### 工具节点聚合为单一"工具调用"节点
+
+- **`luzzy-thinking-timeline.tsx`**：扩展 `CombinedToolStep` 类型，新增 `subItems` 聚合子项
+- **重写 `mergeSteps`**：两阶段处理（Phase 1 收集归类，Phase 2 固定顺序输出），严格按 `头脑风暴(p1) → 工具调用（聚合） → 头脑风暴(p2) → CoT 输出(p2) → 头脑风暴(p3)` 渲染
+- **`ToolNode` 固定高度**：展开区高度从 `max-h-[320px]` 调整为 `max-h-[360px]`；存在 `subItems` 时遍历渲染每个工具的"调用参数 + 执行结果"子区块
+
+#### 流式行为完整实现
+
+- **`chat-slice.ts`**：新增 `isMainPhase` 状态，进入 phase=3（正文）时置为 `true`，生成完成后重置
+- **`chat.tsx`**：`isReceiving` 从 `false → true` 时，若处于 `isMainPhase` 不再 `scrollToBottom()`，而是滚动到正文气泡首部（`data-luzzy-message-bubble`），实现"正文阶段脱底 + 视角切换"
+- **`luzzy-chat-message.tsx`**：正文气泡容器新增 `data-luzzy-message-bubble` 属性用于定位
+
+#### 请求1上下文污染修复
+
+通过日志 `LUZZY-logs-2026-06-23T05-05-32` 根因分析：模型在 phase=1 时因 `firstMessage` 注入 + 完整历史对话上下文，形成 `assistant → user → (待回复)` 结构而惯性续写正文。
+
+- **`chatService.ts`**：
+  - `firstMessage` 注入增加 `phase !== 1` 守卫，工具决策阶段不再注入角色开场白
+  - `phase === 1` 时聊天记录仅保留最后一条 `user` 消息，截断完整历史对话，消除"请续写"信号
+
+#### 计数徽章修正
+
+- **`luzzy-chat-message.tsx`**：`toolStepCount` 改为"有工具则 1"（聚合后最多 1）；`thinkingStepCount` 改为 `brainstorm + cot_output + thinking` 总数
+
+---
 
 ### 🌊 流式输出深度修复（核心 — 解决"一次性全部蹦出"问题）
 

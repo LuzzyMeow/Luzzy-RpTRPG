@@ -400,14 +400,6 @@ export interface MemorySettings {
   compressionKeepRecent: number;
   /** v0.4.4: 长期记忆启用的角色卡 UUID 列表(空表示对所有角色卡启用) */
   longTermMemoryCharacterIds?: string[];
-  /** v0.4.4: 全局记忆启用的角色卡 UUID 列表(空表示对所有角色卡启用) */
-  globalMemoryCharacterIds?: string[];
-}
-
-/** 全局记忆 */
-export interface GlobalMemory {
-  content: string;
-  updatedAt: number;
 }
 
 /** 向量记忆分片 */
@@ -677,91 +669,8 @@ export interface BuiltinToolConfig {
   enabled: boolean;
   /** 返回条数 */
   resultCount: number;
-  /** 是否检索全局记忆 */
-  searchGlobalMemory: boolean;
   /** 启用的角色卡 UUID 列表 */
   enabledForCharacters: string[];
   /** anysearch API Token（可选，不填使用匿名免费配额） */
   anysearchToken?: string;
-}
-
-// ============================================================================
-// ACE (Agentic Context Engineering) 记忆机制类型 — v0.3.0
-// ============================================================================
-
-/** ACE 策略来源标记 */
-export type AceSkillSource = 'manual' | 'auto';
-
-/** ACE 策略评估标签 */
-export type AceSkillVerdict = 'helpful' | 'harmful' | 'neutral';
-
-/** ACE 策略（Skill，此 Skill 非技能 SKILL） */
-export interface AceSkill {
-  /** 唯一标识，格式 mem-XXXXX，自增 */
-  id: string;
-  /** 分类标签 */
-  category: string;
-  /** 策略正文 */
-  content: string;
-  /** 被评估为"有帮助"的次数 */
-  helpfulCount: number;
-  /** 被评估为"有害"的次数 */
-  harmfulCount: number;
-  /** 被评估为"中性"的次数 */
-  neutralCount: number;
-  /** 是否启用，false 时停止注入但仍保留数据（软删除） */
-  active: boolean;
-  /** 创建时间 ISO 8601 */
-  createdAt: string;
-  /** 最后更新时间 ISO 8601 */
-  updatedAt: string;
-  /** 来源标记：manual(用户手动) | auto(自动反思) */
-  source?: AceSkillSource;
-}
-
-/** ACE Skillbook（策略手册） */
-export interface AceSkillbook {
-  /** 所有策略 */
-  skills: AceSkill[];
-  /** 最后一次自增 ID 数字 */
-  lastId: number;
-  /** 最后更新时间 ISO 8601 */
-  updatedAt: string;
-}
-
-/** 策略评估 */
-export interface AceSkillEvaluation {
-  skillId: string;
-  /** helpful / harmful / neutral */
-  verdict: AceSkillVerdict;
-  /** 评估理由 */
-  reason?: string;
-}
-
-/** 新策略建议 */
-export interface AceNewSkill {
-  category: string;
-  content: string;
-}
-
-/** ACE 反思结果 */
-export interface AceReflection {
-  /** 策略评估标签 */
-  evaluations: AceSkillEvaluation[];
-  /** 改进建议 / 新策略 */
-  newSkills: AceNewSkill[];
-}
-
-/** ACE 执行轨迹（用于反思的输入，仅含摘要不含完整内容） */
-export interface AceExecutionTrace {
-  /** 用户输入摘要（前 200 字符） */
-  userInputSummary: string;
-  /** Agent 步骤摘要列表 */
-  agentSteps: string[];
-  /** 最终输出摘要（前 300 字符） */
-  outputSummary: string;
-  /** 本次交互使用的 active 策略 ID 列表 */
-  appliedSkillIds: string[];
-  /** 时间戳 ISO 8601 */
-  timestamp: string;
 }

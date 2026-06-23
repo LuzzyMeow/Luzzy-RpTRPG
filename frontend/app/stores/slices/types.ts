@@ -194,7 +194,7 @@ export interface CharacterSlice {
   saveCharacters: () => Promise<void>;
   addCharacter: (character: Character) => Promise<void>;
   updateCharacter: (uuid: string, partial: Partial<Character>) => Promise<void>;
-  deleteCharacter: (uuid: string) => Promise<void>;
+  deleteCharacter: (uuid: string, options?: { syncDeleteWorldBook?: boolean }) => Promise<void>;
   setCurrentCharacterUuid: (uuid: string | null) => void;
   toggleFavorite: (uuid: string) => Promise<void>;
   importCharacter: (json: string) => Promise<void>;
@@ -213,6 +213,8 @@ export interface ChatSlice {
   isGenerating: boolean;
   isThinking: boolean;
   isReceiving: boolean;
+  /** v0.5.4: 是否处于正文生成阶段 */
+  isMainPhase: boolean;
   inputDraft: string;
   abortController: AbortController | null;
 
