@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.6.3
+
+### 🐛 修复
+
+> 修复向量切片无产出 + 嵌入 API 401 鉴权错误。
+
+- **移除记忆页假动画**（致命）
+  - `isProcessing` 是 3 秒 `setTimeout` 定时器，与真实异步流程（`extractMemory` / `generateWorldInfoEmbeddings`）完全解耦
+  - 切换页面后组件重挂载会重复触发，导致"动画一会就消失"的误导
+  - 修复：移除假动画 state/useEffect/渲染分支，改为静态空状态引导
+- **extractMemory 失败时通知 UI**（高）
+  - 原来只 `console.error`，错误被层层吞掉，UI 完全无感知
+  - 修复：在 `.catch` 中添加 `toast.error` 和 `logger.error`
+- **generateWorldInfoEmbeddings 返回失败计数**（高）
+  - 单条失败只 `logger.warn` 不抛出，调用方无法感知
+  - 修复：返回类型改为 `{ success: number; failed: number }`，调用方根据 failed 数量 toast 提示
+- **嵌入 API 401 错误诊断增强**（高）
+  - 火山引擎返回 "The API key format is incorrect" 时只原样显示，缺乏修复引导
+  - 修复：401 错误添加专用诊断消息，包含供应商名称和修复指引
+- **记忆页空状态文案优化**（中）
+  - 引导用户检查嵌入模型配置和 API Key 是否正确
+
 ## v0.6.2
 
 ### 🐛 修复

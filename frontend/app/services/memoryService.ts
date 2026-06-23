@@ -266,7 +266,7 @@ const resolveEmbeddingProvider = (
   apiSettings: ApiSettings,
   providers: ApiProvider[],
   providerKeys: Record<string, string>,
-): { apiUrl: string; apiKey: string } => {
+): { apiUrl: string; apiKey: string; providerName: string } => {
   // 优先使用 embeddingApiProviderId，空则跟随聊天供应商
   let embeddingProviderId = (settings.embeddingApiProviderId || '').trim();
   if (!embeddingProviderId) {
@@ -284,7 +284,8 @@ const resolveEmbeddingProvider = (
     if (!apiKey) {
       throw new Error('请先配置嵌入供应商的 API Key');
     }
-    return { apiUrl: provider.apiUrl, apiKey };
+    // v0.6.3-fix: 返回 providerName 用于 401 错误诊断
+    return { apiUrl: provider.apiUrl, apiKey, providerName: provider.name || embeddingProviderId };
   }
 
   // 无供应商前缀，使用默认 API 设置
@@ -294,7 +295,7 @@ const resolveEmbeddingProvider = (
   if (!apiSettings.apiKey) {
     throw new Error('请先配置嵌入供应商的 API Key');
   }
-  return { apiUrl: apiSettings.apiUrl, apiKey: apiSettings.apiKey };
+  return { apiUrl: apiSettings.apiUrl, apiKey: apiSettings.apiKey, providerName: '默认供应商' };
 };
 
 /**
@@ -323,7 +324,7 @@ const requestEmbeddings = async (
   const model = (settings.embeddingModel || '').trim();
   if (!model) throw new Error('请先选择向量嵌入模型');
 
-  const { apiUrl, apiKey } = resolveEmbeddingProvider(
+  const { apiUrl, apiKey, providerName } = resolveEmbeddingProvider(
     settings,
     apiSettings,
     providers,
@@ -360,6 +361,15 @@ const requestEmbeddings = async (
       /* 忽略 JSON 解析失败 */
     }
     const apiError = extractApiErrorMessage(errorPayload, response.status);
+    // v0.6.3-fix: 401 鉴权失败专用诊断消息，引导用户检查 API Key
+    if (response.status === 401) {
+      throw new Error(
+        `嵌入 API 鉴权失败（401）：${apiError || 'API Key 格式不正确'}\n` +
+        `供应商：${providerName}\n` +
+        `可能原因：API Key 格式错误、Key 已失效、或 Key 与所选供应商不匹配。\n` +
+        `请前往「设置 → API 连接与服务」检查对应供应商的 API Key。`,
+      );
+    }
     throw new Error(apiError || `Embedding API Error: ${response.status}`);
   }
 
@@ -832,7 +842,7 @@ export const removeWorldVectorMemoryShardById = async (
  * @param apiSettings - API 设置
  * @param providers - 供应商列表
  * @param providerKeys - 供应商 ID 到 API Key 的映射
- * @returns 更新后的条目数组（含 embedding 字段）
+ * @returns v0.6.3: 返回 { success, failed } 计数，让调用方感知批量结果
  */
 export const generateWorldInfoEmbeddings = async (
   entries: WorldInfoEntry[],
@@ -840,15 +850,15 @@ export const generateWorldInfoEmbeddings = async (
   apiSettings: ApiSettings,
   providers: ApiProvider[],
   providerKeys: Record<string, string>,
-): Promise<WorldInfoEntry[]> => {
+): Promise<{ success: number; failed: number }> => {
   const model = (settings.embeddingModel || '').trim();
   if (!model) {
     logger.warn("memory", "generateWorldInfoEmbeddings 跳过: 未配置嵌入模型");
-    return entries;
+    return { success: 0, failed: 0 };
   }
   if (!entries || entries.length === 0) {
     logger.debug("memory", "generateWorldInfoEmbeddings 跳过: 无条目");
-    return entries;
+    return { success: 0, failed: 0 };
   }
 
   logger.info("memory", `generateWorldInfoEmbeddings 启动: 条目数=${entries.length}`);
@@ -859,7 +869,7 @@ export const generateWorldInfoEmbeddings = async (
   );
   if (toProcess.length === 0) {
     logger.debug("memory", "generateWorldInfoEmbeddings: 所有条目已有 embedding，跳过");
-    return entries;
+    return { success: 0, failed: 0 };
   }
 
   logger.info("memory", `generateWorldInfoEmbeddings: 需处理 ${toProcess.length} 条`);
@@ -941,7 +951,7 @@ export const generateWorldInfoEmbeddings = async (
     }
   }
 
-  return updated;
+  return { success: successCount, failed: failCount };
 };
 
 // ============================================================================

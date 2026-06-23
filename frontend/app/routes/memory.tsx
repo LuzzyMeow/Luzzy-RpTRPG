@@ -559,8 +559,7 @@ function SessionMemoryTab({
   // v0.6.0: 分片详情 Dialog 状态 + 删除确认
   const [selectedShard, setSelectedShard] = React.useState<VectorMemoryShard | null>(null);
   const [deleting, setDeleting] = React.useState(false);
-  // v0.6.0: 处理中动画状态（分片为空且嵌入模型已配置时显示）
-  const [isProcessing, setIsProcessing] = React.useState(false);
+  // v0.6.3-fix: 移除 isProcessing 假动画（3 秒定时器与真实异步流程解耦，误导用户）
   const confirm = useConfirm();
 
   /** v0.6.0: 删除单个分片（会话或世界书） */
@@ -720,18 +719,10 @@ function SessionMemoryTab({
   const displayLoaded =
     activeSource === "world" ? worldLoaded : loaded;
 
-  // v0.6.0: 分片列表为空且嵌入模型已配置时，短暂显示"正在处理"动画
-  // 实际向量生成是异步的（extractMemory / generateWorldInfoEmbeddings），此处仅作 UX 提示
-  React.useEffect(() => {
-    if (!displayLoaded) return;
-    const hasSelection = activeSource === "world" ? !!selectedBookId : !!selectedUuid;
-    if (hasEmbeddingModel && hasSelection && displayShards.length === 0) {
-      setIsProcessing(true);
-      const timer = setTimeout(() => setIsProcessing(false), 3000);
-      return () => clearTimeout(timer);
-    }
-    setIsProcessing(false);
-  }, [displayLoaded, displayShards.length, hasEmbeddingModel, activeSource, selectedBookId, selectedUuid]);
+  // v0.6.3-fix: 移除 isProcessing 假动画 useEffect
+  // 原 3 秒定时器与真实异步流程（extractMemory / generateWorldInfoEmbeddings）解耦，
+  // 切换页面后组件重挂载会重复触发，误导用户以为正在生成。
+  // 现改为直接显示空状态引导，失败时由 extractMemory 的 toast.error 通知用户。
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-4 p-4 pb-8">
@@ -886,31 +877,6 @@ function SessionMemoryTab({
                 </Button>
               )}
             </motion.div>
-          ) : isProcessing ? (
-            // v0.6.0: 处理中动画 - 分片为空且嵌入模型已配置时显示
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ type: "spring", stiffness: 300, damping: 25 }}
-              className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
-            >
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                className="shrink-0"
-              >
-                <IconRefresh className="size-4 text-primary" />
-              </motion.div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium text-primary">
-                  正在生成向量记忆分片...
-                </span>
-                <span className="text-xs text-primary/70">
-                  系统正在分析并构建向量索引，请稍候
-                </span>
-              </div>
-            </motion.div>
           ) : activeSource === "session" && !selectedUuid ? (
             <EmptyState
               icon={<IconBook className="size-6" />}
@@ -921,7 +887,7 @@ function SessionMemoryTab({
             <EmptyState
               icon={<IconBook className="size-6" />}
               title="暂无向量记忆分片"
-              description="对话后将自动生成向量记忆"
+              description="对话后将自动生成向量记忆。若长时间无结果，请检查嵌入模型配置和 API Key 是否正确。"
             />
           ) : activeSource === "world" && !selectedBookId ? (
             <EmptyState

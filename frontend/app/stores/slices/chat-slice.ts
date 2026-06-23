@@ -2032,6 +2032,7 @@ export const createChatSlice: StateCreator<
       // 10. 异步提取记忆（不阻塞主流程）
       // v0.6.0-fix: 会话向量记忆提取只受 memorySettings.enabled 控制，
       //             不再受 longTermMemoryCharacterIds（已锁定的长期记忆功能）闸门
+      // v0.6.3-fix: 失败时 toast.error 通知用户，避免错误被静默吞掉
       if (memorySettings?.enabled) {
         extractMemory({
           messages: get().messages,
@@ -2041,7 +2042,10 @@ export const createChatSlice: StateCreator<
           apiProviders: allProviders,
           apiProviderKeys: get().apiProviderKeys,
           sessionId: currentSessionId ?? undefined,
-        }).catch((e) => console.error("[ChatSlice] 记忆提取失败:", e));
+        }).catch((e) => {
+          logger.error("memory", `记忆提取失败: ${(e as Error).message}`);
+          toast.error(`向量记忆生成失败：${(e as Error).message}`);
+        });
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {

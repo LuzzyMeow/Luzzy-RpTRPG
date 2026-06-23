@@ -306,13 +306,19 @@ export default function WorldInfoPage() {
             // v0.6.0: 设置生成中状态，显示处理动画
             setIsGeneratingEmbeddings(true);
           }
-          await generateWorldInfoEmbeddings(
+          const result = await generateWorldInfoEmbeddings(
             entriesToProcess,
             memorySettings,
             apiSettings,
             allProviders,
             apiProviderKeys,
           );
+          // v0.6.3-fix: 根据返回值 toast 提示，让用户感知成功/失败
+          if (result.failed > 0) {
+            toast.error(`${result.failed} 条世界书条目嵌入生成失败，请检查嵌入模型配置和 API Key`);
+          } else if (result.success > 0) {
+            toast.success(`已成功为 ${result.success} 条世界书条目生成嵌入向量`);
+          }
         } catch (e) {
           logger.warn("world", "世界书嵌入预生成失败: " + (e as Error).message);
         } finally {
