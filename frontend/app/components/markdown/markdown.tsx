@@ -80,6 +80,8 @@ type MarkdownProps = {
   onClickCitation?: (id: string) => void;
   allowCodePreview?: boolean;
   isAnimating?: boolean;
+  /** v0.5.8: 直出模式（禁用词级动画），用于正文气泡；思考卡片保留动画 */
+  directRender?: boolean;
 };
 
 function getNodeText(node: React.ReactNode): string {
@@ -98,6 +100,7 @@ export default function Markdown({
   onClickCitation,
   allowCodePreview = true,
   isAnimating = false,
+  directRender = false,
 }: MarkdownProps) {
   const { t } = useTranslation("markdown");
   const workbench = useOptionalWorkbench();
@@ -136,7 +139,7 @@ export default function Markdown({
         rehypePlugins={[rehypeKatex, rehypeRaw]}
         plugins={{ cjk: cjk }}
         isAnimating={isAnimating}
-        animated={false}
+        animated={directRender ? false : (isAnimating ? { animation: "fadeIn", sep: "word", duration: 150 } : false)}
         controls={{code: false, mermaid: false}}
         components={{
           pre: ({ children }) => <>{children}</>,

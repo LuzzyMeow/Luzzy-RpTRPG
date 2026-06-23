@@ -551,7 +551,7 @@ function LuzzyChatMessageImpl({
           ) : message.content ? (
             // v0.4.3: isAnimating 动态化,生成中且为最后一条消息时启用流式动画
             // v0.5.5-arch-fix: 正文阶段也必须保持流式动画,直到生成结束
-            <Markdown content={message.content} isAnimating={isGenerating && isLast} />
+            <Markdown content={message.content} isAnimating={isGenerating && isLast} directRender />
           ) : isGenerating && isLast && message.cot ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <IconRefresh className="size-3 animate-spin" />

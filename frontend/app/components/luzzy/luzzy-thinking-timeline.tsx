@@ -527,6 +527,15 @@ function ThinkingNode({ step, isExpanded, onToggle, isLast, nodeType = "thinking
     el.scrollTop = el.scrollHeight;
   }, [step.content, isRunning, isExpanded]);
 
+  // v0.5.8: 节点展开时重置吸附状态
+  React.useEffect(() => {
+    if (isExpanded) {
+      userScrolledRef.current = false;
+      const el = contentRef.current;
+      if (el && isRunning) el.scrollTop = el.scrollHeight;
+    }
+  }, [isExpanded, isRunning]);
+
   const handleScroll = React.useCallback(() => {
     const el = contentRef.current;
     if (!el) return;

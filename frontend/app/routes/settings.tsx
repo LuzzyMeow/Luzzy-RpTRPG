@@ -161,20 +161,18 @@ export default function SettingsPage() {
   // v0.3.3: 翻译设置
   const translationSettings = useAppStore((s) => s.translationSettings);
   const setTranslationSettings = useAppStore((s) => s.setTranslationSettings);
-  // v0.5.8: 翻译模型选择器
-  const allTranslationProviders = React.useMemo(() => {
-    return getAllProviders();
-  }, [getAllProviders]);
-  const translationModelOptions = React.useMemo(() => {
+  // v0.5.8: 翻译模型选择器（直接调用确保实时刷新）
+  const translationModelOptions = (() => {
+    const allProviders = getAllProviders();
     const options: { value: string; label: string }[] = [{ value: "", label: "使用主模型" }];
-    for (const provider of allTranslationProviders) {
+    for (const provider of allProviders) {
       for (const model of provider.models || []) {
         const value = `${provider.id}_${model.name}`;
         options.push({ value, label: `${provider.name} / ${model.name}` });
       }
     }
     return options;
-  }, [allTranslationProviders]);
+  })();
   // v0.3.7: 高亮显示设置
   const highlightSettings = useAppStore((s) => s.highlightSettings);
   const setHighlightSettings = useAppStore((s) => s.setHighlightSettings);

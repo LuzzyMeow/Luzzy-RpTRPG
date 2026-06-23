@@ -213,6 +213,8 @@ const extractPersistableData = (state: SettingsSlice): Record<string, unknown> =
   user: state.user,
   userProfiles: state.userProfiles,
   activeProfileId: state.activeProfileId,
+  defaultProfileActive: state.defaultProfileActive,
+  defaultProfileData: state.defaultProfileData,
   // v0.2.0 新增
   translationSettings: state.translationSettings,
   highlightSettings: state.highlightSettings,
@@ -682,10 +684,15 @@ export const createSettingsSlice: StateCreator<
       }
       const profile = state.userProfiles.find((p) => p.uuid === uuid);
       if (!profile) return {};
+      // v0.5.8: 离开默认档案时快照当前 user 到 defaultProfileData
+      const defaultProfileData = (!state.activeProfileId && state.defaultProfileActive)
+        ? { ...state.user, uuid: "user" }
+        : state.defaultProfileData;
       return {
         activeProfileId: uuid,
         defaultProfileActive: false,
         user: { ...profile },
+        defaultProfileData,
       };
     }),
 
@@ -727,12 +734,14 @@ export const createSettingsSlice: StateCreator<
         };
       }
       // 取消激活默认档案：若有新增档案则激活第一个
+      // v0.5.8: 离开默认档案时快照当前 user 到 defaultProfileData
       if (state.userProfiles.length > 0) {
         const first = state.userProfiles[0];
         return {
           defaultProfileActive: false,
           activeProfileId: first.uuid,
           user: { ...first },
+          defaultProfileData: { ...state.user, uuid: "user" },
         };
       }
       return { defaultProfileActive: false };
@@ -831,6 +840,9 @@ export const createSettingsSlice: StateCreator<
           ? (data.userProfiles as UserProfile[])
           : state.userProfiles,
         activeProfileId: (data.activeProfileId as string | null) ?? state.activeProfileId,
+        // v0.5.8: 默认档案持久化
+        defaultProfileActive: (data.defaultProfileActive as boolean) ?? state.defaultProfileActive,
+        defaultProfileData: (data.defaultProfileData as UserProfile) ?? state.defaultProfileData,
         // v0.2.0 新增字段
         translationSettings:
           data.translationSettings &&

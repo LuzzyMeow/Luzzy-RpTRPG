@@ -1942,7 +1942,7 @@ export const createChatSlice: StateCreator<
       }
 
       // 10. 异步提取记忆（不阻塞主流程）
-      // v0.5.6: 长期记忆禁用时不提取向量记忆
+      // v0.5.8: 空列表=全部启用，非空列表=仅启用列出的角色
       if (longTermMemoryEnabledForCharacter) {
         extractMemory({
           messages: get().messages,

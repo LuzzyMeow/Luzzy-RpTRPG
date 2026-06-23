@@ -463,10 +463,11 @@ export default function AboutPage() {
               </div>
 
               {/* 日志列表 */}
+              <div className="relative">
               <div
                 ref={logContainerRef}
                 onScroll={handleLogScroll}
-                className="relative max-h-[600px] overflow-auto rounded-md border bg-muted/30"
+                className="max-h-[600px] overflow-auto rounded-md border bg-muted/30"
               >
                 {filteredLogs.length === 0 ? (
                   <div className="p-4 text-center text-xs text-muted-foreground">
@@ -535,9 +536,10 @@ export default function AboutPage() {
                     })}
                   </div>
                 )}
-                {/* v0.5.8: 回到底部浮动按钮 */}
+              </div>
+                {/* v0.5.8: 回到底部浮动按钮（在滚动容器外，relative 容器内） */}
                 {userScrolledUp && filteredLogs.length > 0 && (
-                  <div className="absolute bottom-3 right-3">
+                  <div className="absolute bottom-3 right-3 z-10">
                     <Button
                       variant="secondary"
                       size="icon"

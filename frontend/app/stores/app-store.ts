@@ -108,6 +108,11 @@ export const useAppStore = create<AppStoreState>()(
         const cleanP = Object.fromEntries(
           Object.entries(p).filter(([, v]) => v !== undefined),
         ) as Partial<AppStoreState>;
+        // v0.5.8: 升级时种子化 defaultProfileData（旧数据无此字段）
+        // 若用户在默认档案激活状态下升级，用现有 user 填充 defaultProfileData
+        if (!cleanP.defaultProfileData && cleanP.user && !cleanP.activeProfileId) {
+          cleanP.defaultProfileData = { ...cleanP.user };
+        }
         return {
           ...current,
           ...cleanP,
