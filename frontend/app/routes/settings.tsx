@@ -1003,6 +1003,28 @@ export default function SettingsPage() {
                         </Select>
                       </div>
 
+                      {/* v0.6.5: 翻译自定义 JSON 请求体 */}
+                      <div className="grid min-w-0 gap-2">
+                        <label className="text-sm font-medium">
+                          自定义请求体 JSON
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            可选，留空则使用全局自定义请求体
+                          </span>
+                        </label>
+                        <Textarea
+                          value={translationSettings.customRequestBody || ""}
+                          onChange={(e) =>
+                            setTranslationSettings({ customRequestBody: e.target.value })
+                          }
+                          placeholder='{"thinking": {"type": "enabled"}, "reasoning_effort": "high"}'
+                          rows={3}
+                          className="max-w-full font-mono text-xs break-all"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          仅作用于翻译请求。支持 thinking / reasoning_effort 等自定义字段，messages 数组不可修改
+                        </p>
+                      </div>
+
                       {/* 翻译提示词模板 */}
                       <div className="grid min-w-0 gap-2">
                         <div className="flex items-center justify-between">

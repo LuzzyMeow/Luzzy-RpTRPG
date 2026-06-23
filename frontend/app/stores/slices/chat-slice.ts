@@ -2355,6 +2355,10 @@ export const createChatSlice: StateCreator<
         }
         const url = getChatCompletionsUrl(chatApiUrl);
 
+        // v0.6.5: 翻译专用自定义请求体，为空则回退到全局自定义请求体
+        const translationCustomBody = translationSettings.customRequestBody?.trim();
+        const effectiveCustomBody = translationCustomBody || get().customRequestBody;
+
         const requestBody = buildApiRequestBody(
           {
             model: actualModel,
@@ -2363,7 +2367,7 @@ export const createChatSlice: StateCreator<
           },
           {
             enableThinking: false,
-            customRequestBody: get().customRequestBody,
+            customRequestBody: effectiveCustomBody,
           },
         );
 

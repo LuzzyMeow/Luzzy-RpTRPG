@@ -28,16 +28,20 @@ import type {
   VectorMemoryShard,
   WorldInfoEntry,
   ApiProvider,
+  ApiSettings,
   Character,
 } from "~/types/luzzy";
 import { cn } from "~/lib/utils";
 import { getItem, setItem } from "~/services/storage";
 import { logger } from "~/services/logger";
+import { getActualModelName } from "~/services/providerService";
 import {
   loadVectorMemoryShards,
   loadWorldVectorMemoryShards,
   removeVectorMemoryShardById,
   removeWorldVectorMemoryShardById,
+  regenerateAllWorldEmbeddings,
+  regenerateSessionMemory,
   // v0.5.9-locked: 长期记忆功能锁定
   // loadLongTermMemory,
   // searchAllMemory,
@@ -73,6 +77,13 @@ import {
   DialogDescription,
   DialogFooter,
 } from "~/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "~/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyHeader,
@@ -404,17 +415,26 @@ function MemorySettingsCard({
               <div ref={embeddingModelRef} className="grid gap-2 min-w-0 scroll-mt-4">
                 <label className="text-sm font-medium">嵌入模型</label>
                 {(() => {
-                  // v0.3.4: 从所有供应商中筛选 supportsEmbedding=true 的模型
+                  // v0.6.5-fix: embedding models 选项使用 providerId_modelName 格式（与聊天/翻译模型一致）
                   const embeddingModels = providers.flatMap((p) =>
                     (p.models ?? [])
                       .filter((m) => m.supportsEmbedding)
-                      .map((m) => ({ providerId: p.id, providerName: p.displayName ?? p.name, modelName: m.name })),
+                      .map((m) => ({
+                        providerId: p.id,
+                        providerName: p.displayName ?? p.name,
+                        modelName: m.name,
+                        prefixedValue: `${p.id}_${m.name}`,
+                      })),
                   );
                   const MANUAL_VALUE = "__manual__";
-                  const isManual =
-                    settings.embeddingModel &&
-                    !embeddingModels.some((m) => m.modelName === settings.embeddingModel);
-                  const selectValue = isManual ? MANUAL_VALUE : (settings.embeddingModel || "");
+                  const currentModel = settings.embeddingModel || "";
+                  const actualModelName = getActualModelName(currentModel, providers);
+                  // v0.6.5-fix: 检查当前值是否为已知的带前缀模型值
+                  const isKnownPrefixed = embeddingModels.some((m) => m.prefixedValue === currentModel);
+                  // v0.6.5-fix: 检查当前值（去前缀后）是否为已知模型名
+                  const isKnownUnprefixed = embeddingModels.some((m) => m.modelName === actualModelName);
+                  const isManual = currentModel && !isKnownPrefixed && !isKnownUnprefixed;
+                  const selectValue = isManual ? MANUAL_VALUE : (isKnownPrefixed ? currentModel : (isKnownUnprefixed ? embeddingModels.find(m => m.modelName === actualModelName)?.prefixedValue || "" : ""));
 
                   return (
                     <>
@@ -422,8 +442,8 @@ function MemorySettingsCard({
                         value={selectValue}
                         onValueChange={(v) => {
                           if (v === MANUAL_VALUE) {
-                            // 切换到手动输入模式，保留当前值或清空
-                            onUpdate("embeddingModel", isManual ? settings.embeddingModel : "");
+                            // 切换到手动输入模式，保留当前实际模型名（去前缀）或清空
+                            onUpdate("embeddingModel", isManual ? currentModel : actualModelName || "");
                           } else {
                             onUpdate("embeddingModel", v);
                           }
@@ -440,7 +460,7 @@ function MemorySettingsCard({
                             </SelectItem>
                           )}
                           {embeddingModels.map((m) => (
-                            <SelectItem key={`${m.providerId}_${m.modelName}`} value={m.modelName}>
+                            <SelectItem key={m.prefixedValue} value={m.prefixedValue}>
                               {m.modelName}（{m.providerName}）
                             </SelectItem>
                           ))}
@@ -450,7 +470,7 @@ function MemorySettingsCard({
                       {isManual && (
                         <Input
                           className="w-full min-w-0"
-                          value={settings.embeddingModel}
+                          value={currentModel}
                           onChange={(e) =>
                             onUpdate("embeddingModel", e.target.value)
                           }
@@ -534,6 +554,16 @@ function SessionMemoryTab({
   const characters = useAppStore((s) => s.characters);
   const sessions = useAppStore((s) => s.sessions);
   const currentCharacterUuid = useAppStore((s) => s.currentCharacterUuid);
+  const getAllProviders = useAppStore((s) => s.getAllProviders);
+  const getSessionMessages = useAppStore((s) => s.getSessionMessages);
+  const apiUrl = useAppStore((s) => s.apiUrl);
+  const apiKey = useAppStore((s) => s.apiKey);
+  const modelName = useAppStore((s) => s.modelName);
+  const stream = useAppStore((s) => s.stream);
+  const customRequestBody = useAppStore((s) => s.customRequestBody);
+  const apiProviderKeys = useAppStore((s) => s.apiProviderKeys);
+
+  const providers = React.useMemo(() => getAllProviders(), [getAllProviders]);
 
   const hasEmbeddingModel = Boolean(settings.embeddingModel?.trim());
 
@@ -559,6 +589,8 @@ function SessionMemoryTab({
   // v0.6.0: 分片详情 Dialog 状态 + 删除确认
   const [selectedShard, setSelectedShard] = React.useState<VectorMemoryShard | null>(null);
   const [deleting, setDeleting] = React.useState(false);
+  // v0.6.5: 手动重试/重新生成状态
+  const [regenerating, setRegenerating] = React.useState<false | "session" | "world">(false);
   // v0.6.3-fix: 移除 isProcessing 假动画（3 秒定时器与真实异步流程解耦，误导用户）
   const confirm = useConfirm();
 
@@ -592,6 +624,158 @@ function SessionMemoryTab({
       setDeleting(false);
     }
   }, [selectedShard, activeSource, selectedBookId, selectedUuid, selectedSessionId, confirm]);
+
+  /** v0.6.5: 重新生成当前会话的向量记忆分片 */
+  const handleRegenerateSession = React.useCallback(async () => {
+    if (!hasEmbeddingModel) {
+      toast.warning("请先配置嵌入模型");
+      onScrollToSettings?.();
+      return;
+    }
+    if (!selectedUuid) {
+      toast.warning("请先选择角色卡");
+      return;
+    }
+    const ok = await confirm({
+      title: "重新生成会话记忆",
+      description: selectedSessionId
+        ? "将清空当前会话的所有向量记忆分片并重新生成，此操作不可撤销。"
+        : "将清空该角色所有会话的向量记忆分片并重新生成，此操作不可撤销。",
+      destructive: true,
+    });
+    if (!ok) return;
+
+    setRegenerating("session");
+    try {
+      const apiSettings: ApiSettings = {
+        apiUrl: apiUrl || "",
+        apiKey: apiKey || "",
+        modelName,
+        stream: false,
+        enableThinking: false,
+        customRequestBody: customRequestBody || "",
+      };
+      const character = characters.find((c) => c.uuid === selectedUuid) ?? null;
+
+      let totalShards = 0;
+      if (selectedSessionId) {
+        const messages = getSessionMessages(selectedSessionId);
+        if (messages.length === 0) {
+          toast.warning("当前会话没有对话消息，无法生成记忆分片");
+          setRegenerating(false);
+          return;
+        }
+        totalShards = await regenerateSessionMemory(
+          selectedUuid,
+          selectedSessionId,
+          messages,
+          character,
+          settings,
+          apiSettings,
+          providers,
+          apiProviderKeys,
+        );
+        const newShards = await loadVectorMemoryShards(selectedUuid, selectedSessionId);
+        setShards(newShards);
+      } else {
+        const charSessions = sessions.filter((s) => s.characterId === selectedUuid);
+        if (charSessions.length === 0) {
+          toast.warning("该角色暂无会话，无法生成记忆分片");
+          setRegenerating(false);
+          return;
+        }
+        for (const sess of charSessions) {
+          const messages = getSessionMessages(sess.id);
+          if (messages.length === 0) continue;
+          const count = await regenerateSessionMemory(
+            selectedUuid,
+            sess.id,
+            messages,
+            character,
+            settings,
+            apiSettings,
+            providers,
+            apiProviderKeys,
+          );
+          totalShards += count;
+        }
+        const newShards = await loadVectorMemoryShards(selectedUuid);
+        setShards(newShards);
+      }
+
+      if (totalShards === 0) {
+        toast.warning("重新生成完成，但没有产生新的记忆分片（可能需要至少一轮完整的用户+助手对话）");
+      } else {
+        toast.success(`会话向量记忆已重新生成，共 ${totalShards} 个分片`);
+      }
+    } catch (e) {
+      toast.error(`重新生成失败：${(e as Error).message}`);
+    } finally {
+      setRegenerating(false);
+    }
+  }, [hasEmbeddingModel, selectedUuid, selectedSessionId, characters, sessions, getSessionMessages, settings, providers, apiProviderKeys, apiUrl, apiKey, modelName, customRequestBody, confirm, onScrollToSettings]);
+
+  /** v0.6.5: 全量重新生成所有世界书的嵌入向量 */
+  const handleRegenerateWorld = React.useCallback(async () => {
+    if (!hasEmbeddingModel) {
+      toast.warning("请先配置嵌入模型");
+      onScrollToSettings?.();
+      return;
+    }
+    const ok = await confirm({
+      title: "重新生成世界书嵌入",
+      description: "将清空所有世界书条目的嵌入向量并重新生成，此操作不可撤销。世界书条目较多时可能需要较长时间。",
+      destructive: true,
+    });
+    if (!ok) return;
+
+    setRegenerating("world");
+    try {
+      const apiSettings: ApiSettings = {
+        apiUrl: apiUrl || "",
+        apiKey: apiKey || "",
+        modelName,
+        stream: false,
+        enableThinking: false,
+        customRequestBody: customRequestBody || "",
+      };
+      const result = await regenerateAllWorldEmbeddings(
+        settings,
+        apiSettings,
+        providers,
+        apiProviderKeys,
+      );
+      if (result.total === 0) {
+        toast.warning("没有世界书条目，无需重新生成");
+      } else if (result.failed > 0) {
+        toast.warning(`重新生成完成：成功 ${result.success} 条，失败 ${result.failed} 条（共 ${result.total} 条）`);
+      } else if (result.success === 0) {
+        toast.warning("没有需要生成嵌入的世界书条目（条目可能为空或已被过滤）");
+      } else {
+        toast.success(`成功重新生成 ${result.success} 条世界书嵌入向量`);
+      }
+      if (selectedBookId) {
+        const newWorldShards = await loadWorldVectorMemoryShards(selectedBookId);
+        setWorldShards(newWorldShards);
+      }
+      const allEntries = await getItem<WorldInfoEntry[]>("worldInfo", "worldInfo");
+      if (allEntries) {
+        const bookMap = new Map<string, { bookName: string; count: number }>();
+        for (const entry of allEntries) {
+          const bid = entry.bookId?.trim();
+          if (!bid) continue;
+          const existing = bookMap.get(bid);
+          if (existing) { existing.count += 1; }
+          else { bookMap.set(bid, { bookName: entry.bookName?.trim() || bid, count: 1 }); }
+        }
+        setWorldBooks(Array.from(bookMap.entries()).map(([bookId, info]) => ({ bookId, bookName: info.bookName, count: info.count })));
+      }
+    } catch (e) {
+      toast.error(`重新生成失败：${(e as Error).message}`);
+    } finally {
+      setRegenerating(false);
+    }
+  }, [hasEmbeddingModel, settings, providers, apiProviderKeys, apiUrl, apiKey, modelName, customRequestBody, selectedBookId, confirm, onScrollToSettings]);
 
   /** 当前角色的会话列表（按最近更新排序） */
   const characterSessions = React.useMemo(() => {
@@ -730,9 +914,50 @@ function SessionMemoryTab({
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <span>向量记忆分片</span>
-            <Badge variant="secondary" className="text-xs">
-              {displayShards.length} 条
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="text-xs">
+                {displayShards.length} 条
+              </Badge>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!!regenerating}
+                    className="relative overflow-hidden"
+                    {...pressableSubtle}
+                  >
+                    <motion.div
+                      animate={regenerating ? { rotate: 360 } : { rotate: 0 }}
+                      transition={{ duration: 1, repeat: regenerating ? Infinity : 0, ease: "linear" }}
+                      className="mr-1.5"
+                    >
+                      <IconRefresh className="size-3.5" />
+                    </motion.div>
+                    {regenerating === "session" ? "会话生成中..." : regenerating === "world" ? "世界书生成中..." : "手动重试"}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem
+                    onClick={handleRegenerateSession}
+                    disabled={!!regenerating || !hasEmbeddingModel}
+                    className="flex items-center gap-2 cursor-pointer"
+                  >
+                    <IconBook className="size-4" />
+                    <span>重新生成会话记忆</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={handleRegenerateWorld}
+                    disabled={!!regenerating || !hasEmbeddingModel}
+                    className="flex items-center gap-2 cursor-pointer"
+                  >
+                    <IconInfo className="size-4" />
+                    <span>重新生成世界书嵌入</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">

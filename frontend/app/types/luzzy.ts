@@ -577,6 +577,8 @@ export interface TranslationSettings {
   promptTemplate: string;
   /** v0.5.8: 翻译专用模型（providerId_modelName 格式，空则使用主模型） */
   translationModelId: string;
+  /** v0.6.5: 翻译自定义 JSON 请求体（空则使用全局自定义请求体） */
+  customRequestBody: string;
 }
 
 /** 高亮显示设置（v0.3.7 新增） */

@@ -248,11 +248,14 @@ const buildEmbeddingUrl = (baseUrl: string): string => {
 /**
  * 解析嵌入供应商配置，获取 apiUrl 与 apiKey
  *
- * 嵌入模型独立供应商：优先使用 embeddingApiProviderId，空则跟随聊天供应商。
- * URL 与 Key 必须来自同一供应商，避免独立回退导致鉴权失败。
+ * v0.6.5: 修复供应商解析优先级——优先从嵌入模型名自身解析供应商前缀，
+ * 而不是错误地回退到聊天模型。
  *
- * 聊天供应商的确定方式：从聊天模型名（apiSettings.modelName）解析供应商前缀。
- * 若均无供应商前缀，则回退到 apiSettings 的默认 apiUrl / apiKey。
+ * 解析优先级：
+ * 1. settings.embeddingApiProviderId（显式指定，向后兼容）
+ * 2. 从嵌入模型名 settings.embeddingModel 解析供应商前缀（v0.6.5新增）
+ * 3. 从聊天模型名 apiSettings.modelName 解析供应商前缀（兜底）
+ * 4. 回退到 apiSettings 的默认 apiUrl / apiKey
  *
  * @param settings - 记忆设置
  * @param apiSettings - API 设置
@@ -267,10 +270,17 @@ const resolveEmbeddingProvider = (
   providers: ApiProvider[],
   providerKeys: Record<string, string>,
 ): { apiUrl: string; apiKey: string; providerName: string } => {
-  // 优先使用 embeddingApiProviderId，空则跟随聊天供应商
+  // 1. 优先使用显式指定的 embeddingApiProviderId
   let embeddingProviderId = (settings.embeddingApiProviderId || '').trim();
+
+  // 2. v0.6.5-fix: 从嵌入模型名自身解析供应商前缀
   if (!embeddingProviderId) {
-    // 从聊天模型名解析供应商前缀
+    const embeddingParse = parseModelName(settings.embeddingModel || '', providers);
+    embeddingProviderId = embeddingParse.providerId;
+  }
+
+  // 3. 兜底：从聊天模型名解析供应商前缀
+  if (!embeddingProviderId) {
     const chatParse = parseModelName(apiSettings.modelName, providers);
     embeddingProviderId = chatParse.providerId;
   }
@@ -284,11 +294,10 @@ const resolveEmbeddingProvider = (
     if (!apiKey) {
       throw new Error('请先配置嵌入供应商的 API Key');
     }
-    // v0.6.3-fix: 返回 providerName 用于 401 错误诊断
     return { apiUrl: provider.apiUrl, apiKey, providerName: provider.name || embeddingProviderId };
   }
 
-  // 无供应商前缀，使用默认 API 设置
+  // 4. 无供应商前缀，使用默认 API 设置
   if (!apiSettings.apiUrl) {
     throw new Error('请先配置嵌入供应商的 API 地址');
   }
@@ -952,6 +961,110 @@ export const generateWorldInfoEmbeddings = async (
   }
 
   return { success: successCount, failed: failCount };
+};
+
+/**
+ * v0.6.5: 全量重新生成所有世界书条目的嵌入向量
+ *
+ * 1. 从 IndexedDB 加载所有世界书条目
+ * 2. 清空所有条目的 embedding 字段
+ * 3. 清空所有已存在的世界书向量分片
+ * 4. 调用 generateWorldInfoEmbeddings 重新生成所有嵌入
+ *
+ * @param settings - 记忆设置
+ * @param apiSettings - API 设置
+ * @param providers - 供应商列表
+ * @param providerKeys - 供应商 ID 到 API Key 的映射
+ * @returns 成功/失败计数及总条目数
+ */
+export const regenerateAllWorldEmbeddings = async (
+  settings: MemorySettings,
+  apiSettings: ApiSettings,
+  providers: ApiProvider[],
+  providerKeys: Record<string, string>,
+): Promise<{ success: number; failed: number; total: number }> => {
+  const allEntries = await getItem<WorldInfoEntry[]>('worldInfo', 'worldInfo');
+  if (!allEntries || allEntries.length === 0) {
+    logger.info("memory", "regenerateAllWorldEmbeddings: 无世界书条目，跳过");
+    return { success: 0, failed: 0, total: 0 };
+  }
+
+  logger.info("memory", `regenerateAllWorldEmbeddings: 开始全量重新生成，共 ${allEntries.length} 条`);
+
+  // 收集所有 bookId 用于后续清理旧分片
+  const bookIds = new Set<string>();
+  for (const entry of allEntries) {
+    const bid = entry.bookId?.trim();
+    if (bid) bookIds.add(bid);
+  }
+
+  // 清空所有条目的 embedding 字段（持久化）
+  const clearedEntries = allEntries.map((e) => ({ ...e, embedding: undefined }));
+  await setItem('worldInfo', 'worldInfo', clearedEntries);
+
+  // 清空所有已存在的世界书向量分片
+  for (const bookId of bookIds) {
+    try {
+      await saveWorldVectorMemoryShards(bookId, []);
+    } catch (e) {
+      logger.warn("memory", `regenerateAllWorldEmbeddings: 清理 ${bookId} 旧分片失败: ${(e as Error).message}`);
+    }
+  }
+
+  // 调用 generateWorldInfoEmbeddings 重新生成
+  const result = await generateWorldInfoEmbeddings(
+    clearedEntries,
+    settings,
+    apiSettings,
+    providers,
+    providerKeys,
+  );
+
+  return { ...result, total: clearedEntries.length };
+};
+
+/**
+ * v0.6.5: 全量重新生成指定会话的向量记忆分片
+ *
+ * 清空已有分片后，从所有消息中重新构建向量记忆。
+ *
+ * @param characterUuid - 角色 UUID
+ * @param sessionId - 会话 ID
+ * @param messages - 该会话的所有消息
+ * @param character - 角色对象
+ * @param settings - 记忆设置
+ * @param apiSettings - API 设置
+ * @param providers - 供应商列表
+ * @param providerKeys - 供应商 API Key 映射
+ * @returns 新生成的分片数量
+ */
+export const regenerateSessionMemory = async (
+  characterUuid: string,
+  sessionId: string | undefined,
+  messages: ChatMessage[],
+  character: Character | null,
+  settings: MemorySettings,
+  apiSettings: ApiSettings,
+  providers: ApiProvider[],
+  providerKeys: Record<string, string>,
+): Promise<number> => {
+  // 先清空旧分片
+  await saveVectorMemoryShards(characterUuid, [], sessionId);
+
+  // 从全部消息重建
+  const newShards = await buildVectorMemory(
+    messages,
+    character,
+    settings,
+    apiSettings,
+    providers,
+    providerKeys,
+  );
+
+  // 保存新分片
+  await saveVectorMemoryShards(characterUuid, newShards, sessionId);
+  logger.info("memory", `regenerateSessionMemory: 会话 ${sessionId ?? "(角色级)"} 重新生成 ${newShards.length} 个分片`);
+  return newShards.length;
 };
 
 // ============================================================================

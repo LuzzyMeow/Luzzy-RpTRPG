@@ -320,7 +320,10 @@ export default function WorldInfoPage() {
             toast.success(`已成功为 ${result.success} 条世界书条目生成嵌入向量`);
           }
         } catch (e) {
-          logger.warn("world", "世界书嵌入预生成失败: " + (e as Error).message);
+          const errMsg = (e as Error).message;
+          logger.warn("world", "世界书嵌入预生成失败: " + errMsg);
+          // v0.6.5-fix: 异常时也通知用户，而非静默吞错
+          toast.error(`世界书嵌入生成失败：${errMsg}`);
         } finally {
           // v0.6.0: 无论成功或失败都关闭处理动画
           setIsGeneratingEmbeddings(false);

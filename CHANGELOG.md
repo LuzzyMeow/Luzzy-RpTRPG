@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.6.5
+
+### 🐛 修复
+
+> 彻查向量记忆分片功能全链路，修复嵌入供应商解析失效（世界书切片为 0 的根因）+ 多处静默错误。
+
+- **嵌入模型供应商解析逻辑重写**（致命根因）
+  - `resolveEmbeddingProvider` 只依赖显式 `embeddingApiProviderId`，用户未手动设置时直接 fallback 到聊天模型前缀
+  - 当聊天模型供应商不支持 embedding 或未配置 embedding 模型前缀时，API 地址/密钥解析为空，请求静默失败
+  - 修复：三级解析策略——(1) 显式 embeddingApiProviderId → (2) 从嵌入模型名自身解析供应商前缀 → (3) fallback 到聊天模型前缀
+- **嵌入模型选择器 value 格式修复**（致命根因）
+  - 下拉菜单 `SelectItem` 的 `value` 只传 `modelName`，不含供应商前缀
+  - 选中后 `embeddingModel` 存的是裸模型名，`parseModelName` 永远解析不出 providerId
+  - 修复：`value` 改为 `${providerId}_${modelName}` 格式，与聊天/翻译模型选择器保持一致
+- **世界书嵌入生成 catch 静默吞错**（高）
+  - `world-info.tsx` 的 `triggerEmbeddingGeneration` catch 只 `logger.warn` 不 `toast.error`
+  - 用户导入世界书后嵌入失败完全无感知，以为"没有自动切片"
+  - 修复：catch 中添加 `toast.error` 通知用户具体错误信息
+- **记忆页假动画移除后的回归确认**（中）
+  - 确认 v0.6.3 移除的 isProcessing 假动画没有残留副作用
+  - 嵌入生成失败时通过 toast 通知用户，而非误导性的加载动画
+
+### ✨ 新功能
+
+- **记忆页新增「手动重试记忆分片」按钮**
+  - 位置：向量记忆分片卡片标题栏右侧
+  - 下拉菜单包含两个选项：「重新生成会话记忆」和「重新生成世界书嵌入」
+  - 支持确认弹窗防误触，生成中按钮图标旋转动画
+  - 会话记忆重建：清空当前会话/角色所有会话的旧分片后，从完整消息历史全量重建
+  - 世界书嵌入重建：清空所有条目 embedding 和旧向量分片后，调用嵌入 API 全量重新生成
+  - 生成完成后自动刷新分片列表
+- **翻译功能支持自定义 JSON 请求体**
+  - 设置页 → 翻译功能容器新增「自定义请求体 JSON」字段
+  - 用户可为翻译单独配置请求体（如 thinking/reasoning_effort 等）
+  - 字段为空时自动回退使用全局自定义请求体，保持向后兼容
+
+### 🔧 工程
+
+- 新增 `regenerateAllWorldEmbeddings` 辅助函数：全量重新生成所有世界书嵌入向量
+- 新增 `regenerateSessionMemory` 辅助函数：清空旧分片后从全部消息重建会话向量记忆
+- 版本号统一更新至 v0.6.5，TRPG 网页缓存同步刷新
+
 ## v0.6.4
 
 ### 🐛 修复

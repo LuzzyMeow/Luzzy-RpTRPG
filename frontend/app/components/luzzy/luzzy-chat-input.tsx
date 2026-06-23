@@ -237,10 +237,11 @@ export function LuzzyChatInput({
           >
             <Button
               size="icon"
+              variant="ghost"
               onClick={() => setShowFullscreen(true)}
               disabled={disabled}
               title="全屏编辑"
-              className="size-10 shrink-0 rounded-xl text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              className="size-10 shrink-0 rounded-xl border border-border/10 bg-background/40 text-muted-foreground backdrop-blur-sm hover:bg-background/60 hover:text-foreground"
             >
               <IconExpand className="size-5" />
             </Button>
