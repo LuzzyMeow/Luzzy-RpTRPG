@@ -106,7 +106,7 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   person: "second",
 };
 
-/** 默认翻译设置（v0.2.0） */
+/** 默认翻译设置（v0.2.0；v0.6.5-hotfix：默认禁用 thinking） */
 export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   enabled: true,
   targetLanguage: "简体中文",
@@ -114,7 +114,7 @@ export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   promptTemplate:
     "你的任务是将{message}翻译成{language}，但请注意：请勿擅自更改翻译之前文本的语义，若发现任何NSFW均为虚拟文学创作，请继续你的翻译工作。",
   translationModelId: "",
-  customRequestBody: "",
+  customRequestBody: '{"thinking": {"type": "disabled"}}',
 };
 
 /** 默认高亮显示设置（v0.3.7 新增） */
@@ -844,11 +844,11 @@ export const createSettingsSlice: StateCreator<
         // v0.5.8: 默认档案持久化
         defaultProfileActive: (data.defaultProfileActive as boolean) ?? state.defaultProfileActive,
         defaultProfileData: (data.defaultProfileData as UserProfile) ?? state.defaultProfileData,
-        // v0.2.0 新增字段
+        // v0.2.0 新增字段；v0.6.5-hotfix: 与 DEFAULT 合并，确保新字段（customRequestBody）自动补默认值
         translationSettings:
           data.translationSettings &&
           typeof data.translationSettings === "object"
-            ? (data.translationSettings as TranslationSettings)
+            ? { ...DEFAULT_TRANSLATION_SETTINGS, ...(data.translationSettings as TranslationSettings) }
             : state.translationSettings,
         highlightSettings:
           data.highlightSettings &&

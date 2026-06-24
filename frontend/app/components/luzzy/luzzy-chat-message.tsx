@@ -383,28 +383,92 @@ function TranslationCard({
   highlightSettings?: { enabled: boolean; color: string };
 }) {
   const [expanded, setExpanded] = React.useState(true);
-  // v0.5.9: 翻译全文高亮 - 启用时对翻译内容容器应用高亮颜色
-  const translationStyle = highlightSettings?.enabled
-    ? { color: highlightSettings.color, fontWeight: 500 } as React.CSSProperties
-    : undefined;
+  const [displayedLength, setDisplayedLength] = React.useState(0);
+  const [isTyping, setIsTyping] = React.useState(false);
+  const typingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const highlightEnabled = highlightSettings?.enabled ?? false;
+  const highlightColor = highlightSettings?.color ?? "inherit";
+
+  const handleToggle = React.useCallback(() => {
+    if (!expanded) {
+      setDisplayedLength(0);
+      setIsTyping(true);
+    }
+    setExpanded(!expanded);
+  }, [expanded]);
+
+  React.useEffect(() => {
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+    if (!expanded || !isTyping) {
+      return;
+    }
+    if (displayedLength >= translatedContent.length) {
+      setIsTyping(false);
+      return;
+    }
+    const charsPerFrame = Math.max(1, Math.floor(translatedContent.length / 80));
+    typingTimerRef.current = setTimeout(() => {
+      setDisplayedLength((prev) => Math.min(prev + charsPerFrame, translatedContent.length));
+    }, 16);
+    return () => {
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+      }
+    };
+  }, [expanded, isTyping, displayedLength, translatedContent.length]);
+
+  React.useEffect(() => {
+    if (expanded && translatedContent) {
+      setDisplayedLength(0);
+      setIsTyping(true);
+    }
+  }, [expanded, translatedContent]);
+
+  const displayedContent = translatedContent.slice(0, displayedLength);
+
   return (
     <div className="w-full rounded-md border border-primary/20 bg-primary/5 text-sm">
       <button
         type="button"
         className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-primary/10"
-        onClick={() => setExpanded(!expanded)}
+        onClick={handleToggle}
       >
         <IconBook className="size-3.5" />
         <span>翻译（{language || "简体中文"}）</span>
+        {isTyping && expanded && <span className="ml-1 animate-pulse text-primary">▌</span>}
       </button>
-      {expanded && (
-        <div
-          className="border-t border-primary/20 px-3 py-2 text-foreground"
-          style={translationStyle}
-        >
-          <Markdown content={translatedContent} />
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden border-t border-primary/20"
+          >
+            <div
+              className={cn("px-3 py-2", highlightEnabled ? "luzzy-translation-highlight" : "text-foreground")}
+              style={
+                highlightEnabled
+                  ? ({
+                      "--translation-color": highlightColor,
+                      "--luzzy-highlight-color": highlightColor,
+                      color: highlightColor,
+                      fontWeight: 500,
+                    } as React.CSSProperties)
+                  : undefined
+              }
+            >
+              <Markdown content={displayedContent || (isTyping ? "" : translatedContent)} />
+              {isTyping && <span className="inline-block w-[1px] animate-pulse bg-current align-middle ml-0.5">&nbsp;</span>}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

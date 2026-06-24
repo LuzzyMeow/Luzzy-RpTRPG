@@ -1016,7 +1016,7 @@ export default function SettingsPage() {
                           onChange={(e) =>
                             setTranslationSettings({ customRequestBody: e.target.value })
                           }
-                          placeholder='{"thinking": {"type": "enabled"}, "reasoning_effort": "high"}'
+                          placeholder='{"thinking": {"type": "disabled"}}'
                           rows={3}
                           className="max-w-full font-mono text-xs break-all"
                         />

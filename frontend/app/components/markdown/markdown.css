@@ -237,3 +237,32 @@
 .markdown .citation-badge {
   @apply inline-flex items-center justify-center rounded-full bg-primary/15 px-1.5 py-1 text-[10px] leading-none font-mono text-primary no-underline cursor-pointer hover:bg-primary/25 transition-colors;
 }
+
+/* v0.6.5-hotfix: 翻译全文高亮 - 覆盖 Markdown 子元素文本颜色，保留链接/代码默认色 */
+.luzzy-translation-highlight .markdown,
+.luzzy-translation-highlight .markdown p,
+.luzzy-translation-highlight .markdown li,
+.luzzy-translation-highlight .markdown h1,
+.luzzy-translation-highlight .markdown h2,
+.luzzy-translation-highlight .markdown h3,
+.luzzy-translation-highlight .markdown h4,
+.luzzy-translation-highlight .markdown h5,
+.luzzy-translation-highlight .markdown h6,
+.luzzy-translation-highlight .markdown blockquote,
+.luzzy-translation-highlight .markdown strong,
+.luzzy-translation-highlight .markdown em,
+.luzzy-translation-highlight .markdown td,
+.luzzy-translation-highlight .markdown th,
+.luzzy-translation-highlight .markdown dd,
+.luzzy-translation-highlight .markdown dt {
+  color: var(--translation-color, inherit);
+}
+
+.luzzy-translation-highlight .markdown del {
+  color: color-mix(in srgb, var(--translation-color, currentColor) 60%, transparent);
+}
+
+.luzzy-translation-highlight .markdown .luzzy-highlight {
+  color: var(--translation-color, inherit);
+  font-weight: 700;
+}
