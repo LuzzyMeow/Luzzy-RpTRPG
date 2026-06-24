@@ -1,14 +1,17 @@
 <div align="center">
 
-<img src="frontend/public/icons/icon-192.png" width="120" height="120" alt="LUZZY Logo" />
+<img src="docs/brand-logos/luzzy.png" width="80" height="80" alt="LUZZY" />&nbsp;&nbsp;&nbsp;
+<img src="docs/brand-logos/deepseek.png" width="80" height="80" alt="DeepSeek" />&nbsp;&nbsp;&nbsp;
+<img src="docs/brand-logos/zai.png" width="80" height="80" alt="Z.ai · 智谱清言" />&nbsp;&nbsp;&nbsp;
+<img src="docs/brand-logos/trae.png" width="80" height="80" alt="Trae IDE & Trae Work" />
 
 # LUZZY · 鹿溪
 
 > **每次对话，都像一本有你的小说。**
-> 
-> *Every conversation feels like a novel with you in it.*
 
-[![Version](https://img.shields.io/badge/version-v0.8.1-9d4edd?style=flat-square)](./CHANGELOG.md)
+*Every conversation feels like a novel with you in it.*
+
+[![Version](https://img.shields.io/badge/version-v0.8.2-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -22,13 +25,9 @@
 
 ## ✨ 关于 LUZZY · About
 
-**LUZZY** 是一款面向 **AI 角色扮演（AI Roleplay）** 与 **TRPG 桌面角色扮演** 的移动端对话应用，专注 Android 原生体验，同时支持浏览器运行。
+**LUZZY** 是一款面向 **AI 角色扮演（AI Roleplay）** 与 **TRPG 桌面角色扮演** 的移动端对话应用，专注 Android 原生体验，同时支持浏览器运行。围绕移动端交互、角色卡生态、长期记忆机制与 Agentic 工具系统进行了深度定制。
 
-> **LUZZY** is a mobile-first conversation app for **AI roleplay** and **TRPG tabletop role-playing**, optimized for Android and also runnable in browsers.
-
-围绕移动端交互、主题系统、角色卡生态与记忆机制进行了深度定制。
-
-> Deeply customized for mobile interaction, theming, character cards, and memory systems.
+> **LUZZY** is a mobile-first conversation app for **AI roleplay** and **TRPG tabletop role-playing**, optimized for Android and also runnable in browsers. Deeply customized for mobile interaction, character cards, long-term memory, and Agentic tool systems.
 
 ---
 
@@ -38,7 +37,7 @@
 
 | 💬 沉浸式聊天 | 🎭 角色卡生态 | 🧠 长期记忆 | 🛠️ 工具系统 |
 |:---:|:---:|:---:|:---:|
-| CoT 思考链可视化（卡片化节点）<br>聊天页玻璃拟态沉浸背景<br>流式输出 · 翻译 · 重试分支 | SillyTavern PNG 导入/导出<br>世界书 · 正则脚本 · 收藏<br>滑动操作 · 头像预览 | ACE 三步循环记忆<br>向量相似度检索<br>嵌入去重与评分淘汰 | MCP / SKILL 扩展<br>内置记忆/搜索工具<br>多工具全局模式 |
+| CoT 思考链可视化<br>液态玻璃拟态沉浸背景<br>流式输出 · 翻译 · 重试分支 | SillyTavern PNG 导入/导出<br>世界书 · 正则脚本 · 收藏<br>滑动操作 · 头像预览 | ACE 三步循环记忆<br>向量相似度检索<br>嵌入去重与评分淘汰 | Agentic 多步工具调用<br>MCP / SKILL 扩展<br>内置记忆/搜索工具 |
 
 </div>
 
@@ -48,33 +47,66 @@
 
 ---
 
+## 🎲 TRPG 模式 · TRPG Mode
+
+v0.8.0 引入完整的 D&D 5e 风格 TRPG 引擎，AI 主持人驱动叙事，玩家通过行动选项卡片交互。
+
+> v0.8.0 introduces a full D&D 5e-style TRPG engine with an AI Game Master driving the narrative and players interacting via action option cards.
+
+| 特性 | 说明 |
+|------|------|
+| **Think-1/2/OOC 三段推理** | 从 `reasoning_content` 解析思考链、OOC 审查 JSON，合并 TS 端规则检查 |
+| **OOC 审查 7 项** | 元游戏/知识越界/角色扮演（LLM 审查）+ 力竭/物品/安全（TS 审查）+ 内容分级（自动） |
+| **A/B/C 三级摘要** | A 级每轮生成（上限 50）/ B 级每 10 轮（上限 10）/ C 级每 50 轮（永久） |
+| **Think-4 行为评分** | 公平性 0.35 + 一致性 0.25 + 后果 0.25 + 连贯性 0.15 |
+| **D&D 5e 规则** | 战斗（攻击/施法/道具/协助/准备/闪避/冲刺/脱战）/ 社交（态度 DC + ±2 漂移）/ 休息（生命骰 + 法术位 + 力竭）/ 升级（职业骰 + ASI） |
+| **角色面板** | 自己/NPC 双标签 · NPC 态度徽章 · `revealedFields` 渐进式解锁 |
+| **战斗状态条** | 轮次/先攻/HP/AC/参战者实时展示 |
+
+---
+
+## 🤖 Agentic 工具系统 · Agentic Tool System
+
+v0.8.1 引入 Agentic 多步工具调用循环，模型在单次对话中可连续调用多个工具并自动处理结果。
+
+> v0.8.1 introduces an Agentic multi-step tool call loop where the model can consecutively call multiple tools within a single conversation turn.
+
+- **多步循环**：最多 10 步（可配 1-20），模型自主决定何时信息充分并输出正文
+- **`tool_choice: 'required'`**：首次请求强制工具调用，API 不支持时自动回退 `'auto'`
+- **被动工具过滤**：`memory-recall` / `world-recall` 由系统预执行，不注入 `tools` 参数
+- **循环检测**：`Set<string>` 记录 `toolName|queryNormalized`，重复调用自动终止
+- **链式检索**：支持 `world-recall → vector-memory → keyword-search` 多步链式调用
+
+---
+
 ## 🏗️ 技术架构 · Tech Stack
 
 ### 前端 Frontend
 
-- **Framework**: React 19.2.4 + TypeScript 5.9.2 + React Router 7.13.0（SPA）
-- **Styling**: Tailwind CSS v4 + `tw-animate-css`（oklch 色彩空间）+ 液态玻璃设计
-- **UI Kit**: shadcn/ui（New York）+ Radix UI
-- **State**: Zustand 5.0.11（9-slice 架构）
-- **Animation**: motion v12（Framer Motion）+ motion-presets
-- **I18n**: i18next + react-i18next（中文 / English）
-- **Build**: Vite 7.1.7 + pnpm + vite-plugin-svgr
+| 类别 | 技术 |
+|------|------|
+| **Framework** | React 19.2.4 + TypeScript 5.9.2 + React Router 7.13.0（SPA） |
+| **Styling** | Tailwind CSS v4 + `tw-animate-css`（oklch 色彩空间）+ 液态玻璃设计 |
+| **UI Kit** | shadcn/ui（New York）+ Radix UI |
+| **State** | Zustand 5.0.11（9-slice 架构） |
+| **Animation** | motion v12（Framer Motion）+ motion-presets |
+| **I18n** | i18next + react-i18next（中文 / English） |
+| **Build** | Vite 7.1.7 + pnpm + vite-plugin-svgr |
 
 ### 服务层 Services
 
-15 个核心服务覆盖完整业务：
-`apiClient` · `chatService` · `storage` · `providerService` · `memoryService` · `toolService` · `presetContent` · `mcpService` · `markdownService` · `worldInfoService` · `knowledgeBaseService` · `sessionService` · `logger` · `aceSkillbookService` · `aceReflectorService` · `aceSkillManagerService`
+15 个核心服务覆盖完整业务：`apiClient` · `chatService` · `storage` · `providerService` · `memoryService` · `toolService` · `presetContent` · `mcpService` · `markdownService` · `worldInfoService` · `knowledgeBaseService` · `sessionService` · `logger` · `aceSkillbookService` · `aceReflectorService` · `aceSkillManagerService`
 
-- **本地持久化**: IndexedDB（`RPHubDB` v2，13 个 object store）
-- **流式请求**: 双通道架构 — XHR 原生代理（Android）+ fetch ReadableStream（浏览器）
-- **缓存层**: 通用响应缓存 30 min / Embedding 缓存 60 min
-- **ACE 记忆**: Execute → Reflect → Update 三步循环，Skillbook JSON 持久化
+- **本地持久化**：IndexedDB（`RPHubDB` v2，13 个 object store）
+- **流式请求**：双通道架构 — XHR 原生代理（Android）+ fetch ReadableStream（浏览器）
+- **缓存层**：通用响应缓存 30 min / Embedding 缓存 60 min
+- **ACE 记忆**：Execute → Reflect → Update 三步循环，Skillbook JSON 持久化
 
 ### Android 原生 Android
 
 - **Capacitor 8** 原生封装
 - **NanoHTTPD** 本地代理（`localhost:18527`）解决 WebView CORS 与 POST body 拦截限制
-- **最低/目标 SDK**: 由 `variables.gradle` 统一管理
+- **最低/目标 SDK**：由 `variables.gradle` 统一管理
 
 ---
 
@@ -95,25 +127,19 @@ pnpm install
 pnpm run typecheck   # 类型检查
 pnpm run lint        # 代码检查
 pnpm run dev         # 本地开发
-pnpm run build       # 生产构建
+pnpm run build       # 生产构建（自动同步到 android/assets）
 ```
 
 ### Android APK 构建 · Build APK
 
 ```powershell
-# 1. 同步构建产物到 android/
-npm run sync
-
-# 2. 应用 Android 补丁（纯 Kotlin 架构，无需复制 MainActivity）
-Copy-Item -Path "android-patches\AndroidManifest.xml" -Destination "android\app\src\main\AndroidManifest.xml" -Force
-Copy-Item -Path "android-patches\build.gradle" -Destination "android\app\build.gradle" -Force
-
-# 3. 编译 APK
+# 前端构建会自动同步产物到 android/app/src/main/assets/public/
+# 确认 assets 已更新后直接编译：
 cd android
 .\gradlew.bat assembleDebug
 ```
 
-📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.8.1-debug.apk`
+📦 **输出路径**：`android/app/build/outputs/apk/debug/LUZZY-v{version}-debug.apk`
 
 ---
 
@@ -125,14 +151,15 @@ RP-Hub/
 │   ├── app/
 │   │   ├── components/    # UI 组件（luzzy / markdown / message / ui / workbench）
 │   │   ├── routes/        # 14 个路由页面
-│   │   ├── services/      # 业务服务层
+│   │   ├── services/      # 业务服务层（15 个核心服务）
 │   │   ├── stores/        # Zustand store（9 slice）
-│   │   ├── locales/       # 国际化
-│   │   └── app.css        # 全局样式 + 字体 + 主题
+│   │   ├── locales/       # 国际化（zh-CN / en-US）
+│   │   └── app.css        # 全局样式 + 字体 + 明暗主题
 │   └── public/fonts/      # Alibaba 字体
 ├── android/               # Android 原生工程
 ├── android-patches/       # Android 补丁文件
-├── doc/                   # 参考文档与源码
+├── docs/                  # 文档与品牌资源
+│   └── brand-logos/       # 合作品牌 logo
 ├── scripts/               # 构建脚本
 ├── CHANGELOG.md
 └── README.md
@@ -142,61 +169,46 @@ RP-Hub/
 
 ## 📰 最新动态 · What's New
 
+### v0.8.2
+
+移除从上游继承但从未启用的配色预设系统（claude / t3-chat / mono / bubblegum / custom），净减少 753 行代码。精简 `ThemeProvider` 227→92 行、`app.css` 766→274 行，删除 `CustomThemeDialog` 组件。修复 Sheet 关闭按钮刘海屏安全区适配。
+
+> Removed the color preset system inherited from upstream but never enabled (claude / t3-chat / mono / bubblegum / custom), net reduction of 753 lines. Trimmed `ThemeProvider` 227→92 lines, `app.css` 766→274 lines, deleted `CustomThemeDialog` component. Fixed Sheet close button safe-area inset for notch screens.
+
 ### v0.8.1
 
-Agentic 多步工具调用循环：单次回复中模型可进行最多 10 步（可配 1-20）工具调用循环，模型自主决定何时信息充分并输出正文，支持链式检索（world-recall → vector-memory → keyword-search）。首次 API 请求使用 `tool_choice: 'required'` 强制工具调用，API 不支持时自动回退 `'auto'`。被动工具（memory-recall / world-recall）从 `tools` 参数过滤避免干扰主动决策。续写请求注入 tools 参数支持多步循环。`Set<string>` 循环检测防止重复调用。条件协议注入按模式分离（force 文本标签 / active 原生 function calling）。工具页新增 maxAgentSteps 滑块配置 UI。默认工具模式从 force 改为 active。Step 8 提示词强化 RP 场景工具调用指导。
+Agentic 多步工具调用循环：单次回复中模型可进行最多 10 步（可配 1-20）工具调用循环。首次 API 请求使用 `tool_choice: 'required'` 强制工具调用，API 不支持时自动回退 `'auto'`。被动工具从 `tools` 参数过滤。`Set<string>` 循环检测防止重复调用。默认工具模式从 force 改为 active。
 
-> Agentic multi-step tool call loop: within a single reply the model can perform up to 10 (configurable 1-20) tool call rounds, autonomously deciding when information is sufficient to output the main content, supporting chained retrieval (world-recall → vector-memory → keyword-search). First API request uses `tool_choice: 'required'` to force tool calls, auto-falling back to `'auto'` when unsupported. Passive tools (memory-recall / world-recall) are filtered from the `tools` parameter to avoid interfering with active decisions. Continuation requests inject tools to support multi-step loops. `Set<string>` loop detection prevents duplicate calls. Conditional protocol injection separates by mode (force text tags / active native function calling). Tool page adds maxAgentSteps slider config UI. Default tool mode changed from force to active. Step 8 prompt strengthened with RP-scenario tool call guidance.
+> Agentic multi-step tool call loop: within a single reply the model can perform up to 10 (configurable 1-20) tool call rounds. First API request uses `tool_choice: 'required'`, auto-falling back to `'auto'` when unsupported. Passive tools filtered from `tools` parameter. `Set<string>` loop detection prevents duplicate calls. Default tool mode changed from force to active.
+
+### v0.8.0
+
+TRPG 模式：D&D 5e 风格规则引擎，Think-1/2/OOC 三段推理，A/B/C 三级记忆摘要，Think-4 行为评分，战斗/社交/休息/升级完整规则，NPC 渐进式解锁，战斗状态条。
+
+> TRPG mode: D&D 5e-style rules engine, Think-1/2/OOC three-stage reasoning, A/B/C three-level memory summaries, Think-4 action scoring, full combat/social/rest/leveling rules, NPC progressive unlock, combat status bar.
 
 ### v0.7.2
 
-两阶段→单阶段架构重构：合并工具决策与 CoT/正文为单次 API 调用，模型通过原生 `tool_calls`（function calling）自行决定调用工具；system prompt 稳定，KV 缓存命中率提升。世界书召回重构为三策略混合召回（constant 直注 + 关键词触发 + 语义相似度），删除冗余 `world-search` 工具。新增 RecallResultCard 三级卡片 UI（输入/输出分区 + 展开收起 + 策略标签）、会话自动命名（首条 AI 回复后模型生成 3-6 字标题）、Token 计数增强（K/M 格式 + 思考 token + 工具续写 token + 全局计时）、正则脚本/UI 模板角色绑定 + 设置页多选 UI。修复 Phase 1 上下文缺失（`world_recall_result` 未过滤）、重试旧向量分片未清理、PNG 导出全白图、角色切换唤起键盘、PNG 导入未提取 UI 模板。翻译荧光改为字体描边、翻译动画仅首次播放、关于页背景铺满不截断、思考链按时间顺序展示、移除头脑风暴灯泡图标。
+两阶段→单阶段架构重构：合并工具决策与 CoT/正文为单次 API 调用。世界书召回重构为三策略混合召回（constant 直注 + 关键词触发 + 语义相似度）。
 
-> Two-stage → single-stage architecture refactor: merges tool decision + CoT/main content into a single API call; the model decides tool calls natively via `tool_calls` (function calling); system prompt stays stable, improving KV cache hit rate. World info recall refactored into a three-strategy hybrid recall (constant injection + keyword trigger + semantic similarity), removing the redundant `world-search` tool. Adds RecallResultCard three-level card UI (input/output separation + expand/collapse + strategy badges), session auto-naming (model generates 3-6 char title after first AI reply), enhanced token counter (K/M format + reasoning tokens + tool call tokens + global timing), regex/UI template character binding + settings page multi-select UI. Fixes Phase 1 context loss (`world_recall_result` not filtered), stale vector shards on retry, PNG export white image, keyboard popup on character switch, and PNG import missing UI template extraction. Translation glow replaced with font stroke, translation animation plays only on first render, about page background fills scroll area, thinking chain sorted chronologically, and brainstorm lightbulb icon removed.
-
-### v0.7.0
-
-两阶段架构重构：三阶段请求精简为两阶段（取消第三次请求，第二阶段同一响应内同时输出 CoT 思考链与正文），降低单轮延迟与 token 消耗；阶段 2 系统提示前缀稳定，KV 缓存命中率不降反升。修复阶段 2 上下文缺失导致 AI"无上下文"问题（现使用完整历史消息含 assistant 回复和开场白）。world-recall 改为被动预执行（同 memory-recall 机制），新增 WorldInfoRecallsCard 卡片展示。翻译文本增加 `text-shadow` 双层荧光描边效果。修复工具计数固定为 1、向量分片消息无角色标签、memory-recall 返回多条异常（嵌入维度不匹配检测 + 相似度阈值过滤）。关于页新增极光渐变光球背景动画（深浅主题适配）+ 品牌名渐变呼吸动画 + 短语切换模糊字距动画。强化阶段 1 工具调用优先级指令与 CoT 思考纪律（防止 DeepSeek 等模型在思考中输出剧情）。
-
-> Two-stage architecture refactor: three-stage request simplified to two stages (third request removed, stage 2 outputs both CoT chain and main content in a single response), reducing per-turn latency and token consumption; stage 2 system prompt prefix stays stable, so KV cache hit rate holds or even improves. Fix stage 2 context loss causing AI "no context" issue (now uses full history with assistant replies and opening message). world-recall switched to passive pre-execution (like memory-recall), with a new WorldInfoRecallsCard display. Translation text gains a dual-layer `text-shadow` glow effect. Fixed tool count stuck at 1, vector shard messages lacking role tags, and memory-recall returning anomalous results (embedding dimension mismatch detection + similarity threshold filtering). About page adds an aurora gradient orb background animation (light/dark theme aware) + gradient brand name with breathing animation + phrase-switch blur/letter-spacing animation. Strengthened stage 1 tool-call priority directives and CoT thinking discipline (prevents DeepSeek-like models from outputting plot inside the reasoning chain).
-
-### v0.5.7
-
-CoT 思考卡片折叠 bug 修复（useRef 边沿检测替代 effect 覆盖）；输入框按钮垂直居中对齐；记忆召回工具解耦长期记忆设置（仅控制写入不阻止读取）；记忆页默认打开最近会话；Phase 1 工具决策提示词重写（多关键词拆分）；世界书工具增强（无嵌入模型降级为关键词搜索 + 中文 2-gram 拆分）；Android 流式输出帧率优化（每帧最多 3 行 + 16ms 帧间隔）。
-
-> CoT card collapse fix (useRef edge detection replaces effect override); input button vertical centering; memory-recall tool decoupled from long-term memory setting (write-only gating); memory page defaults to most recent session; Phase 1 tool decision prompt rewritten (multi-keyword splitting); world info tool enhancements (no-embedding fallback to keyword search + Chinese 2-gram splitting); Android streaming frame rate optimization (max 3 lines per frame + 16ms frame interval).
-
-### v0.5.4
-
-流式输出深度修复：解决 Android 平台"一次性全部蹦出"问题。新增 XHR 异步队列处理（pendingChunks + 每 10 行让出主线程）、React.memo 避免全量重渲染、useDeferredValue 延迟 Markdown 解析（等价 rikkahub 的 mapLatest + flowOn(Default) 后台解析模式）、parseThinkingSteps 始终缓存。两阶段架构修复：world-recall enabled 过滤、embedding 懒加载、abort 生命周期、parseCot reasoning 字段兼容。角色卡删除级联清理 6 类关联数据。
-
-> Deep fix for streaming output: resolves Android "all-at-once" issue. Adds XHR async queue processing (pendingChunks + yield main thread every 10 lines), React.memo to prevent full re-renders, useDeferredValue for deferred Markdown parsing (equivalent to rikkahub's mapLatest + flowOn(Default)), and always-on parseThinkingSteps cache. Two-stage architecture fixes: world-recall enabled filter, embedding lazy-load, abort lifecycle, parseCot reasoning field compatibility. Character card deletion now cascades to clean 6 categories of related data.
-
-### v0.5.0
-
-思考链卡片 UI 完全重构：二级节点改为独立玻璃卡片，工具调用与结果合并为单个节点，生成中节点脉冲高亮；修复工具卡片初始宽度收缩问题。聊天页顶部/底部升级为高级透明玻璃拟态，在保留自定义背景隐约可见的同时，功能按钮通过半透明胶囊容器保持清晰可点。
-
-> Thinking chain cards fully rebuilt: secondary nodes become standalone glass cards, tool calls and results merge into single nodes, running nodes pulse-highlight; fixed initial tool-card width shrink. Chat page header/footer upgraded to advanced transparent glassmorphism, keeping custom backgrounds faintly visible while ensuring all action buttons remain clearly visible via semi-transparent capsule containers.
-
-### v0.4.6
-
-思考卡片完全流式输出（移除打字机延迟，参考 rikkahub 实现直接渲染完整字符串）；新增"继续剧情"按钮和 API 设置弹窗扩展（API Key + 模型配置）；修复分享功能（NativeBridge ClipData + 主线程 Handler）、角色卡导入（onShowFileChooser）、应用恢复白屏（WebView 生命周期 + SplashScreen）、取消 [] 高亮、角色卡侧边栏按钮可见性、详情弹窗滑动、Markdown 排版间距等问题。
-
-> Thinking cards now fully stream output (removed typewriter delay, referencing rikkahub's approach of rendering complete strings directly); added "Continue Story" button and expanded API settings dialog (API Key + model config); fixed share functionality (NativeBridge ClipData + main thread Handler), character card import (onShowFileChooser), app resume white screen (WebView lifecycle + SplashScreen), removed [] highlight, character card sidebar button visibility, detail dialog scrolling, Markdown spacing, and more.
-
-### v0.4.2
-
-修复 TRPG 模式火山方舟 API 转发失败问题（`MainActivity.java` 正确使用 `resolveTargetBase()` 路由目标地址），新增代理回退死循环防护与火山方舟 Authorization 注入优化。重写 TRPG 说明弹窗，明确支持三种 API 配置场景：火山方舟自动转发、其他供应商需转发（`_target` 参数）、其他供应商直连。
-
-> Fixes TRPG mode Volcano Ark API forwarding failure (`MainActivity.java` now correctly uses `resolveTargetBase()` to route target addresses), adds proxy fallback loop protection and Volcano Ark Authorization injection optimization. Rewrites TRPG notice dialog to clearly support three API configuration scenarios: Volcano Ark auto-forward, other providers needing forwarding (`_target` param), and other providers direct connection.
-
-### v0.4.1
-
-修复开场白不显示、流式输出正文空白、会话导出失败、世界书导入/滑动/导出 BUG、角色卡内 UI 模板/正则无法导入、导入角色卡未自动启用世界书等问题。新增两次独立 API 请求架构（CoT + 正文，KV 缓存保护）、会话分支动画、高亮颜色预览优化、日志记录增强等功能。
-
-> Fixes opening message not displaying, streaming output empty content, session export failure, world info import/slide/export bugs, UI template/regex import from character card, and auto-enable world info on character card import. Adds two independent API request architecture (CoT + main content, KV cache protection), session branch animation, highlight color preview optimization, and log recording enhancement.
+> Two-stage → single-stage architecture refactor: merges tool decision + CoT/main content into a single API call. World info recall refactored into three-strategy hybrid recall (constant injection + keyword trigger + semantic similarity).
 
 [查看完整更新日志 · See full changelog →](./CHANGELOG.md)
+
+---
+
+## 🙏 鸣谢 · Acknowledgements
+
+<div align="center">
+
+| 品牌 | 说明 |
+|:---:|------|
+| [**DeepSeek**](https://deepseek.com) | 深度求索 — LLM 供应商，深度思考（reasoning）能力支持 |
+| [**Z.ai · 智谱清言**](https://z.ai) | 智谱 AI — GLM 系列大模型，本项目的核心驱动力 |
+| [**Trae IDE**](https://www.trae.ai/) | 字节跳动 AI IDE — 本项目的主力开发工具 |
+| [**Trae Work**](https://www.trae.ai/) | 字节跳动 AI 工作助手 — 项目协作与文档生成 |
+
+</div>
 
 ---
 
