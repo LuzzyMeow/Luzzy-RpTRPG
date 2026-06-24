@@ -44,7 +44,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.8.1";
+const APP_VERSION = "v0.8.2";
 
 /** v0.5.8: 关于页动态文案轮播 */
 const ABOUT_PHRASES = [

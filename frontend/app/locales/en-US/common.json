@@ -34,19 +34,9 @@
     "language_en_us": "English",
     "theme_mode": "Color mode",
     "theme_mode_label": "Color mode: {{label}}",
-    "theme_color": "Theme color",
-    "theme_color_label": "Theme color: {{label}}",
     "theme_light": "Light",
     "theme_dark": "Dark",
     "theme_system": "System",
-    "color_default": "Default",
-    "color_claude": "Claude",
-    "color_t3_chat": "T3 Chat",
-    "color_mono": "Mono",
-    "color_bubblegum": "Bubblegum",
-    "color_custom": "Custom",
-    "edit_custom_css": "Edit custom CSS",
-    "custom_theme_saved": "Custom theme saved",
     "welcome_back": "Welcome back",
     "new_conversation": "New conversation",
     "conversations": "Conversations",
@@ -83,15 +73,6 @@
     "empty_content": "(empty)",
     "type_label": "Type: {{type}}",
     "close_panel": "Close panel"
-  },
-  "custom_theme_dialog": {
-    "title": "Custom theme CSS",
-    "description": "Only CSS variable declarations are extracted and applied (for example, --primary: ...;), with both Light and Dark variants supported.",
-    "theme_variables": "Theme variables",
-    "theme_placeholder": ":root {\n  --background: ...;\n  --primary: ...;\n}\n\n:root.dark {\n  --background: ...;\n  --primary: ...;\n}",
-    "tip": "You can download more themes from",
-    "cancel": "Cancel",
-    "save_and_apply": "Save and apply"
   },
   "infinite_scroll": {
     "load_more": "Loading more..."

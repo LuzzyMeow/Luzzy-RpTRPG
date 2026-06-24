@@ -38,7 +38,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {/* v0.4.1: 提前设置主题 class,避免 hydration 阶段白屏闪烁 */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('vite-ui-theme');var m=window.matchMedia('(prefers-color-scheme: dark)');var d=t==='dark'||((t==='system'||!t)&&m.matches);var r=document.documentElement;r.classList.remove('light','dark');r.classList.add(d?'dark':'light');var ct=localStorage.getItem('vite-ui-theme-color');if(ct){r.dataset.theme=ct;}}catch(e){document.documentElement.classList.add('light');}})();`,
+            __html: `(function(){try{var t=localStorage.getItem('vite-ui-theme');var m=window.matchMedia('(prefers-color-scheme: dark)');var d=t==='dark'||((t==='system'||!t)&&m.matches);var r=document.documentElement;r.classList.remove('light','dark');r.classList.add(d?'dark':'light');}catch(e){document.documentElement.classList.add('light');}})();`,
           }}
         />
       </head>
