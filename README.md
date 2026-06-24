@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="doc/brand-logos/deepseek.png" width="72" height="72" alt="DeepSeek" />&nbsp;&nbsp;&nbsp;
-<img src="doc/brand-logos/zai.png" width="72" height="72" alt="Z.ai · 智谱清言" />&nbsp;&nbsp;&nbsp;
-<img src="doc/brand-logos/luzzy.png" width="72" height="72" alt="LUZZY" />&nbsp;&nbsp;&nbsp;
-<img src="doc/brand-logos/kimi.png" width="72" height="72" alt="Kimi · 月之暗面" />&nbsp;&nbsp;&nbsp;
-<img src="doc/brand-logos/trae.png" width="72" height="72" alt="Trae" />
+<img src="frontend/public/brand-logos/deepseek.png" width="72" height="72" alt="DeepSeek" />&nbsp;&nbsp;&nbsp;
+<img src="frontend/public/brand-logos/zai.png" width="72" height="72" alt="Z.ai · 智谱清言" />&nbsp;&nbsp;&nbsp;
+<img src="frontend/public/brand-logos/luzzy.png" width="72" height="72" alt="LUZZY" />&nbsp;&nbsp;&nbsp;
+<img src="frontend/public/brand-logos/kimi.png" width="72" height="72" alt="Kimi · 月之暗面" />&nbsp;&nbsp;&nbsp;
+<img src="frontend/public/brand-logos/trae.png" width="72" height="72" alt="Trae" />
 
 # LUZZY · 鹿溪
 
