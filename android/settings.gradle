@@ -8,3 +8,6 @@ pluginManagement {
 
 rootProject.name = 'luzzy'
 include ':app'
+include ':capacitor-android'
+project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')
+include ':capacitor-cordova-android-plugins'

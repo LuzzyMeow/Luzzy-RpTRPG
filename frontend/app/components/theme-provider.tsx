@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { useAppStore } from "~/stores";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type Theme = ThemeMode;
@@ -67,6 +68,13 @@ export function ThemeProvider({
       mediaQuery.removeEventListener("change", onSystemThemeChange);
     };
   }, [theme]);
+
+  // 管理 data-theme 属性（配色方案）
+  const colorScheme = useAppStore((s) => s.colorScheme);
+  useEffect(() => {
+    const root = window.document.documentElement;
+    root.setAttribute("data-theme", colorScheme);
+  }, [colorScheme]);
 
   const value = {
     theme,

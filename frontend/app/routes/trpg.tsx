@@ -40,6 +40,7 @@ import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { toast } from "sonner";
+import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 import {
   Sheet,
   SheetContent,
@@ -103,6 +104,7 @@ export default function TrpgPage() {
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const [displayCount, setDisplayCount] = React.useState(40);
   const [isLoadingMore, setIsLoadingMore] = React.useState(false);
+  const confirm = useConfirm();
 
   // ===== 可见消息（分页加载） =====
   const visibleMessages = React.useMemo(() => {
@@ -129,7 +131,7 @@ export default function TrpgPage() {
   // ===== 自动滚动到底部 =====
   React.useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [trpgMessages]);
+  }, [trpgMessages, trpgDesignSession?.messages]);
 
   // ===== 发送消息 =====
   const handleSend = React.useCallback(async () => {
@@ -184,15 +186,46 @@ export default function TrpgPage() {
     <LuzzyLayout
       title="TRPG"
       actions={
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setShowInfo(true)}
-          aria-label="TRPG 说明"
-          {...pressableSubtle}
-        >
-          <IconInfo className="size-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {trpgMode === "design" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={async () => {
+                const ok = await confirm({
+                  title: "重置设计会话",
+                  description: "确定重置当前设计会话吗？所有未保存的进度将丢失。",
+                  destructive: true,
+                });
+                if (ok) {
+                  resetTrpgDesignSession();
+                }
+              }}
+              aria-label="重置设计会话"
+              {...pressableSubtle}
+            >
+              <IconRefresh className="size-4" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => openSheet("settings")}
+            aria-label="TRPG 设置"
+            {...pressableSubtle}
+          >
+            <IconSettings className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowInfo(true)}
+            aria-label="TRPG 说明"
+            {...pressableSubtle}
+          >
+            <IconInfo className="size-4" />
+          </Button>
+        </div>
       }
       contentClassName="!overflow-hidden"
     >
@@ -225,7 +258,6 @@ export default function TrpgPage() {
               type="button"
               onClick={() => {
                 if (trpgMode !== "design") {
-                  resetTrpgDesignSession();
                   setTrpgMode("design");
                 }
               }}
@@ -256,22 +288,8 @@ export default function TrpgPage() {
             </motion.div>
           )}
 
-          {/* 右侧设置齿轮 */}
+          {/* v0.8.5: 设置按钮已移至 LuzzyLayout actions，与提示按钮并排 */}
           <div className="flex-1" />
-          <motion.button
-            type="button"
-            onClick={() => openSheet("settings")}
-            className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
-              trpgActiveSheet === "settings"
-                ? "bg-primary/15 text-primary"
-                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-            }`}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            aria-label="TRPG 设置"
-          >
-            <IconSettings className="size-4" />
-          </motion.button>
         </motion.div>
 
         {/* ===== 设计模式进度条 ===== */}
@@ -304,7 +322,6 @@ export default function TrpgPage() {
                 <EmptyState
                   onCreateSave={() => openSheet("save")}
                   onStartDesign={() => {
-                    resetTrpgDesignSession();
                     setTrpgMode("design");
                   }}
                   mode={trpgMode}
@@ -657,13 +674,14 @@ function DesignModeIndicator({ session }: { session: DesignSession }) {
   const charCount = Object.keys(snap.character_database).filter((k) => k !== "_summary").length;
   const eventCount = snap.world_timeline.events.length;
 
-  const progressItems = [
-    { label: "标题", done: draft.name && draft.name !== "未命名世界卡" },
+  const capsules = [
+    { label: `Stage ${stage} · ${stageNames[stage]}`, done: true, highlight: true },
+    { label: "标题", done: !!(draft.name && draft.name !== "未命名世界卡"), count: undefined },
     { label: "地理实体", done: entityCount >= 3, count: entityCount },
     { label: "Prompt模块", done: moduleCount >= 1, count: moduleCount },
     { label: "角色", done: charCount >= 1, count: charCount },
     { label: "时间线", done: eventCount >= 5, count: eventCount },
-    { label: "开场白", done: !!snap.opening_greeting },
+    { label: "开场白", done: !!snap.opening_greeting, count: undefined },
   ];
 
   return (
@@ -671,29 +689,28 @@ function DesignModeIndicator({ session }: { session: DesignSession }) {
       initial={{ opacity: 0, y: -4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={springSnappy}
-      className="shrink-0 border-b border-border/20 bg-background/40 px-3 py-2 backdrop-blur-sm"
+      className="shrink-0 border-b border-border/20 bg-background/40 backdrop-blur-sm"
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-primary">设计模式</span>
-          <span className="text-xs text-muted-foreground">
-            Stage {stage} · {stageNames[stage]}
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
-          {progressItems.map((item) => (
-            <span
-              key={item.label}
-              className={`rounded px-1.5 py-0.5 text-[10px] ${
-                item.done ? "bg-primary/15 text-primary" : "bg-muted/30 text-muted-foreground"
-              }`}
-              title={item.label}
-            >
-              {item.label}
-              {item.count !== undefined ? ` ${item.count}` : ""}
-            </span>
-          ))}
-        </div>
+      {/* v0.8.5: 横向滚动胶囊状态条 */}
+      <div className="flex items-center gap-1.5 overflow-x-auto px-3 py-2 no-scrollbar">
+        {capsules.map((cap, i) => (
+          <motion.span
+            key={i}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ ...springSnappy, delay: i * 0.03 }}
+            className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              cap.highlight
+                ? "bg-primary/15 text-primary ring-1 ring-primary/20"
+                : cap.done
+                  ? "bg-primary/10 text-primary"
+                  : "bg-muted/40 text-muted-foreground"
+            }`}
+          >
+            {cap.label}
+            {cap.count !== undefined ? ` ${cap.count}` : ""}
+          </motion.span>
+        ))}
       </div>
     </motion.div>
   );
@@ -792,7 +809,7 @@ function DesignModeWelcome({ onSelectDirection }: { onSelectDirection: (text: st
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={springGentle}
-      className="flex h-full flex-col items-center justify-center px-4 py-6 text-center"
+      className="flex min-h-full flex-col items-center justify-center px-4 py-6 text-center"
     >
       <div className="mb-6 space-y-2">
         <h2 className="text-xl font-semibold">欢迎来到设计模式，你想从哪个角度出发？</h2>

@@ -1,0 +1,8 @@
+{
+  "appId": "com.luzzymeow.luzzy",
+  "appName": "LUZZY",
+  "webDir": "frontend/app",
+  "android": {
+    "allowMixedContent": true
+  }
+}

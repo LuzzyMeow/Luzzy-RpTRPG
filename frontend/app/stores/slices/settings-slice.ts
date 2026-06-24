@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from "uuid";
 import type {
   ApiProvider,
   ThemeMode,
+  ColorScheme,
   UserProfile,
   TranslationSettings,
   HighlightSettings,
@@ -43,7 +44,7 @@ export const BUILTIN_PROVIDERS: ApiProvider[] = [
     apiUrl: "https://api.deepseek.com",
     isBuiltin: true,
     apiType: "openai-compatible",
-    customRequestBody: '{"reasoning_effort": "max"}',
+    customRequestBody: '{"reasoning_effort": "xhigh", "thinking": {"type": "enabled"}}',
     models: [
       {
         id: "deepseek-v4-pro",
@@ -70,7 +71,7 @@ export const BUILTIN_PROVIDERS: ApiProvider[] = [
     apiUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
     isBuiltin: true,
     apiType: "openai-compatible",
-    customRequestBody: '{"thinking": {"type": "enabled"}}',
+    customRequestBody: '{"reasoning_effort": "xhigh", "thinking": {"type": "enabled"}}',
     models: [
       {
         id: "glm-5.2",
@@ -199,6 +200,7 @@ const isValidProviderId = (id: string): boolean => /^[a-zA-Z]+$/.test(id);
  */
 const extractPersistableData = (state: SettingsSlice): Record<string, unknown> => ({
   theme: state.theme,
+  colorScheme: state.colorScheme,
   apiUrl: state.apiUrl,
   apiKey: state.apiKey,
   modelName: state.modelName,
@@ -239,6 +241,7 @@ export const createSettingsSlice: StateCreator<AppStoreState, [], [], SettingsSl
 ) => ({
   // ===== 状态初始值 =====
   theme: "light",
+  colorScheme: "pixel",
   apiUrl: BUILTIN_PROVIDERS[0].apiUrl,
   apiKey: "",
   modelName: "",
@@ -274,6 +277,7 @@ export const createSettingsSlice: StateCreator<AppStoreState, [], [], SettingsSl
   // ===== Actions：主题 =====
   setTheme: (theme) => set({ theme }),
   toggleTheme: () => set((state) => ({ theme: state.theme === "light" ? "dark" : "light" })),
+  setColorScheme: (colorScheme) => set({ colorScheme }),
 
   // ===== Actions：API 基础 =====
   setApiUrl: (apiUrl) =>
@@ -778,6 +782,7 @@ export const createSettingsSlice: StateCreator<AppStoreState, [], [], SettingsSl
         : ((data.apiKey as string) ?? "");
       set((state) => ({
         theme: (data.theme as ThemeMode) ?? state.theme,
+        colorScheme: (data.colorScheme as ColorScheme) ?? state.colorScheme,
         apiUrl: migratedApiUrl || state.apiUrl,
         apiKey: migratedApiKey || state.apiKey,
         modelName: (data.modelName as string) ?? state.modelName,

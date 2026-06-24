@@ -5,7 +5,7 @@
  *
  * 核心能力：
  * - 余弦相似度计算
- * - 调用 OpenAI 兼容 embedding API 获取文本向量（端点带 /v3 后缀避免版本冲突）
+ * - 调用 OpenAI 兼容 embedding API 获取文本向量（端点默认 /v1/embeddings）
  * - 按对话轮次构建向量记忆分片
  * - 基于向量相似度搜索记忆
  * - 全局记忆 MEMORY.md 的读写
@@ -242,14 +242,16 @@ const buildEmbeddingUrl = (baseUrl: string): string => {
  * v0.6.5: 修复供应商解析优先级——优先从嵌入模型名自身解析供应商前缀，
  * 而不是错误地回退到聊天模型。
  *
- * 解析优先级：
- * 1. settings.embeddingApiProviderId（显式指定，向后兼容）
+ * 解析优先级（v0.8.2 起两级策略，移除了 Level 3/4 回退）：
+ * 1. settings.embeddingApiProviderId（显式指定，下拉选择时写入）
  * 2. 从嵌入模型名 settings.embeddingModel 解析供应商前缀（v0.6.5新增）
- * 3. 从聊天模型名 apiSettings.modelName 解析供应商前缀（兜底）
- * 4. 回退到 apiSettings 的默认 apiUrl / apiKey
+ *
+ * 注意：v0.8.2 移除了 Level 3（回退聊天模型供应商）和 Level 4（回退聊天 apiSettings），
+ * 因为嵌入与聊天是不同模型/不同供应商/不同 Key，回退会导致用错误的 URL/Key 请求嵌入模型。
+ * 解析失败时抛出明确错误，引导用户重新配置。
  *
  * @param settings - 记忆设置
- * @param apiSettings - API 设置
+ * @param apiSettings - API 设置（v0.8.2 后已废弃，保留签名向后兼容）
  * @param providers - 供应商列表
  * @param providerKeys - 供应商 ID 到 API Key 的映射
  * @returns 供应商的 apiUrl 和 apiKey

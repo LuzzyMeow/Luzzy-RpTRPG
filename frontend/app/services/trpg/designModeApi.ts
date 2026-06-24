@@ -87,7 +87,7 @@ export async function sendDesignModeMessage(
     toolExecutor,
     firstSystemAppend:
       "【阶段 1：设计规划】\n" +
-      "本轮你只输出思考过程和必要的设计工具调用（如 write_card、patch_card、set_world_card_field 等）。\n" +
+      "本轮你只输出思考过程和必要的设计工具调用（如 write_card、patch_card、set_world_terms、add_world_setting 等）。\n" +
       "不要生成面向用户的闲聊或总结。工具执行结果会在下一阶段回传给你。",
     finalSystemAppend:
       "【阶段 2：基于工具执行结果回复用户】\n" +

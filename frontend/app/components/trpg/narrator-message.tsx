@@ -36,6 +36,7 @@ import {
 import type { TrpgMessage, NarratorSections, ActionOption } from "~/types/trpg";
 import Markdown from "~/components/markdown/markdown";
 import { springSoft, easeFast } from "~/lib/motion-presets";
+import { parseDesignChoices, stripChoicesTags } from "~/services/trpg/designMode";
 
 // ============================================================================
 // Props
@@ -62,17 +63,9 @@ export function NarratorMessage({ message, onSelectAction }: NarratorMessageProp
       transition={springSoft}
       className="flex w-full flex-col gap-2"
     >
-      {/* 思考链折叠区 */}
+      {/* 思考链折叠区 — v0.8.5: 流式自动展开/正文开始时自动收起 */}
       {message.reasoningContent && (
-        <CollapsibleSection
-          icon={<IconBook className="size-3.5" />}
-          title="思考链"
-          defaultOpen={false}
-        >
-          <div className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-            {message.reasoningContent}
-          </div>
-        </CollapsibleSection>
+        <ThinkingChainCard reasoningContent={message.reasoningContent} hasContent={!!message.content} />
       )}
 
       {/* 工具调用列表 */}
@@ -84,9 +77,21 @@ export function NarratorMessage({ message, onSelectAction }: NarratorMessageProp
       {sections ? (
         <NarratorSectionsView sections={sections} onSelectAction={onSelectAction} />
       ) : (
-        <div className="rounded-lg border border-border/30 bg-muted/20 px-3 py-2">
-          <Markdown content={message.content || ""} />
-        </div>
+        (() => {
+          // v0.8.5: 解析 <choices> 标签并渲染为可点击选项卡片
+          const choices = parseDesignChoices(message.content || "");
+          const cleanContent = stripChoicesTags(message.content || "");
+          return (
+            <div className="flex flex-col gap-2">
+              <div className="rounded-lg border border-border/30 bg-muted/20 px-3 py-2">
+                <Markdown content={cleanContent} />
+              </div>
+              {choices.length > 0 && (
+                <ActionOptionsGrid options={choices} onSelectAction={onSelectAction} />
+              )}
+            </div>
+          );
+        })()
       )}
     </motion.div>
   );
@@ -292,6 +297,74 @@ function ToolCallsList({ toolCalls }: { toolCalls: NonNullable<TrpgMessage["tool
                   )}
                 </div>
               ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ============================================================================
+// 思考链卡片 — v0.8.5: 流式自动展开/正文开始时自动收起
+// ============================================================================
+
+function ThinkingChainCard({
+  reasoningContent,
+  hasContent,
+}: {
+  reasoningContent: string;
+  hasContent: boolean;
+}) {
+  const [expanded, setExpanded] = React.useState(true);
+  const prevHasContentRef = React.useRef(false);
+
+  // 当正文从空→非空时自动收起（agent 开始输出正文）
+  React.useEffect(() => {
+    const prevHasContent = prevHasContentRef.current;
+    if (hasContent && !prevHasContent) {
+      setExpanded(false);
+    }
+    prevHasContentRef.current = hasContent;
+  }, [hasContent]);
+
+  const handleToggle = () => setExpanded((prev) => !prev);
+  const isThinking = !hasContent && !!reasoningContent;
+
+  return (
+    <div className="overflow-hidden rounded-md border border-border/20 bg-muted/10">
+      <motion.button
+        type="button"
+        onClick={handleToggle}
+        whileTap={{ scale: 0.99 }}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/30"
+      >
+        <IconBook className={`size-3.5 ${isThinking ? "text-primary" : ""}`} />
+        <span className="font-medium">{isThinking ? "思考中" : "思考链"}</span>
+        {isThinking && (
+          <motion.span
+            animate={{ opacity: [0.4, 1, 0.4] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+            className="size-1.5 rounded-full bg-primary"
+          />
+        )}
+        <motion.div animate={{ rotate: expanded ? 90 : 0 }} transition={easeFast} className="ml-auto">
+          <IconChevronRight className="size-3" />
+        </motion.div>
+      </motion.button>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={springSoft}
+            className="overflow-hidden"
+          >
+            <div className="px-2.5 pb-2">
+              <div className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                {reasoningContent}
+              </div>
             </div>
           </motion.div>
         )}

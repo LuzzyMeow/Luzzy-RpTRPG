@@ -38,6 +38,7 @@ import type { AppStoreState } from "~/stores/slices/types";
  */
 const PERSIST_KEYS = [
   "theme",
+  "colorScheme",
   "apiUrl",
   "apiKey",
   "modelName",

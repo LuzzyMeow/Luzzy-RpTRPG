@@ -178,3 +178,121 @@ export const overlayAnimation: Variants = {
   animate: { opacity: 1, transition: easeInOut, willChange: "opacity" },
   exit: { opacity: 0, transition: easeFast, willChange: "opacity" },
 };
+
+// ============================================================================
+// 像素风格动画预设（Pixel Theme）
+// ============================================================================
+
+/** 像素风格缓动：阶梯式（4步，无弹性） */
+export const pixelStep: Transition = {
+  duration: 0.12,
+  ease: [0, 0, 0.25, 1],
+};
+
+/** 像素风格缓动：线性 snap（用于退出） */
+export const pixelSnap: Transition = {
+  duration: 0.08,
+  ease: "linear",
+};
+
+/** 像素弹簧进入 */
+export const pixelSpringEnter: Variants = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0, transition: pixelStep, willChange: "transform, opacity" },
+  exit: { opacity: 0, y: -8, transition: pixelSnap, willChange: "transform, opacity" },
+};
+
+/** 像素缩放进入 */
+export const pixelScaleIn: Variants = {
+  initial: { opacity: 0, scale: 0.96 },
+  animate: { opacity: 1, scale: 1, transition: pixelStep, willChange: "transform, opacity" },
+  exit: { opacity: 0, scale: 0.96, transition: pixelSnap, willChange: "transform, opacity" },
+};
+
+/** 像素从右滑入 */
+export const pixelSlideInRight: Variants = {
+  initial: { opacity: 0, x: 20 },
+  animate: { opacity: 1, x: 0, transition: pixelStep, willChange: "transform, opacity" },
+  exit: { opacity: 0, x: -20, transition: pixelSnap, willChange: "transform, opacity" },
+};
+
+/** 像素从下滑入 */
+export const pixelSlideInBottom: Variants = {
+  initial: { opacity: 0, y: 30 },
+  animate: { opacity: 1, y: 0, transition: pixelStep, willChange: "transform, opacity" },
+  exit: { opacity: 0, y: 30, transition: pixelSnap, willChange: "transform, opacity" },
+};
+
+/** 像素淡入滑动 */
+export const pixelFadeSlide: Variants = {
+  initial: { opacity: 0, y: 6 },
+  animate: { opacity: 1, y: 0, transition: pixelStep, willChange: "transform, opacity" },
+  exit: { opacity: 0, y: -6, transition: pixelSnap, willChange: "transform, opacity" },
+};
+
+/** 像素纯淡入 */
+export const pixelFadeIn: Variants = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: pixelStep, willChange: "opacity" },
+  exit: { opacity: 0, transition: pixelSnap, willChange: "opacity" },
+};
+
+/** 像素按压：hover 1px 偏移，tap 1px 偏移（无 scale） */
+export const pixelPressable = {
+  whileHover: { y: -1, transition: pixelStep },
+  whileTap: { y: 1, transition: pixelSnap },
+};
+
+/** 像素轻微按压（图标按钮） */
+export const pixelPressableSubtle = {
+  whileHover: { y: -1, transition: pixelStep },
+  whileTap: { y: 0, scale: 0.98, transition: pixelSnap },
+};
+
+/** 像素玻璃悬停 */
+export const pixelGlassHover = {
+  whileHover: { y: -1, transition: pixelStep },
+  whileTap: { y: 1, transition: pixelSnap },
+};
+
+/** 像素卡片动画 */
+export const pixelCardAnimation = {
+  ...pixelSpringEnter,
+  ...pixelPressable,
+};
+
+/** 像素按钮动画 */
+export const pixelButtonAnimation = {
+  ...pixelScaleIn,
+  ...pixelPressable,
+};
+
+/** 像素图标按钮动画 */
+export const pixelIconButtonAnimation = {
+  ...pixelFadeSlide,
+  ...pixelPressableSubtle,
+};
+
+/** 像素列表项动画 */
+export const pixelListItemAnimation: Variants = {
+  initial: { opacity: 0, height: 0 },
+  animate: {
+    opacity: 1,
+    height: "auto",
+    transition: pixelStep,
+    willChange: "transform, opacity, height",
+  },
+  exit: {
+    opacity: 0,
+    height: 0,
+    transition: pixelSnap,
+    willChange: "transform, opacity, height",
+  },
+};
+
+/** 像素遮罩层动画 */
+export const pixelOverlayAnimation: Variants = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: pixelStep, willChange: "opacity" },
+  exit: { opacity: 0, transition: pixelSnap, willChange: "opacity" },
+};

@@ -431,7 +431,8 @@ function MemorySettingsCard({ settings, providers, onUpdate, onSave }: MemorySet
                         onValueChange={(v) => {
                           if (v === MANUAL_VALUE) {
                             // 切换到手动输入模式，保留当前实际模型名（去前缀）或清空
-                            // v0.8.2: 保留 embeddingApiProviderId，使 Level 1 解析仍然有效
+                            // v0.8.5: 清空 embeddingApiProviderId，避免与模型名不同步导致用错供应商
+                            onUpdate("embeddingApiProviderId", "");
                             onUpdate(
                               "embeddingModel",
                               isManual ? currentModel : actualModelName || "",

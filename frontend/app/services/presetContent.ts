@@ -547,6 +547,12 @@ export const BUILTIN_PRESET_DEFAULTS = [
 /** 内置预设名称集合 */
 export const BUILTIN_PRESET_NAME_SET = new Set(BUILTIN_PRESET_DEFAULTS.map((p) => p.name));
 
+/**
+ * v0.8.5: 内置预设版本号
+ * 修改内置预设内容时递增此数字，启动时会强制清除用户覆盖，使用最新版本
+ */
+export const BUILTIN_PRESET_VERSION = 2;
+
 // ============================================================================
 // 鹿溪默认角色提示词（Task 2.1）
 // 完整角色设定，原样保留不做任何修改

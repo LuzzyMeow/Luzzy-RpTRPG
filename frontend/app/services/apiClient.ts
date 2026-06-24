@@ -803,7 +803,8 @@ const sendStreamRequestViaXHR = (params: StreamRequestParams): Promise<StreamReq
       if (isProcessing) return;
       isProcessing = true;
 
-      const MAX_LINES_PER_FRAME = 3;
+      // v0.8.5: 提高到 8 行/帧，移除 else 分支的 await nextFrame()，吞吐量 ~480 行/秒
+      const MAX_LINES_PER_FRAME = 8;
       let linesThisFrame = 0;
 
       while (pendingChunks.length > 0 && !chunkError && !settled) {
@@ -823,12 +824,13 @@ const sendStreamRequestViaXHR = (params: StreamRequestParams): Promise<StreamReq
             return;
           }
           linesThisFrame++;
-          // v0.8.3: 使用 requestAnimationFrame 对齐浏览器刷新帧，替代 setTimeout
+          // v0.8.5: 仅达到 MAX_LINES_PER_FRAME 后才让出帧，否则继续处理
           if (linesThisFrame >= MAX_LINES_PER_FRAME) {
             linesThisFrame = 0;
-            await nextFrame();
-          } else {
-            await nextFrame();
+            // v0.8.5: 队列积压保护 — 积压超过 50 时不让出帧，直接处理下一批
+            if (pendingChunks.length <= 50) {
+              await nextFrame();
+            }
           }
         }
       }
@@ -1066,9 +1068,9 @@ const sendStreamRequestViaFetch = async (
   // 流式响应：逐块读取并解析 SSE
   const decoder = new TextDecoder();
   let buffer = "";
-  // v0.5.7: 每帧最多处理 3 行，防止 React 批处理导致"突然蹦出"
+  // v0.8.5: 提高到 10 行/帧，移除 else 分支的 await nextFrame()，吞吐量 ~600 行/秒
   let fetchLinesThisFrame = 0;
-  const FETCH_MAX_LINES_PER_FRAME = 3;
+  const FETCH_MAX_LINES_PER_FRAME = 10;
 
   try {
     while (true) {
@@ -1099,12 +1101,10 @@ const sendStreamRequestViaFetch = async (
           }
           console.warn("Error parsing stream chunk:", e);
         }
-        // v0.8.3: 使用 requestAnimationFrame 对齐浏览器刷新帧，替代 setTimeout
+        // v0.8.5: 仅达到 FETCH_MAX_LINES_PER_FRAME 后才让出帧，否则继续处理
         fetchLinesThisFrame++;
         if (fetchLinesThisFrame >= FETCH_MAX_LINES_PER_FRAME) {
           fetchLinesThisFrame = 0;
-          await nextFrame();
-        } else {
           await nextFrame();
         }
       }

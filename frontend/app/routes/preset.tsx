@@ -28,6 +28,7 @@ import type { Preset } from "~/types/luzzy";
 import {
   BUILTIN_PRESET_DEFAULTS,
   BUILTIN_PRESET_NAME_SET,
+  BUILTIN_PRESET_VERSION,
   LUZZY_PRESET_NAME,
 } from "~/services/presetContent";
 import { getItem, setItem } from "~/services/storage";
@@ -92,6 +93,14 @@ export default function PresetPage() {
   React.useEffect(() => {
     void (async () => {
       try {
+        // v0.8.5: 内置预设版本检查 — 版本不匹配时强制清除用户覆盖
+        const storedVersion = await getItem<number>("presets", "builtinVersion");
+        if (storedVersion !== BUILTIN_PRESET_VERSION) {
+          await setItem("presets", "builtinOverrides", {});
+          await setItem("presets", "builtinVersion", BUILTIN_PRESET_VERSION);
+          setBuiltinOverrides({});
+        }
+
         const [customData, overrideData] = await Promise.all([
           getItem<Preset[]>("presets", "custom"),
           getItem<Record<string, Preset>>("presets", "builtinOverrides"),
@@ -129,6 +138,20 @@ export default function PresetPage() {
   /** 获取内置预设（合并用户覆盖） */
   const getBuiltinPreset = React.useCallback(
     (builtin: BuiltinPreset): Preset => {
+      // v0.8.5: Luzzy 预设强制启用、全局、只读，不接受用户覆盖
+      if (builtin.name === LUZZY_PRESET_NAME) {
+        return {
+          id: `builtin_${builtin.name}`,
+          name: builtin.name,
+          content: builtin.content,
+          isBuiltin: true,
+          isReadonly: true,
+          enabled: true,
+          enabledForCharacters: [],
+          createdAt: 0,
+          updatedAt: 0,
+        };
+      }
       const override = builtinOverrides[builtin.name];
       if (override) {
         return {
@@ -345,57 +368,59 @@ export default function PresetPage() {
                   {preset.content.length > 100 ? "..." : ""}
                 </p>
               </div>
-              <Switch
-                checked={preset.enabled}
-                onCheckedChange={() => void handleToggleEnabled(preset)}
-              />
+              {/* v0.8.5: Luzzy 预设强制启用，隐藏开关 */}
+              {preset.name !== LUZZY_PRESET_NAME && (
+                <Switch
+                  checked={preset.enabled}
+                  onCheckedChange={() => void handleToggleEnabled(preset)}
+                />
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="size-8 p-0"
-                onClick={() => handleView(preset)}
-                {...pressableSubtle}
-              >
-                <IconSearch className="size-4" />
-              </Button>
-              {/* v0.3.5: Luzzy 预设为固定内容，隐藏编辑按钮 */}
+              {/* v0.8.5: Luzzy 预设不可交互，隐藏预览/编辑/绑定/删除按钮 */}
               {preset.name !== LUZZY_PRESET_NAME && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="size-8 p-0"
-                  onClick={() => handleEdit(preset)}
-                  {...pressableSubtle}
-                >
-                  <IconEdit className="size-4" />
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="size-8 p-0"
-                onClick={() => setShowCharDialog(preset)}
-                {...pressableSubtle}
-              >
-                <IconBookmark className="size-4" />
-              </Button>
-              {/* v0.3.5: Luzzy 预设为固定内容，隐藏删除按钮 */}
-              {preset.name !== LUZZY_PRESET_NAME && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="size-8 p-0 text-destructive"
-                  onClick={() => void handleDelete(preset)}
-                  {...pressableSubtle}
-                >
-                  {preset.isBuiltin ? (
-                    <IconClose className="size-4" />
-                  ) : (
-                    <IconTrash className="size-4" />
-                  )}
-                </Button>
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="size-8 p-0"
+                    onClick={() => handleView(preset)}
+                    {...pressableSubtle}
+                  >
+                    <IconSearch className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="size-8 p-0"
+                    onClick={() => handleEdit(preset)}
+                    {...pressableSubtle}
+                  >
+                    <IconEdit className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="size-8 p-0"
+                    onClick={() => setShowCharDialog(preset)}
+                    {...pressableSubtle}
+                  >
+                    <IconBookmark className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="size-8 p-0 text-destructive"
+                    onClick={() => void handleDelete(preset)}
+                    {...pressableSubtle}
+                  >
+                    {preset.isBuiltin ? (
+                      <IconClose className="size-4" />
+                    ) : (
+                      <IconTrash className="size-4" />
+                    )}
+                  </Button>
+                </>
               )}
             </div>
           </Card>

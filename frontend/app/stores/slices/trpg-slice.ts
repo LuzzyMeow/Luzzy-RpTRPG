@@ -102,6 +102,42 @@ const extractApiSettings = (state: AppStoreState): ApiSettings => {
 const DEFAULT_TRPG_MODEL_KEY = "trpg_model";
 const AUTO_SAVE_INTERVAL = 10; // 每 10 轮自动保存
 
+// v0.8.5: 设计模式会话 localStorage 持久化
+const TRPG_DESIGN_SESSION_STORAGE_KEY = "trpg_design_session";
+
+function persistDesignSession(session: DesignSession | null): void {
+  try {
+    if (session && session.messages.length > 0) {
+      localStorage.setItem(TRPG_DESIGN_SESSION_STORAGE_KEY, JSON.stringify(session));
+    } else {
+      localStorage.removeItem(TRPG_DESIGN_SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage 满或序列化失败时静默降级
+  }
+}
+
+function loadPersistedDesignSession(): DesignSession | null {
+  try {
+    const raw = localStorage.getItem(TRPG_DESIGN_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DesignSession;
+    // 基本完整性校验
+    if (!parsed.sessionId || !parsed.draft || !Array.isArray(parsed.messages)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function clearPersistedDesignSession(): void {
+  try {
+    localStorage.removeItem(TRPG_DESIGN_SESSION_STORAGE_KEY);
+  } catch {
+    // 忽略
+  }
+}
+
 /** 创建默认游戏状态 */
 function createDefaultGameState(saveId: string): TrpgGameState {
   return {
@@ -165,7 +201,14 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
   setTrpgMode: (mode) => {
     set({ trpgMode: mode });
     if (mode === "design" && !get().trpgDesignSession) {
-      set({ trpgDesignSession: createInitialDesignSession() });
+      // v0.8.5: 恢复持久化的设计会话，若无则新建
+      const persisted = loadPersistedDesignSession();
+      if (persisted) {
+        set({ trpgDesignSession: persisted });
+        logger.info("trpg", "恢复持久化的设计模式会话");
+      } else {
+        set({ trpgDesignSession: createInitialDesignSession() });
+      }
     }
   },
   setTrpgModel: (model) => {
@@ -348,6 +391,7 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
   },
 
   resetTrpgDesignSession: () => {
+    clearPersistedDesignSession();
     set({ trpgDesignSession: createInitialDesignSession() });
     toast.success("设计会话已重置");
     logger.info("trpg", "重置设计模式会话");
@@ -378,6 +422,7 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
       const messagesWithUser = [...session.messages, userMessage];
       session = { ...session, messages: messagesWithUser, updatedAt: Date.now() };
       set({ trpgDesignSession: session });
+      persistDesignSession(session);
 
       // 2. 解析模型配置
       const modelKey = state.trpgModel || state.modelName;
@@ -404,6 +449,7 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
       const messagesWithAssistant = [...messagesWithUser, assistantMessage];
       session = { ...session, messages: messagesWithAssistant, updatedAt: Date.now() };
       set({ trpgDesignSession: session });
+      persistDesignSession(session);
 
       const url = getChatCompletionsUrl(apiUrl);
       const result = await sendDesignModeMessage(
@@ -494,6 +540,7 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
       };
 
       set({ trpgDesignSession: finalSession });
+      persistDesignSession(finalSession);
 
       // 6. 工具执行失败提示
       if (result.hasToolError) {
@@ -542,6 +589,11 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
       await get().loadAllWorldCards();
       toast.success(`世界卡「${card.name}」已保存`);
       logger.info("trpg", `设计模式保存世界卡: ${card.manifest.card_id}`);
+      // v0.8.5: 保存成功后清除持久化并自动新建设计会话
+      clearPersistedDesignSession();
+      const newSession = createInitialDesignSession();
+      set({ trpgDesignSession: newSession });
+      toast.success("已自动开始新的设计会话");
     } catch (e) {
       logger.error("trpg", "保存世界卡失败: " + String(e));
       toast.error("保存世界卡失败");

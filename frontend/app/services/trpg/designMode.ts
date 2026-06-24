@@ -16,6 +16,7 @@ import type {
   DesignDirection,
   DesignFramework,
   DesignSession,
+  ActionOption,
 } from "~/types/trpg";
 import { createEmptyWorldCard } from "./designModeTools";
 
@@ -70,6 +71,14 @@ export function buildDesignModeSystemPrompt(session: DesignSession): string {
     "## 可用工具\n\n" +
     listDesignTools() +
     "\n" +
+    "## 选项输出格式\n\n" +
+    "当需要用户从选项中选择时，在正文末尾使用以下格式输出选项（用户可点击选择）：\n" +
+    "<choices>\n" +
+    "A|选项描述文本\n" +
+    "B|选项描述文本\n" +
+    "C|选项描述文本\n" +
+    "</choices>\n" +
+    "用户也可直接输入自由文本覆盖选项。\n\n" +
     "## Stage 定义\n\n" +
     "- Stage 0：欢迎与方向选择\n" +
     "- Stage 1：五维框架采集（每次只问一个问题）\n" +
@@ -95,76 +104,27 @@ export function buildDesignModeSystemPrompt(session: DesignSession): string {
 function listDesignTools(): string {
   const t = BT;
   return (
-    "- " +
-    t +
-    "set_world_card_field" +
-    t +
-    ": 设置标题/描述/内容分级/作者/世界观术语/冻结瞬间\n" +
-    "- " +
-    t +
-    "add_world_setting_entity" +
-    t +
-    ": 添加地理实体（含 6 章节和子地点）\n" +
-    "- " +
-    t +
-    "add_world_setting_site" +
-    t +
-    ": 为已有地理实体添加子地点\n" +
-    "- " +
-    t +
-    "add_character" +
-    t +
-    ": 添加 NPC/角色\n" +
-    "- " +
-    t +
-    "add_timeline_event" +
-    t +
-    ": 添加世界时间线事件\n" +
-    "- " +
-    t +
-    "add_prompt_module" +
-    t +
-    ": 添加 Prompt 模块（coreWorldMechanics/init/narrativeBase/npcGen）\n" +
-    "- " +
-    t +
-    "set_panel_fields" +
-    t +
-    ": 设置面板字段\n" +
-    "- " +
-    t +
-    "add_law" +
-    t +
-    ": 添加世界法则\n" +
-    "- " +
-    t +
-    "add_mod" +
-    t +
-    ": 添加自定义机制\n" +
-    "- " +
-    t +
-    "add_artifact" +
-    t +
-    ": 添加关键道具\n" +
-    "- " +
-    t +
-    "add_character_background" +
-    t +
-    ": 添加预设角色背景\n" +
-    "- " +
-    t +
-    "set_opening_greeting" +
-    t +
-    ": 设置开场白\n" +
-    "- " +
-    t +
-    "finalize_world_card" +
-    t +
-    ": 校验并标记可发布\n" +
-    "- " +
-    t +
-    "rollback_stage" +
-    t +
-    ": 回退到上一阶段\n"
+    "- " + t + "write_card" + t + ": 创建/重写世界卡骨架（顶层 name/description + manifest + 空 snapshot）。第一次构建时必须调用\n" +
+    "- " + t + "patch_card" + t + ": 对世界卡 snapshot 进行批量增删改操作（JSON Patch 风格，每次可提交多个 ops）\n" +
+    "- " + t + "set_world_terms" + t + ": 设置世界术语（货币名、历法纪元、时间精度、历法单位、地标层级等）\n" +
+    "- " + t + "set_design_meta" + t + ": 设置设计元数据（phase / p2Stage / p1Output 五维框架）\n" +
+    "- " + t + "add_world_setting" + t + ": 添加一个地理实体（含 6 章节、sites、spots、atmosphere）\n" +
+    "- " + t + "set_world_setting_summary" + t + ": 设置 world_setting 顶层 _summary\n" +
+    "- " + t + "add_character" + t + ": 添加一个角色到 character_database（含对话示例、关系、状态等）\n" +
+    "- " + t + "set_character_database_summary" + t + ": 设置 character_database 顶层 _summary\n" +
+    "- " + t + "add_timeline_event" + t + ": 添加一个世界时间线事件（含时间、地点、关联实体/角色）\n" +
+    "- " + t + "set_timeline_summary" + t + ": 设置 world_timeline 顶层 _summary\n" +
+    "- " + t + "add_prompt_module" + t + ": 添加一个 Prompt 模块（core_world_mechanics/init/narrative_base/npc_gen）\n" +
+    "- " + t + "set_prompt_modules_summary" + t + ": 设置 prompt_modules 顶层 _summary\n" +
+    "- " + t + "set_panel_fields" + t + ": 设置面板字段定义（状态栏 + NPC 面板 + worldTermsSource）\n" +
+    "- " + t + "add_law" + t + ": 添加一条世界法则（含 scope/body/binding）\n" +
+    "- " + t + "add_mod" + t + ": 添加一条自定义机制/模组（含 ref/config/prose/hooks）\n" +
+    "- " + t + "add_artifact" + t + ": 添加一个关键道具/神器（含 owner/location/attrs）\n" +
+    "- " + t + "set_opening_greeting" + t + ": 设置开场白（150-350 字，in-medias-res）\n" +
+    "- " + t + "set_relationship_rules" + t + ": 设置关系规则\n" +
+    "- " + t + "finalize_world_card" + t + ": 对世界卡运行完整校验，通过后标记为可发布状态\n" +
+    "- " + t + "rollback_stage" + t + ": 回退到上一个设计阶段（仅 Stage 1/2/3 可用）\n" +
+    "- " + t + "query_card" + t + ": 查询世界卡当前状态（返回完整 JSON 供检查）\n"
   );
 }
 
@@ -511,6 +471,41 @@ function parseStage3Response(
     stageCompleted: saveIntent,
     nextStage: saveIntent ? 3 : 3,
   };
+}
+
+// ============================================================================
+// <choices> 标签解析
+// ============================================================================
+
+/**
+ * 解析 <choices> 标签为 ActionOption 数组
+ * 格式：<choices>\nA|选项描述\nB|选项描述\n</choices>
+ * @param content LLM 响应内容
+ * @returns 解析出的选项数组（可能为空）
+ */
+export function parseDesignChoices(content: string): ActionOption[] {
+  const match = content.match(/<choices>\s*([\s\S]*?)\s*<\/choices>/);
+  if (!match) return [];
+  const body = match[1].trim();
+  if (!body) return [];
+  const lines = body.split(/\n/).filter((l) => l.trim());
+  const options: ActionOption[] = [];
+  for (const line of lines) {
+    const m = line.match(/^([A-E])\s*[|｜]\s*(.+)$/);
+    if (m) {
+      options.push({ label: m[1] as ActionOption["label"], description: m[2].trim() });
+    }
+  }
+  return options;
+}
+
+/**
+ * 移除 <choices>...</choices> 标签，返回干净的内容文本
+ * @param content LLM 响应内容
+ * @returns 移除 choices 标签后的内容
+ */
+export function stripChoicesTags(content: string): string {
+  return content.replace(/<choices>[\s\S]*?<\/choices>/g, "").replace(/\n{3,}/g, "\n\n").trimEnd();
 }
 
 // ============================================================================

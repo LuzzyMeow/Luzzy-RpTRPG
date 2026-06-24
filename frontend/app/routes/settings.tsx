@@ -142,6 +142,9 @@ export default function SettingsPage() {
 
   // 主题（仅外观模式）
   const { theme, setTheme } = useTheme();
+  // 配色方案
+  const colorScheme = useAppStore((s) => s.colorScheme);
+  const setColorScheme = useAppStore((s) => s.setColorScheme);
   const confirm = useConfirm();
 
   // v0.3.3: 翻译设置
@@ -778,7 +781,7 @@ export default function SettingsPage() {
                   <IconToolKit className="size-4" />
                   外观
                 </CardTitle>
-                <CardDescription>浅色 / 深色 / 跟随系统</CardDescription>
+                <CardDescription>外观模式与配色方案</CardDescription>
               </CardHeader>
               <CardContent className="grid min-w-0 gap-4">
                 <div className="grid min-w-0 gap-2">
@@ -796,6 +799,23 @@ export default function SettingsPage() {
                   </ToggleGroup>
                   <p className="text-xs text-muted-foreground">
                     跟随系统模式会自动检测系统深浅色偏好并实时切换
+                  </p>
+                </div>
+                {/* 配色方案 */}
+                <div className="grid min-w-0 gap-2">
+                  <label className="text-sm font-medium">配色方案</label>
+                  <ToggleGroup
+                    type="single"
+                    value={colorScheme}
+                    onValueChange={(v) => v && setColorScheme(v as "default" | "pixel")}
+                    variant="outline"
+                    className="flex flex-wrap"
+                  >
+                    <ToggleGroupItem value="default">默认</ToggleGroupItem>
+                    <ToggleGroupItem value="pixel">像素风格</ToggleGroupItem>
+                  </ToggleGroup>
+                  <p className="text-xs text-muted-foreground">
+                    像素风格采用 TRAE 深色配色与复古游戏动画效果
                   </p>
                 </div>
               </CardContent>

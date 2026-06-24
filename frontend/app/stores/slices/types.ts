@@ -2,6 +2,7 @@ import type { UIMessagePart } from "~/types";
 import type {
   ApiProvider,
   ThemeMode,
+  ColorScheme,
   UserProfile,
   ChatMessage,
   Character,
@@ -69,6 +70,8 @@ export interface CustomRequestBodyValidation {
 export interface SettingsSlice {
   // ===== 主题 =====
   theme: ThemeMode;
+  /** 配色方案（default = 豆包蓝, pixel = TRAE 绿像素风） */
+  colorScheme: ColorScheme;
 
   // ===== API 基础配置 =====
   apiUrl: string;
@@ -122,6 +125,7 @@ export interface SettingsSlice {
   // ===== Actions：主题 =====
   setTheme: (theme: ThemeMode) => void;
   toggleTheme: () => void;
+  setColorScheme: (scheme: ColorScheme) => void;
 
   // ===== Actions：API 基础 =====
   setApiUrl: (url: string) => void;

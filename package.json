@@ -1,6 +1,6 @@
 {
   "name": "luzzy",
-  "version": "0.8.1",
+  "version": "0.8.5",
   "description": "LUZZY - AI 角色扮演与 TRPG 对话应用",
   "main": "index.js",
   "scripts": {
@@ -20,5 +20,9 @@
     "url": "https://github.com/LuzzyMeow/RP-Hub/issues"
   },
   "homepage": "https://github.com/LuzzyMeow/RP-Hub#readme",
-  "dependencies": {}
+  "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1"
+  }
 }

@@ -44,7 +44,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.8.4";
+const APP_VERSION = "v0.8.5";
 
 /** v0.5.8: 关于页动态文案轮播 */
 const ABOUT_PHRASES = [
@@ -110,17 +110,34 @@ export default function AboutPage() {
       setPhraseIndex((i) => (i + 1) % ABOUT_PHRASES.length);
     }, PHRASE_INTERVAL);
     return () => {
-      if (phraseTimerRef.current) clearInterval(phraseTimerRef.current);
+      if (phraseTimerRef.current) {
+        clearInterval(phraseTimerRef.current);
+        phraseTimerRef.current = null;
+      }
     };
   }, []);
 
   /** 刷新日志列表 */
   const refreshLogs = React.useCallback(() => {
     const logs = getBufferedLogs();
-    setAllLogs([...logs]);
+    // v0.8.5: 内容比对，日志无变化时跳过 re-render，避免定时器导致的全量重渲染卡顿
+    setAllLogs((prev) => {
+      if (prev.length !== logs.length) return logs;
+      if (prev.length === 0) return prev; // 双方都为空，跳过
+      const last = prev.length - 1;
+      if (
+        prev[last].timestamp === logs[last].timestamp &&
+        prev[last].message === logs[last].message
+      ) {
+        return prev;
+      }
+      return logs;
+    });
   }, []);
 
   React.useEffect(() => {
+    // v0.8.5: 增加 cancelled 标志，组件卸载后中断异步操作
+    let cancelled = false;
     void (async () => {
       logger.info("user", "进入关于页");
 
@@ -135,7 +152,9 @@ export default function AboutPage() {
 
       try {
         const { getDeviceInfo } = await import("~/services/nativeBridge");
+        if (cancelled) return;
         const deviceInfo = await getDeviceInfo();
+        if (cancelled) return;
         if (deviceInfo.platform !== "web") {
           info["操作系统"] = deviceInfo.platform;
           info["系统版本"] = deviceInfo.osVersion;
@@ -149,26 +168,38 @@ export default function AboutPage() {
         info["操作系统"] = "Web 浏览器";
       }
 
+      if (cancelled) return;
       setSystemInfo(info);
 
       // 获取日志路径
       const path = await getLogFilePath();
+      if (cancelled) return;
       setLogPath(path);
 
       // 初始加载日志
       refreshLogs();
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [refreshLogs]);
 
   // 自动刷新
   React.useEffect(() => {
     if (autoRefresh) {
-      refreshTimerRef.current = setInterval(refreshLogs, 500);
+      // v0.8.5: 降频 500ms → 2000ms，配合内容比对，性能影响可忽略
+      refreshTimerRef.current = setInterval(refreshLogs, 2000);
     } else {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
     }
     return () => {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
     };
   }, [autoRefresh, refreshLogs]);
 

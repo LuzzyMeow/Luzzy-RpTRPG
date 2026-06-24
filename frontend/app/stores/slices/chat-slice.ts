@@ -71,7 +71,7 @@ import {
   loadWorldVectorMemoryShards,
   saveWorldVectorMemoryShards,
 } from "~/services/memoryService";
-import { BUILTIN_PRESET_DEFAULTS } from "~/services/presetContent";
+import { BUILTIN_PRESET_DEFAULTS, LUZZY_PRESET_NAME, BUILTIN_PRESET_VERSION } from "~/services/presetContent";
 import { generateSessionTitle } from "~/services/sessionService";
 import { BUILTIN_PROVIDERS } from "~/stores/slices/settings-slice";
 import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
@@ -84,22 +84,64 @@ import { toast } from "sonner";
 // 辅助函数
 // ============================================================================
 
+// v0.8.5: getDefaultPresets 已被 mergePresets 取代，不再使用
+
 /**
- * 获取内置默认预设列表
- *
- * 从 presetContent.ts 导入，保持 NSFW 预设内容完整。
- * @returns Preset 对象数组
+ * 合并内置预设与用户覆盖，应用 Luzzy 强制只读逻辑
+ * v0.8.5: 修复存储键不一致导致用户预设修改丢失的 bug
+ * @param customPresets - 用户自定义预设列表
+ * @param builtinOverrides - 用户对内置预设的覆盖记录
+ * @returns 合并后的完整预设列表
  */
-const getDefaultPresets = (): Preset[] => {
-  return BUILTIN_PRESET_DEFAULTS.map((p, i) => ({
-    id: `builtin-${i}`,
-    name: p.name,
-    content: p.content,
-    isBuiltin: true,
-    enabled: true,
-    createdAt: 0,
-    updatedAt: 0,
-  }));
+const mergePresets = (
+  customPresets: Preset[],
+  builtinOverrides: Record<string, Preset>,
+): Preset[] => {
+  const builtins = BUILTIN_PRESET_DEFAULTS.map((p, i) => {
+    // Luzzy 预设强制启用、全局、只读，不接受用户覆盖
+    if (p.name === LUZZY_PRESET_NAME) {
+      return {
+        id: `builtin-${i}`,
+        name: p.name,
+        content: p.content,
+        isBuiltin: true,
+        isReadonly: true,
+        enabled: true,
+        enabledForCharacters: [],
+        createdAt: 0,
+        updatedAt: 0,
+      };
+    }
+    // 其他内置预设：应用用户覆盖（含防御性默认值）
+    const override = builtinOverrides[p.name];
+    if (override) {
+      return {
+        ...override,
+        id: `builtin-${i}`,
+        name: p.name,
+        content: override.content ?? p.content,
+        isBuiltin: true,
+        isReadonly: override.isReadonly ?? false,
+        enabled: override.enabled ?? true,
+        enabledForCharacters: override.enabledForCharacters ?? [],
+        createdAt: override.createdAt ?? 0,
+        updatedAt: override.updatedAt ?? 0,
+      };
+    }
+    return {
+      id: `builtin-${i}`,
+      name: p.name,
+      content: p.content,
+      isBuiltin: true,
+      isReadonly: false,
+      enabled: true,
+      enabledForCharacters: [],
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  });
+  // v0.8.5: 过滤自定义预设中名为 Luzzy 的项，避免与内置 Luzzy 预设重复
+  return [...builtins, ...customPresets.filter((p) => p.name !== LUZZY_PRESET_NAME)];
 };
 
 /**
@@ -117,6 +159,9 @@ const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   compressionKeepRecent: 10,
   longTermMemoryCharacterIds: [],
 };
+
+// v0.8.5: 嵌入模型失败一次性提示标志（防止 fire-and-forget 重复 toast）
+let embeddingFailureNotified = false;
 
 // v0.7.1: 单阶段架构 — parseToolDecisions 已删除
 // 模型通过原生 tool_calls (function calling) 自行决定调用工具
@@ -213,17 +258,29 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
       // 构建所有供应商列表（内置 + 自定义），用于多供应商路由和上下文构建
       const allProviders = [...BUILTIN_PROVIDERS, ...get().customApiProviders];
 
+      // v0.8.5: 内置预设版本检查 — 版本不匹配时强制清除用户覆盖
+      // 与 preset.tsx 的版本检查逻辑保持一致，确保聊天链路也使用最新内置预设
+      const storedPresetVersion = await getItem<number>("presets", "builtinVersion");
+      if (storedPresetVersion !== BUILTIN_PRESET_VERSION) {
+        await setItem("presets", "builtinOverrides", {});
+        await setItem("presets", "builtinVersion", BUILTIN_PRESET_VERSION);
+        logger.info("preset", `内置预设版本升级：${storedPresetVersion ?? "无"} → ${BUILTIN_PRESET_VERSION}，已清除用户覆盖`);
+      }
+
       // 1. 从 IndexedDB 加载预设、世界书、全局记忆、正则脚本、记忆设置
       // v0.3.0: 正则脚本迁移为 RegexScriptGroup[] 结构
+      // v0.8.5: 修复存储键不一致 — 读取 "custom" + "builtinOverrides" 而非 "presets"
       const [
-        presetsData,
+        customPresetsData,
+        builtinOverridesData,
         worldInfoData,
         regexGroupsData,
         oldRegexScriptsData,
         memorySettingsData,
         vectorMemoryShardsData,
       ] = await Promise.all([
-        getItem<Preset[]>("presets", "presets"),
+        getItem<Preset[]>("presets", "custom"),
+        getItem<Record<string, Preset>>("presets", "builtinOverrides"),
         getItem<WorldInfoEntry[]>("worldInfo", "worldInfo"),
         getItem<RegexScriptGroup[]>("regexScripts", "regexGroups"),
         getItem<RegexScript[]>("regexScripts", "regexScripts"),
@@ -233,7 +290,11 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
           : Promise.resolve<VectorMemoryShard[]>([]),
       ]);
 
-      const presets = presetsData ?? getDefaultPresets();
+      // v0.8.5: 合并内置预设与用户覆盖，应用 Luzzy 强制只读逻辑
+      const presets = mergePresets(
+        customPresetsData ?? [],
+        builtinOverridesData ?? {},
+      );
       // v0.3.2: 按角色过滤世界书条目（仅加载当前角色关联的 + 全局无 bookId 的）
       // v0.4.1: 改用 extensions.worldInfoId 过滤,使手动创建的世界书也能生效
       // 导入角色卡时 worldInfoId 设为 characterUuid,条目 bookId 也是 characterUuid,自然匹配
@@ -262,6 +323,16 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
             !g.enabledForCharacters ||
             g.enabledForCharacters.length === 0 ||
             g.enabledForCharacters.includes(currentCharUuid),
+        );
+      }
+      // v0.8.5: 按当前角色过滤预设（enabledForCharacters 为空或 undefined 时全局生效）
+      let filteredPresets = presets;
+      if (currentCharUuid) {
+        filteredPresets = presets.filter(
+          (p) =>
+            !p.enabledForCharacters ||
+            p.enabledForCharacters.length === 0 ||
+            p.enabledForCharacters.includes(currentCharUuid),
         );
       }
       const memorySettings = memorySettingsData ?? DEFAULT_MEMORY_SETTINGS;
@@ -413,7 +484,7 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
           messages: contextMsgs,
           character: currentCharacter,
           user: activeUser,
-          presets,
+          presets: filteredPresets,
           worldInfoEntries,
           settings,
           apiProviders: allProviders,
@@ -662,7 +733,8 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
                 "</analysis>",
               ];
               const hasClosingTag = closingTags.some((tag) => accumulatedContent.includes(tag));
-              const shouldParse = !lastCotResult || lengthDelta > 1 || hasClosingTag;
+              // v0.8.5: 阈值从 1 提高到 8，减少高频全量 parseCot 解析
+              const shouldParse = !lastCotResult || lengthDelta > 8 || hasClosingTag;
 
               if (shouldParse) {
                 // v0.5.1: 流式过程中允许未闭合标签内容，cot 随 chunk 增量显示
@@ -1191,6 +1263,11 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
                 );
               } catch (e) {
                 logger.warn("world", `世界书语义召回异步失败（不影响本次消息）: ${e}`);
+                // v0.8.5: 首次失败时 toast 提示用户检查嵌入模型配置
+                if (!embeddingFailureNotified) {
+                  embeddingFailureNotified = true;
+                  toast.error("嵌入模型请求失败，世界书语义召回已降级。请检查记忆设置中的嵌入模型配置。");
+                }
               }
             })();
             // v0.8.3: 不等待语义检索结果，继续执行

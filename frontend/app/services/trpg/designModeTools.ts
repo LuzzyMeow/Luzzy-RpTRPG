@@ -9,6 +9,7 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
+import { logger } from "~/services/logger";
 import type {
   DesignToolContext,
   DesignToolResult,
@@ -972,11 +973,15 @@ export function executeDesignModeToolCall(
 ): DesignToolResult {
   const executor = DESIGN_TOOL_EXECUTORS[toolName];
   if (!executor) {
+    logger.warn("trpg", `设计工具未知: ${toolName}`);
     return { result: {}, error: `Unknown design tool: ${toolName}` };
   }
   try {
-    return executor(args, context);
+    const result = executor(args, context);
+    logger.debug("trpg", `设计工具执行: ${toolName}, sessionUpdated=${result.sessionUpdated ?? false}, hasError=${!!result.error}`);
+    return result;
   } catch (e) {
+    logger.error("trpg", `设计工具执行异常: ${toolName}: ${String(e)}`);
     return { result: {}, error: String(e) };
   }
 }

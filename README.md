@@ -18,7 +18,7 @@
 
 > **每次对话，都像一本有你的小说。**
 
-[![Version](https://img.shields.io/badge/version-v0.8.4-9d4edd?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.8.5-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -126,6 +126,10 @@ RP-Hub/
 ---
 
 ## 最新动态
+
+### v0.8.5
+
+深度检查与优化：嵌入模型配置修复、TRPG 设计模式回退机制与会话持久化、关于页崩溃修复、设计模式状态条改为横向滚动胶囊、思考卡片自动展开/收起、预设页强制更新内置预设、预设存储键不一致修复、交互式选择卡片可交互。
 
 ### v0.8.4
 

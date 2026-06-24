@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.8.5
+
+### 🔧 深度检查与优化
+
+- **嵌入模型配置修复**：修复嵌入模型已配置但仍请求失败的问题，优化失败提示机制（一次性 toast 防止重复弹窗）
+- **TRPG 设计模式卡片截断修复**：修复首次进入设计模式时卡片顶部被截断的 UI 显示 bug
+- **TRPG 设计模式回退机制**：新增 localStorage 持久化设计模式会话记忆，保存世界卡后自动新建设计会话；新增手动重置会话按钮
+- **TRPG 设置按钮位置优化**：将设置按钮 icon 移至与提示 icon 并排位置，统一大小
+- **流式输出性能优化**：深度优化流式输出时的手机掉帧、文字卡顿、突然蹦出大段文字问题
+- **TRPG 交互式选择卡片**：修复 `<choices>` 标签不可交互的问题，支持用户直接选择卡片回答
+- **关于页 - 日志同步升级**：同步升级日志功能以记录新版本工具的 log
+
+### 🎨 UI/UX 优化
+
+- **关于页崩溃修复**：修复再次点击关于页触发闪屏和卡顿的 bug（refreshLogs 内容比对 + cancelled 标志 + 降频 500ms→2000ms）
+- **TRPG 设计模式状态条**：将横向状态条改为横向滚动胶囊，去掉竖向"设计模式"文字，Stage/标题/地理实体等做成带浅色背景和圆角的胶囊标签
+- **TRPG 思考卡片互动效果**：流式输出思考内容时自动展开思考卡片，agent 开始输出正文时自动收起
+- **TRPG 设置按钮位置**：将设置按钮移至与提示按钮并排，统一大小
+
+### 🐛 Bug 修复
+
+- **预设存储键不一致修复**：修复 chat-slice.ts 读取 `"presets"` 键但 preset.tsx 写入 `"custom"` + `"builtinOverrides"` 键导致用户预设修改在聊天生成时全部丢失的严重 bug；新增 mergePresets 函数合并内置预设与用户覆盖，按当前角色过滤 enabledForCharacters
+- **预设页强制更新内置预设**：新增 BUILTIN_PRESET_VERSION 版本检查机制，版本不匹配时强制清除用户覆盖；Luzzy 预设强制全局启用、只读，隐藏预览/绑定/开关按钮
+- **TRPG 设计模式持久化恢复**：修复切换到设计模式时总是调用 resetTrpgDesignSession 导致持久化恢复逻辑失效的问题
+
+### 📦 工程变更
+
+- Android `versionCode` 47→48，`versionName` 0.8.4→0.8.5
+- `android-patches/build.gradle` 同步至 48/0.8.5
+- 版本号同步：`package.json` / `about.tsx` / `android/app/build.gradle` / `android-patches/build.gradle`
+- `CHANGELOG.md` / `README.md` 同步更新
+
+---
+
 ## v0.8.4
 
 ### 🤖 TRPG 两阶段 Agentic 闭环（核心）

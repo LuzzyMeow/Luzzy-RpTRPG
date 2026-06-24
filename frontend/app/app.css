@@ -180,6 +180,100 @@
   --shadow-2xl: 0 12px 16px 0px hsl(0 0% 0% / 0.06);
 }
 
+/* ============================================================================
+   像素风格主题 — TRAE 深色配色 + 复古游戏动画
+   ============================================================================ */
+
+/* 暗色模式像素主题 */
+.dark[data-theme="pixel"] {
+  --background: #1a1b1d;
+  --foreground: #d1d3db;
+  --card: #222427;
+  --card-foreground: #d1d3db;
+  --popover: #2a2d31;
+  --popover-foreground: #d1d3db;
+  --primary: #32f08c;
+  --primary-foreground: #0c0c0d;
+  --secondary: #2a2d31;
+  --secondary-foreground: #d1d3db;
+  --muted: #2a2d31;
+  --muted-foreground: #9599a6;
+  --accent: rgba(50, 240, 140, 0.12);
+  --accent-foreground: #d1d3db;
+  --border: #3c3f47;
+  --input: #3c3f47;
+  --ring: #32f08c;
+  --sidebar: #222427;
+  --sidebar-foreground: #d1d3db;
+  --sidebar-primary: #32f08c;
+  --sidebar-primary-foreground: #0c0c0d;
+  --sidebar-accent: rgba(50, 240, 140, 0.12);
+  --sidebar-accent-foreground: #d1d3db;
+  --sidebar-border: #3c3f47;
+  --sidebar-ring: #32f08c;
+  --radius: 0.375rem;
+  /* 硬阴影（无模糊，模拟像素立体感） */
+  --shadow-2xs: 0 1px 0px 0px hsl(0 0% 0% / 0.10);
+  --shadow-xs: 0 1px 0px 0px hsl(0 0% 0% / 0.10);
+  --shadow-sm: 0 1px 0px 0px hsl(0 0% 0% / 0.12);
+  --shadow: 0 2px 0px 0px hsl(0 0% 0% / 0.12);
+  --shadow-md: 0 3px 0px 0px hsl(0 0% 0% / 0.12);
+  --shadow-lg: 0 4px 0px 0px hsl(0 0% 0% / 0.15);
+  --shadow-xl: 0 6px 0px 0px hsl(0 0% 0% / 0.18);
+  --shadow-2xl: 0 8px 0px 0px hsl(0 0% 0% / 0.20);
+}
+
+/* 亮色模式像素主题 */
+[data-theme="pixel"]:not(.dark) {
+  --background: #f5f5f5;
+  --foreground: #1a1b1d;
+  --card: #ffffff;
+  --card-foreground: #1a1b1d;
+  --popover: #ffffff;
+  --popover-foreground: #1a1b1d;
+  --primary: #28c76f;
+  --primary-foreground: #ffffff;
+  --secondary: #eaeaea;
+  --secondary-foreground: #1a1b1d;
+  --muted: #eaeaea;
+  --muted-foreground: #666b75;
+  --accent: rgba(40, 199, 111, 0.10);
+  --accent-foreground: #1a1b1d;
+  --border: #d1d3db;
+  --input: #d1d3db;
+  --ring: #28c76f;
+  --sidebar: #f0f0f0;
+  --sidebar-foreground: #1a1b1d;
+  --sidebar-primary: #28c76f;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(40, 199, 111, 0.10);
+  --sidebar-accent-foreground: #1a1b1d;
+  --sidebar-border: #d1d3db;
+  --sidebar-ring: #28c76f;
+  --radius: 0.375rem;
+  --shadow-2xs: 0 1px 0px 0px hsl(0 0% 0% / 0.04);
+  --shadow-xs: 0 1px 0px 0px hsl(0 0% 0% / 0.04);
+  --shadow-sm: 0 1px 0px 0px hsl(0 0% 0% / 0.06);
+  --shadow: 0 2px 0px 0px hsl(0 0% 0% / 0.06);
+  --shadow-md: 0 3px 0px 0px hsl(0 0% 0% / 0.06);
+  --shadow-lg: 0 4px 0px 0px hsl(0 0% 0% / 0.08);
+  --shadow-xl: 0 6px 0px 0px hsl(0 0% 0% / 0.10);
+  --shadow-2xl: 0 8px 0px 0px hsl(0 0% 0% / 0.12);
+}
+
+/* 像素主题全局动画覆盖（CSS 兜底） */
+[data-theme="pixel"] * {
+  transition-timing-function: steps(4, end) !important;
+  transition-duration: 120ms !important;
+}
+
+/* 像素主题装饰性效果 */
+[data-theme="pixel"] [data-slot="dialog-content"] {
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  box-shadow: 4px 4px 0px 0px hsl(0 0% 0% / 0.3);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -250,6 +344,14 @@
   }
   .dark .text-label {
     opacity: 1;
+  }
+  /* v0.8.5: 隐藏滚动条但保持可滚动 */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 }
 
