@@ -157,14 +157,8 @@ export const DEFAULT_BUILTIN_TOOL_CONFIGS: BuiltinToolConfig[] = [
     enabledForCharacters: [],
   },
   {
-    type: "world-recall", // v0.4.3 新增:世界书召回（嵌入模型）
+    type: "world-recall", // v0.4.3 新增:世界书召回；v0.7.2: 合并 world-search，三策略混合召回（constant + keyword + semantic）
     enabled: true, // v0.5.0: 默认开启
-    resultCount: 8,
-    enabledForCharacters: [],
-  },
-  {
-    type: "world-search", // v0.4.3 新增:世界书检索（关键词）
-    enabled: true, // 默认开启，无需嵌入模型
     resultCount: 8,
     enabledForCharacters: [],
   },

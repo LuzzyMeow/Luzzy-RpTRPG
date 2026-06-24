@@ -56,6 +56,10 @@ export interface TokenUsage {
   cachedTokens?: number;
   /** 输出 tokens */
   completionTokens: number;
+  /** v0.7.2: 思考 tokens 估算（reasoning 内容长度 / 4） */
+  reasoningTokens?: number;
+  /** v0.7.2: 工具续写累计 tokens（多次 API 调用合计） */
+  toolCallTokens?: number;
   /** 总 tokens */
   totalTokens?: number;
   /** 响应时间（毫秒） */
@@ -77,6 +81,8 @@ export interface AgentStep {
   endedAt?: number;
   /** v0.5.1: 所属请求阶段（1=工具决策, 2=CoT, 3=正文） */
   phase?: 1 | 2 | 3;
+  /** v0.7.2: 召回结果列表（用于 RecallResultCard 三级卡片展示） */
+  recallResults?: (MemoryRecall | WorldInfoRecall)[];
 }
 
 /** 工具调用状态 */
@@ -110,12 +116,14 @@ export interface MemoryRecall {
   turn: number;
 }
 
-/** 世界书召回结果（v0.7.0: 被动预执行世界书检索） */
+/** 世界书召回结果（v0.7.0: 被动预执行世界书检索；v0.7.2: 三策略混合召回） */
 export interface WorldInfoRecall {
   id: string;
   entryName: string;
   content: string;
   score: number;
+  /** v0.7.2: 召回策略（constant=总是激活, keyword=关键词命中, semantic=语义相似度） */
+  strategy?: 'constant' | 'keyword' | 'semantic';
 }
 
 /** 角色卡 */
@@ -346,6 +354,8 @@ export interface RegexScriptGroup {
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
+  /** v0.7.1: 绑定的角色卡 UUID 列表（空数组或 undefined=全局生效） */
+  enabledForCharacters?: string[];
 }
 
 /** ActiveTool 类型 */
@@ -674,8 +684,7 @@ export type BuiltinToolType =
   | 'vector-memory'
   | 'keyword-search'
   | 'memory-recall'
-  | 'world-recall'  // v0.4.3 新增:世界书召回（嵌入模型）
-  | 'world-search'  // v0.4.3 新增:世界书检索（关键词）
+  | 'world-recall'  // v0.4.3 新增:世界书召回（嵌入模型）；v0.7.2: 合并 world-search，三策略混合召回
   | 'anysearch';
 
 /** 内置工具配置 */

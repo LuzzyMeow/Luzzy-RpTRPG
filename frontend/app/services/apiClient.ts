@@ -469,14 +469,6 @@ export const buildToolSchema = (toolType: string): Record<string, unknown> => {
       },
       required: ['query'],
     },
-    'world-search': {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: '空格分隔的多个关键词' },
-        keys: { type: 'string', description: '可选的世界书条目 keys 筛选（逗号分隔）' },
-      },
-      required: ['query'],
-    },
     'anysearch': {
       type: 'object',
       properties: {
@@ -502,20 +494,6 @@ export const buildToolSchema = (toolType: string): Record<string, unknown> => {
     },
     required: ['query'],
   };
-
-  // world-search 支持额外的 keys 参数（兼容旧逻辑）
-  if (toolType === 'world-search') {
-    return {
-      ...baseSchema,
-      properties: {
-        ...baseSchema.properties,
-        keys: {
-          type: 'string',
-          description: '可选的世界书条目 keys 筛选（逗号分隔）',
-        },
-      },
-    };
-  }
 
   return baseSchema;
 };

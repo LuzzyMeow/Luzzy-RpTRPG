@@ -389,7 +389,7 @@ class MainActivity : AppCompatActivity() {
     inner class ApiProxyServer : NanoHTTPD("127.0.0.1", PROXY_PORT) {
 
         // 火山方舟 coding plan API 基础地址
-        private val volcanoArkBase = "https://ark.cn-beijing.volces.com/api/coding"
+        private val volcanoArkBase = "https://ark.cn-beijing.volces.com/api/coding/v3"
 
         override fun serve(session: IHTTPSession): Response {
             // OPTIONS 预检请求直接返回 CORS 头

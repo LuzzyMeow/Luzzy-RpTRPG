@@ -33,15 +33,6 @@ describe('工具调用 - buildToolSchema', () => {
     expect(properties.query).toBeDefined();
   });
 
-  test('world-search 工具 schema 包含 keys 参数', () => {
-    const schema = buildToolSchema('world-search');
-    expect(schema.type).toBe('object');
-    const properties = (schema as { properties: Record<string, unknown> }).properties;
-    expect(properties.query).toBeDefined();
-    expect(properties.keys).toBeDefined();
-    expect((schema as { required: string[] }).required).toContain('query');
-  });
-
   test('anysearch 工具 schema', () => {
     const schema = buildToolSchema('anysearch');
     expect(schema.type).toBe('object');

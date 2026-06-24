@@ -247,6 +247,7 @@ export function extractRegexScriptsFromCard(
       enabled: true,
       createdAt: now,
       updatedAt: now,
+      enabledForCharacters: [characterUuid],
       entries: [
         {
           id: `${groupId}-entry`,

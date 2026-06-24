@@ -18,10 +18,10 @@ import {
   IconSearch,
   IconClose,
   IconClock,
-  IconLight,
   IconMessage,
+  IconChevronRight,
 } from "~/components/luzzy/luzzy-icons";
-import type { AgentStep } from "~/types/luzzy";
+import type { AgentStep, MemoryRecall, WorldInfoRecall } from "~/types/luzzy";
 import Markdown from "~/components/markdown/markdown";
 import { cn } from "~/lib/utils";
 
@@ -52,6 +52,8 @@ interface BrainstormStep {
   content: string;
   /** 步骤状态 */
   status: StepStatus;
+  /** v0.7.1: 时序排序 */
+  startedAt?: number;
 }
 
 /**
@@ -65,6 +67,8 @@ interface CotOutputStep {
   content: string;
   /** 步骤状态 */
   status: StepStatus;
+  /** v0.7.1: 时序排序 */
+  startedAt?: number;
 }
 
 /**
@@ -84,6 +88,8 @@ interface CombinedToolStep {
     resultContent?: string;
     errorContent?: string;
     status: StepStatus;
+    /** v0.7.2: 召回结果列表（用于 RecallResultCard 三级卡片展示） */
+    recallResults?: (MemoryRecall | WorldInfoRecall)[];
   }[];
   /** 节点状态 */
   status: StepStatus;
@@ -292,12 +298,12 @@ function inferToolCategory(title: string, type?: string): CombinedToolStep["cate
 }
 
 /**
- * v0.5.5-arch: 合并思考步骤和 agentSteps
+ * v0.7.1: 合并思考步骤和 agentSteps — 时序排序
  *
- * 固定 5 节点布局：头脑风暴(p1) → 工具调用（聚合） → 头脑风暴(p2) → CoT 输出(p2) → 头脑风暴(p3)
- * - brainstorm 节点按 phase 分组
+ * 按 startedAt 时间戳升序排列所有节点，反映实际执行顺序：
+ * 被动工具（记忆召回） → 头脑风暴（模型思考） → 主动工具（模型调用） → CoT 输出 → ...
  * - 所有工具类节点（tool_call/tool_result/memory_inject/knowledge_call）聚合为单一"工具调用"节点
- * - cot_output 节点独立显示
+ * - brainstorm/cot_output 节点独立显示，按时间排序
  * - 旧 thinking 节点和 cot 字符串解析的 thinkingSteps 追加在末尾（兼容旧数据）
  */
 function mergeSteps(
@@ -310,35 +316,36 @@ function mergeSteps(
 
   const toolLikeTypes = new Set(["tool_call", "tool_result", "memory_inject", "knowledge_call"]);
 
-  // Phase 1: 收集——按类型/phase 归类，工具类暂存
-  const brainstormP1: BrainstormStep[] = [];
-  const brainstormP2: BrainstormStep[] = [];
-  const brainstormP3: BrainstormStep[] = [];
-  const cotOutputs: CotOutputStep[] = [];
+  // v0.7.1: 时序排序 — 收集所有步骤并附带 startedAt 用于排序
   const toolItems: AgentStep[] = [];
+  const timelineItems: Array<{ step: TimelineStep; startedAt: number }> = [];
   const oldThinkings: ThinkingStep[] = [];
 
   for (const step of agentSteps) {
     if (step.type === "brainstorm") {
-      const bs: BrainstormStep = {
-        type: "brainstorm",
-        title: step.title,
-        content: step.content || "",
-        status: step.status,
-      };
-      if (step.phase === 1) brainstormP1.push(bs);
-      else if (step.phase === 2) brainstormP2.push(bs);
-      else if (step.phase === 3) brainstormP3.push(bs);
-      else brainstormP2.push(bs); // 默认归入 p2
+      timelineItems.push({
+        step: {
+          type: "brainstorm",
+          title: step.title,
+          content: step.content || "",
+          status: step.status,
+          startedAt: step.startedAt,
+        } as BrainstormStep,
+        startedAt: step.startedAt,
+      });
       continue;
     }
 
     if (step.type === "cot_output") {
-      cotOutputs.push({
-        type: "cot_output",
-        title: step.title,
-        content: step.content || "",
-        status: step.status,
+      timelineItems.push({
+        step: {
+          type: "cot_output",
+          title: step.title,
+          content: step.content || "",
+          status: step.status,
+          startedAt: step.startedAt,
+        } as CotOutputStep,
+        startedAt: step.startedAt,
       });
       continue;
     }
@@ -360,12 +367,7 @@ function mergeSteps(
     }
   }
 
-  // Phase 2: 排序输出——固定 5 节点顺序
-  // 头脑风暴(p1) → 工具调用（聚合） → 头脑风暴(p2) → CoT输出(p2) → 头脑风暴(p3)
-  // 注意：必须按此顺序 push，cot_output 不能跑到 brainstormP3 后面
-  const result: TimelineStep[] = [];
-  result.push(...brainstormP1);
-  // 工具节点聚合为单一"工具调用"节点，插入到 brainstorm(p1) 之后
+  // 工具类节点聚合为单一"工具调用"节点（保持子项时序）
   if (toolItems.length > 0) {
     const subItems: NonNullable<CombinedToolStep["subItems"]> = [];
     let i = 0;
@@ -382,10 +384,15 @@ function mergeSteps(
           category: inferToolCategory(step.title, step.type),
           callContent: step.content || "",
           resultContent: resultStep.content || "",
+          errorContent:
+            step.status === "error" || resultStep.status === "error"
+              ? (step.content || "")
+              : undefined,
           status:
             step.status === "error" || resultStep.status === "error"
               ? "error"
               : "completed",
+          recallResults: resultStep.recallResults ?? step.recallResults,
         });
         i += 2;
       } else {
@@ -397,6 +404,7 @@ function mergeSteps(
             step.type === "tool_result" ? (step.content || "") : undefined,
           errorContent: step.status === "error" ? (step.content || "") : undefined,
           status: step.status,
+          recallResults: step.recallResults,
         });
         i += 1;
       }
@@ -413,21 +421,29 @@ function mergeSteps(
       startedAt: toolItems[0].startedAt,
       endedAt: toolItems[toolItems.length - 1].endedAt,
     };
-    result.push(toolStep);
+    timelineItems.push({
+      step: toolStep,
+      startedAt: toolItems[0].startedAt,
+    });
   }
-  result.push(...brainstormP2);
-  result.push(...cotOutputs);
-  result.push(...brainstormP3);
-  result.push(...oldThinkings);
 
-  // 空节点跳过，不占位（工具节点保留）
-  const filtered = result.filter((step) => {
-    if (isToolStep(step)) return true;
-    return step.content.trim().length > 0;
+  // v0.7.1: 按 startedAt 升序排列（无 startedAt 的旧数据排到末尾）
+  timelineItems.sort((a, b) => {
+    const aTime = a.startedAt ?? Number.MAX_SAFE_INTEGER;
+    const bTime = b.startedAt ?? Number.MAX_SAFE_INTEGER;
+    return aTime - bTime;
   });
 
+  // 空节点跳过，不占位（工具节点保留）
+  const filtered = timelineItems
+    .map((item) => item.step)
+    .filter((step) => {
+      if (isToolStep(step)) return true;
+      return step.content.trim().length > 0;
+    });
+
   // cot 字符串解析的 thinkingSteps 追加在末尾（兼容旧 message.cot 数据）
-  return [...filtered, ...thinkingSteps];
+  return [...filtered, ...oldThinkings, ...thinkingSteps];
 }
 
 // ============================================================================
@@ -548,7 +564,7 @@ function ThinkingNode({ step, isExpanded, onToggle, isLast, nodeType = "thinking
     switch (nodeType) {
       case "brainstorm":
         return {
-          icon: <IconLight className="size-3.5 text-amber-500 dark:text-amber-400" />,
+          icon: null,
           accentClass: "border-amber-500/30 bg-amber-500/[0.03]",
           runningAccentClass: "border-amber-500/40 bg-amber-500/[0.05]",
           titleClass: isRunning ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
@@ -637,6 +653,157 @@ function ThinkingNode({ step, isExpanded, onToggle, isLast, nodeType = "thinking
       {!isLast && (
         <div className="absolute left-3 top-full h-3 w-px bg-border/60" />
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// v0.7.2: RecallResultCard 三级卡片组件
+// ============================================================================
+
+interface RecallResultCardProps {
+  recall: MemoryRecall | WorldInfoRecall;
+  index: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+}
+
+function RecallResultCard({ recall, index, isExpanded, onToggle }: RecallResultCardProps) {
+  const strategy = (recall as WorldInfoRecall).strategy;
+  const strategyLabel = strategy === 'constant' ? '总是激活'
+    : strategy === 'keyword' ? '关键词命中'
+    : strategy === 'semantic' ? '语义相似度'
+    : null;
+
+  const entryName = (recall as WorldInfoRecall).entryName;
+  const displayName = entryName ?? recall.content.slice(0, 30);
+
+  const inputParams = [
+    { label: '查询', value: recall.content.slice(0, 50) + (recall.content.length > 50 ? '...' : '') },
+    { label: '方法', value: strategyLabel ?? '语义相似度' },
+    { label: '相似度', value: recall.score.toFixed(3) },
+  ];
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -4 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      className="rounded-md border border-border/20 bg-muted/30 overflow-hidden"
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors"
+      >
+        <motion.div
+          animate={{ rotate: isExpanded ? 90 : 0 }}
+          transition={{ duration: 0.2 }}
+          className="shrink-0 text-muted-foreground/60"
+        >
+          <IconChevronRight className="size-3" />
+        </motion.div>
+        <span className="text-xs text-muted-foreground shrink-0">#{index + 1}</span>
+        <span className="text-xs font-medium truncate flex-1 text-left">
+          {displayName}
+        </span>
+        {strategyLabel && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded border border-border/30 bg-background/40 shrink-0">
+            {strategyLabel}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+          {recall.score.toFixed(3)}
+        </span>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className="px-3 py-2 space-y-2 border-t border-border/10">
+              <div className="space-y-1">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">输入参数</div>
+                {inputParams.map((p, i) => (
+                  <div key={i} className="flex gap-2 text-xs">
+                    <span className="text-muted-foreground min-w-[60px]">{p.label}:</span>
+                    <span className="flex-1 break-all">{p.value}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="space-y-1">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">输出结果</div>
+                <div className="max-h-40 overflow-y-auto text-xs break-words rounded bg-background/40 p-2">
+                  {recall.content}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+interface RecallResultListProps {
+  recallResults: (MemoryRecall | WorldInfoRecall)[];
+}
+
+function RecallResultList({ recallResults }: RecallResultListProps) {
+  const [expandedSet, setExpandedSet] = React.useState<Set<number>>(new Set());
+
+  const toggle = (idx: number) => {
+    setExpandedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    setExpandedSet(new Set(recallResults.map((_, i) => i)));
+  };
+
+  const collapseAll = () => {
+    setExpandedSet(new Set());
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={expandAll}
+          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+        >
+          全部展开
+        </button>
+        <span className="text-[10px] text-muted-foreground/40">|</span>
+        <button
+          type="button"
+          onClick={collapseAll}
+          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+        >
+          全部收起
+        </button>
+      </div>
+      {recallResults.map((recall, idx) => (
+        <RecallResultCard
+          key={recall.id ?? idx}
+          recall={recall}
+          index={idx}
+          isExpanded={expandedSet.has(idx)}
+          onToggle={() => toggle(idx)}
+        />
+      ))}
     </div>
   );
 }
@@ -758,6 +925,11 @@ function ToolNode({ step, isExpanded, onToggle, isLast }: ToolNodeProps) {
                         <div className="rounded-md border border-border/40 bg-muted/30 p-2 text-xs text-muted-foreground opacity-60">
                           无内容
                         </div>
+                      ) : null}
+
+                      {/* v0.7.2: 召回结果三级卡片 */}
+                      {sub.recallResults && sub.recallResults.length > 0 ? (
+                        <RecallResultList recallResults={sub.recallResults} />
                       ) : null}
                     </div>
                   ))

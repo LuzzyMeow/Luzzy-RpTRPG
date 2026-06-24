@@ -44,7 +44,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.7.0";
+const APP_VERSION = "v0.7.2";
 
 /** v0.5.8: 关于页动态文案轮播 */
 const ABOUT_PHRASES = [
@@ -62,6 +62,7 @@ const CATEGORY_TABS: { key: LogCategory | "all"; label: string }[] = [
   { key: "api", label: "API" },
   { key: "tool", label: "工具" },
   { key: "memory", label: "记忆" },
+  { key: "world", label: "世界" },
   { key: "chat", label: "聊天" },
   { key: "agent", label: "Agent" },
 ];
@@ -286,9 +287,12 @@ export default function AboutPage() {
 
   return (
     <LuzzyLayout title="关于">
-      <div className="relative h-full w-full overflow-y-auto overflow-x-hidden">
+      <div className="relative h-full w-full overflow-hidden">
+        {/* 背景层：fixed inset-0 铺满整个视口，脱离滚动流，滚动后不截断 */}
         <LuzzyAuroraBackground />
-        <div className="relative z-10 mx-auto w-full min-w-0 max-w-2xl space-y-6 overflow-x-hidden p-4">
+        {/* 内容层：relative z-10 可滚动，置于背景之上 */}
+        <div className="relative z-10 h-full w-full overflow-y-auto overflow-x-hidden">
+          <div className="mx-auto w-full min-w-0 max-w-2xl space-y-6 overflow-x-hidden p-4">
           {/* LOGO 和版本信息 */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
@@ -591,6 +595,7 @@ export default function AboutPage() {
               © 2026 LUZZY. All rights reserved.
             </p>
           </motion.div>
+          </div>
         </div>
       </div>
     </LuzzyLayout>

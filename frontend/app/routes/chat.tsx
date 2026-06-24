@@ -250,6 +250,8 @@ export default function ChatPage() {
         setMessages(newSession?.messages ?? []);
         void saveSessions();
       }
+      // v0.7.2: blur 当前焦点元素，防止 Android WebView 在 Sheet 关闭后自动恢复焦点到 textarea 触发软键盘
+      (document.activeElement as HTMLElement | null)?.blur();
       setShowCharacterPicker(false);
     },
     [characters, sessions, setCurrentCharacterUuid, setCurrentCharacter, switchSession, setMessages, createSession, saveSessions],

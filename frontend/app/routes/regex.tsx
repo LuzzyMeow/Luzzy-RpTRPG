@@ -20,6 +20,10 @@ import {
   IconWand,
   IconCopyEdit,
   IconImport,
+  IconBookmark,
+  IconCheck,
+  IconClose,
+  IconUserGroup,
 } from "~/components/luzzy/luzzy-icons";
 
 import type {
@@ -32,6 +36,7 @@ import type {
 import { getItem, setItem } from "~/services/storage";
 // v0.4.1: 导入角色卡解析工具,支持从 PNG 角色卡导入正则脚本
 import { parsePngCharacterCard, extractRegexScriptsFromCard } from "~/services/characterCardImport";
+import { useAppStore } from "~/stores";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { useConfirm } from "~/components/luzzy/luzzy-confirm";
 import { Button } from "~/components/ui/button";
@@ -40,6 +45,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { Badge } from "~/components/ui/badge";
 import { Card } from "~/components/ui/card";
 import { Switch } from "~/components/ui/switch";
+import { Checkbox } from "~/components/ui/checkbox";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
   Select,
@@ -70,6 +76,10 @@ import {
   EmptyDescription,
   EmptyContent,
 } from "~/components/ui/empty";
+import {
+  pressable,
+  pressableSubtle,
+} from "~/lib/motion-presets";
 import { toast } from "sonner";
 import { cn } from "~/lib/utils";
 
@@ -204,6 +214,7 @@ function testRegex(
 }
 
 export default function RegexPage() {
+  const characters = useAppStore((s) => s.characters);
   const [groups, setGroups] = React.useState<RegexScriptGroup[]>([]);
   const [loaded, setLoaded] = React.useState(false);
   const [editingGroup, setEditingGroup] = React.useState<RegexScriptGroup | null>(null);
@@ -213,6 +224,7 @@ export default function RegexPage() {
   const [isNewEntry, setIsNewEntry] = React.useState(false);
   const [testText, setTestText] = React.useState("");
   const [showRegexHelper, setShowRegexHelper] = React.useState(false);
+  const [showCharDialog, setShowCharDialog] = React.useState<RegexScriptGroup | null>(null);
   const confirm = useConfirm();
   // v0.4.1: 从角色卡导入正则脚本
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -295,6 +307,22 @@ export default function RegexPage() {
       );
       setGroups(next);
       await persist(next);
+    },
+    [groups, persist],
+  );
+
+  /** 保存角色卡绑定（更新 enabledForCharacters 并持久化） */
+  const handleSaveCharacters = React.useCallback(
+    async (group: RegexScriptGroup, charUuids: string[]) => {
+      const next = groups.map((x) =>
+        x.id === group.id
+          ? { ...x, enabledForCharacters: charUuids, updatedAt: Date.now() }
+          : x,
+      );
+      setGroups(next);
+      await persist(next);
+      setShowCharDialog(null);
+      toast.success("角色卡绑定已更新");
     },
     [groups, persist],
   );
@@ -430,6 +458,8 @@ export default function RegexPage() {
         // 使用临时 UUID 关联角色卡
         const tempUuid = crypto.randomUUID();
         const imported = extractRegexScriptsFromCard(cardData, tempUuid);
+        // v0.7.1: 直接导入时无关联角色，设为全局生效
+        imported.forEach(g => { g.enabledForCharacters = []; });
         if (imported.length === 0) {
           toast.warning("该角色卡中未检测到正则脚本");
           return;
@@ -501,67 +531,93 @@ export default function RegexPage() {
           <ScrollArea className="flex-1">
             <div className="grid grid-cols-1 gap-3 pb-4 lg:grid-cols-2">
               <AnimatePresence mode="popLayout">
-                {groups.map((g, i) => (
-                  <motion.div
-                    key={g.id}
-                    layout
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ delay: i * 0.03, duration: 0.2 }}
-                  >
-                    <Card className="group gap-3 p-3 transition-all hover:shadow-md">
-                      <div className="flex items-start gap-3 px-1">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <h3 className="truncate font-medium">
-                              {g.name || "未命名组"}
-                            </h3>
-                            {g.enabled ? (
-                              <Badge variant="secondary" className="text-xs">
-                                启用
-                              </Badge>
-                            ) : (
+                {groups.map((g, i) => {
+                  const isGlobal =
+                    !g.enabledForCharacters ||
+                    g.enabledForCharacters.length === 0;
+                  return (
+                    <motion.div
+                      key={g.id}
+                      layout
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      transition={{ delay: i * 0.03, duration: 0.2 }}
+                    >
+                      <Card className="group gap-3 p-3 transition-all hover:shadow-md">
+                        <div className="flex items-start gap-3 px-1">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="truncate font-medium">
+                                {g.name || "未命名组"}
+                              </h3>
+                              {g.enabled ? (
+                                <Badge variant="secondary" className="text-xs">
+                                  启用
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-xs">
+                                  禁用
+                                </Badge>
+                              )}
                               <Badge variant="outline" className="text-xs">
-                                禁用
+                                {g.entries.length} 条
                               </Badge>
-                            )}
-                            <Badge variant="outline" className="text-xs">
-                              {g.entries.length} 条
-                            </Badge>
+                              {isGlobal ? (
+                                <Badge variant="outline" className="text-xs">
+                                  全局
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-xs">
+                                  {g.enabledForCharacters!.length} 角色
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="mt-1 truncate text-xs text-muted-foreground">
+                              {g.entries.length > 0
+                                ? g.entries.map((e) => e.name || "未命名").join("、")
+                                : "暂无条目"}
+                            </p>
                           </div>
-                          <p className="mt-1 truncate text-xs text-muted-foreground">
-                            {g.entries.length > 0
-                              ? g.entries.map((e) => e.name || "未命名").join("、")
-                              : "暂无条目"}
-                          </p>
+                          <Switch
+                            checked={g.enabled}
+                            onCheckedChange={(v) => void handleToggleGroup(g, v)}
+                          />
                         </div>
-                        <Switch
-                          checked={g.enabled}
-                          onCheckedChange={(v) => void handleToggleGroup(g, v)}
-                        />
-                      </div>
-                      <div className="flex items-center justify-end gap-1 px-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="size-8 p-0"
-                          onClick={() => handleEditGroup(g)}
-                        >
-                          <IconEdit className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="size-8 p-0 text-destructive"
-                          onClick={() => void handleDeleteGroup(g)}
-                        >
-                          <IconTrash className="size-4" />
-                        </Button>
-                      </div>
-                    </Card>
-                  </motion.div>
-                ))}
+                        <div className="flex items-center justify-end gap-1 px-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="size-8 p-0"
+                            onClick={() => setShowCharDialog(g)}
+                            title="角色卡绑定"
+                            {...pressableSubtle}
+                          >
+                            <IconBookmark className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="size-8 p-0"
+                            onClick={() => handleEditGroup(g)}
+                            {...pressableSubtle}
+                          >
+                            <IconEdit className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="size-8 p-0 text-destructive"
+                            onClick={() => void handleDeleteGroup(g)}
+                            {...pressableSubtle}
+                          >
+                            <IconTrash className="size-4" />
+                          </Button>
+                        </div>
+                      </Card>
+                    </motion.div>
+                  );
+                })}
               </AnimatePresence>
             </div>
           </ScrollArea>
@@ -944,6 +1000,143 @@ export default function RegexPage() {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* 角色卡绑定弹窗 */}
+      <Dialog
+        open={!!showCharDialog}
+        onOpenChange={(o) => !o && setShowCharDialog(null)}
+      >
+        <DialogContent className="max-h-[80vh] min-w-0 overflow-hidden max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <IconUserGroup className="size-4" />
+              角色卡绑定
+            </DialogTitle>
+            <DialogDescription>
+              选择启用此正则组的角色卡（不选则全局启用）
+            </DialogDescription>
+          </DialogHeader>
+          {showCharDialog && (
+            <RegexCharBindingContent
+              group={showCharDialog}
+              characters={characters}
+              onSave={handleSaveCharacters}
+              onCancel={() => setShowCharDialog(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </LuzzyLayout>
+  );
+}
+
+// ============================================================================
+// 角色卡绑定内容组件（玻璃态容器 + 三态动画）
+// ============================================================================
+
+interface RegexCharBindingContentProps {
+  group: RegexScriptGroup;
+  characters: { uuid: string; name: string }[];
+  onSave: (group: RegexScriptGroup, charUuids: string[]) => void;
+  onCancel: () => void;
+}
+
+function RegexCharBindingContent({
+  group,
+  characters,
+  onSave,
+  onCancel,
+}: RegexCharBindingContentProps) {
+  const [selected, setSelected] = React.useState<Set<string>>(
+    new Set(group.enabledForCharacters ?? []),
+  );
+
+  const handleToggle = React.useCallback((uuid: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(uuid)) {
+        next.delete(uuid);
+      } else {
+        next.add(uuid);
+      }
+      return next;
+    });
+  }, []);
+
+  return (
+    <>
+      <ScrollArea className="flex-1 min-h-0 pr-2">
+        <div className="grid gap-2 py-2">
+          {characters.length === 0 ? (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+              className="py-4 text-center text-xs text-muted-foreground"
+            >
+              暂无角色卡
+            </motion.div>
+          ) : (
+            <AnimatePresence mode="popLayout">
+              {characters.map((c, idx) => {
+                const checked = selected.has(c.uuid);
+                return (
+                  <motion.label
+                    key={c.uuid}
+                    layout
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    transition={{
+                      delay: idx * 0.02,
+                      type: "spring",
+                      stiffness: 400,
+                      damping: 30,
+                    }}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.99 }}
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/10 bg-background/40 p-2 backdrop-blur-sm transition-colors hover:bg-muted/50"
+                  >
+                    <motion.div
+                      layout
+                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => handleToggle(c.uuid)}
+                      />
+                    </motion.div>
+                    <span className="text-sm">{c.name}</span>
+                  </motion.label>
+                );
+              })}
+            </AnimatePresence>
+          )}
+        </div>
+      </ScrollArea>
+      <DialogFooter>
+        <div className="flex w-full items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            {selected.size === 0
+              ? "全局启用（所有角色）"
+              : `已选 ${selected.size} 个角色`}
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onCancel}>
+              <IconClose className="mr-1 size-3.5" />
+              取消
+            </Button>
+            <Button
+              onClick={() => onSave(group, Array.from(selected))}
+              {...pressable}
+            >
+              <IconCheck className="mr-1 size-3.5" />
+              确定
+            </Button>
+          </div>
+        </div>
+      </DialogFooter>
+    </>
   );
 }

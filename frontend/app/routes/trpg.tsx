@@ -171,7 +171,7 @@ export default function TrpgPage() {
                   <code className="break-all">http://localhost:18527/v1?_target=https://你的供应商地址</code>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  示例：DeepSeek → <code className="text-xs bg-muted/50 px-1 rounded">http://localhost:18527/v1?_target=https://api.deepseek.com</code>
+                  示例：DeepSeek → <code className="text-xs bg-muted/50 px-1 rounded">http://localhost:18527/v1?_target=https://api.deepseek.com/v1</code>
                 </p>
               </div>
 

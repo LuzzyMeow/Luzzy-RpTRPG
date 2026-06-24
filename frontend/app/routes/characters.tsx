@@ -30,7 +30,7 @@ import {
 } from "~/components/luzzy/luzzy-icons";
 
 import { useAppStore } from "~/stores";
-import type { Character, WorldInfoEntry, RegexScriptGroup } from "~/types/luzzy";
+import type { Character, WorldInfoEntry, RegexScriptGroup, UiTemplate } from "~/types/luzzy";
 import { logger } from "~/services/logger";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { SwipeCard } from "~/components/luzzy/swipe-card";
@@ -77,6 +77,7 @@ import {
   parsePngCharacterCard,
   extractWorldInfoFromCard,
   extractRegexScriptsFromCard,
+  extractUiTemplatesFromCard,
 } from "~/services/characterCardImport";
 // v0.4.4: 鹿溪角色保护 - 禁止编辑/删除/分享
 import { LUXI_CHARACTER_NAME } from "~/services/presetContent";
@@ -704,6 +705,24 @@ export default function CharactersPage() {
                 await setItem("regexScripts", "regexGroups", [...existing, ...regexGroups]);
               } catch (regexErr) {
                 console.warn("[Characters] 正则脚本导入失败:", regexErr);
+              }
+            }
+
+            // v0.7.1: 提取并保存 UI 模板
+            const importedUiTemplates = extractUiTemplatesFromCard(cardData, latestCharacter.uuid);
+            if (importedUiTemplates.length > 0) {
+              try {
+                const existingTemplates = (await getItem<UiTemplate[]>("uiTemplates", "uiTemplates")) ?? [];
+                const merged = [...existingTemplates];
+                for (const t of importedUiTemplates) {
+                  if (!merged.some(et => et.name === t.name && et.content === t.content)) {
+                    merged.push(t);
+                  }
+                }
+                await setItem("uiTemplates", "uiTemplates", merged);
+                toast.success(`已导入 ${importedUiTemplates.length} 个 UI 模板`);
+              } catch (uiTplErr) {
+                console.warn("[Characters] UI 模板导入失败:", uiTplErr);
               }
             }
           }

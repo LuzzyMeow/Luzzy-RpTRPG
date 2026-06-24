@@ -113,7 +113,6 @@ const BUILTIN_TOOL_LABELS: Record<BuiltinToolType, string> = {
   "keyword-search": "关键词检索",
   "memory-recall": "记忆召回",
   "world-recall": "世界书召回",
-  "world-search": "世界书检索",
   anysearch: "Anysearch 联网搜索",
 };
 
@@ -123,7 +122,6 @@ const BUILTIN_TOOL_DESCRIPTIONS: Record<BuiltinToolType, string> = {
   "keyword-search": "在聊天消息中按关键词搜索匹配的对话内容。",
   "memory-recall": "召回历史记忆，按相关度排序返回。",
   "world-recall": "使用嵌入模型在当前角色卡绑定的世界书中语义检索匹配内容，需配置嵌入模型。",
-  "world-search": "在当前角色卡启用的世界书中按关键词搜索匹配内容，无需嵌入模型。",
   anysearch: "联网搜索外部信息，获取实时数据。",
 };
 
@@ -132,7 +130,6 @@ const BUILTIN_TOOL_RANGES: Record<BuiltinToolType, { min: number; max: number }>
   "keyword-search": { min: 3, max: 21 },
   "memory-recall": { min: 3, max: 12 },
   "world-recall": { min: 3, max: 12 },
-  "world-search": { min: 3, max: 21 },
   anysearch: { min: 3, max: 12 },
 };
 
@@ -1438,9 +1435,6 @@ function BuiltinToolsTab() {
                         )}
                         {toolType === "world-recall" && (
                           <IconMap className="size-4 text-primary" />
-                        )}
-                        {toolType === "world-search" && (
-                          <IconBookmark className="size-4 text-primary" />
                         )}
                         {toolType === "anysearch" && (
                           <IconGlobe className="size-4 text-primary" />

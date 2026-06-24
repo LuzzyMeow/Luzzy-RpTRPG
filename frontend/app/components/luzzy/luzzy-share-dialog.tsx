@@ -264,9 +264,10 @@ export function LuzzyShareDialog({
     setExporting(true);
     try {
       // 构建渲染容器
+      // v0.7.2: 改为 opacity:0 + fixed 定位（保持在视口内但不干扰用户），修复 Android WebView 对离屏元素跳过渲染导致 PNG 全白
       const container = document.createElement("div");
       container.style.cssText =
-        "position:absolute;left:-9999px;top:0;width:420px;padding:24px;background:#ffffff;font-family:'AlibabaPuHuiTi-3','AlibabaSans',sans-serif;box-sizing:border-box;";
+        "opacity:0;pointer-events:none;position:fixed;top:0;left:0;width:420px;padding:24px;background:#ffffff;font-family:'AlibabaPuHuiTi-3','AlibabaSans',sans-serif;box-sizing:border-box;";
 
       // 标题区
       const header = document.createElement("div");
@@ -301,6 +302,9 @@ export function LuzzyShareDialog({
 
       document.body.appendChild(container);
       try {
+        // v0.7.2: 等待布局帧 + 字体/图片加载完成，修复 Android WebView 未完成渲染导致 PNG 全白
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        await new Promise<void>((r) => setTimeout(r, 200));
         const { toPng } = await import("html-to-image");
         const dataUrl = await toPng(container, {
           quality: 0.95,

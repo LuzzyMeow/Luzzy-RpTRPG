@@ -6,12 +6,18 @@
  * - 生成中：实时显示输出 tokens、tok/s、已用时间
  * - 完成后：显示完整统计（输入、缓存、输出、tok/s、总时间）
  * - 纯展示，无点击交互
+ * v0.7.2 增强：
+ * - K/M 紧凑数字格式
+ * - 思考 tokens（reasoningTokens）显示
+ * - 工具续写 tokens（toolCallTokens）显示
+ * - 图标替换为 game-icon-pack
+ * - flex-nowrap 防止折行
  */
 
 import * as React from "react";
 import { motion } from "motion/react";
-import { ArrowUp, ArrowDown } from "lucide-react";
 
+import { IconArrowUp, IconArrowDown } from "~/components/luzzy/luzzy-icons";
 import type { TokenUsage } from "~/types/luzzy";
 
 interface LuzzyTokenUsageBarProps {
@@ -27,9 +33,11 @@ interface LuzzyTokenUsageBarProps {
   };
 }
 
-/** 格式化数字（千分位） */
-function formatNumber(n: number): string {
-  return n.toLocaleString("en-US");
+/** v0.7.2: 紧凑数字格式（≥1M → 1.2M，≥1K → 1.2K） */
+function formatCompact(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
 }
 
 /** 格式化时间（毫秒 → 秒，保留1位小数） */
@@ -48,10 +56,10 @@ export function LuzzyTokenUsageBar({
       <motion.div
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex items-center gap-1.5 px-1 py-0.5 text-[10px] leading-tight text-muted-foreground/70"
+        className="flex flex-nowrap items-center gap-1.5 px-1 py-0.5 text-[10px] leading-tight text-muted-foreground/70"
       >
-        <ArrowDown className="size-2.5" />
-        <span>{formatNumber(liveData.currentTokens)}</span>
+        <IconArrowDown className="size-2.5" />
+        <span>{formatCompact(liveData.currentTokens)}</span>
         <span>·</span>
         <span>{liveData.tokPerSec.toFixed(1)} tok/s</span>
         <span>·</span>
@@ -70,22 +78,24 @@ export function LuzzyTokenUsageBar({
 
   const hasCache = usage.cachedTokens !== undefined && usage.cachedTokens > 0;
   const cacheRate = usage.cacheHitRate ?? 0;
+  const hasReasoning = usage.reasoningTokens !== undefined && usage.reasoningTokens > 0;
+  const hasToolCall = usage.toolCallTokens !== undefined && usage.toolCallTokens > 0;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex items-center gap-1.5 px-1 py-0.5 text-[10px] leading-tight text-muted-foreground/70"
+      className="flex flex-nowrap items-center gap-1.5 px-1 py-0.5 text-[10px] leading-tight text-muted-foreground/70"
     >
       {/* 输入 tokens */}
-      <ArrowUp className="size-2.5" />
-      <span>{formatNumber(usage.promptTokens)}</span>
+      <IconArrowUp className="size-2.5 shrink-0" />
+      <span>{formatCompact(usage.promptTokens)}</span>
 
       {/* 缓存信息（命中率为0时不显示） */}
       {hasCache && cacheRate > 0 && (
         <>
           <span className="text-muted-foreground/50">(</span>
-          <span>缓存 {formatNumber(usage.cachedTokens!)}</span>
+          <span>缓存 {formatCompact(usage.cachedTokens!)}</span>
           <span>·</span>
           <span>{cacheRate.toFixed(1)}%</span>
           <span className="text-muted-foreground/50">)</span>
@@ -93,8 +103,24 @@ export function LuzzyTokenUsageBar({
       )}
 
       {/* 输出 tokens */}
-      <ArrowDown className="ml-0.5 size-2.5" />
-      <span>{formatNumber(usage.completionTokens)}</span>
+      <IconArrowDown className="ml-0.5 size-2.5 shrink-0" />
+      <span>{formatCompact(usage.completionTokens)}</span>
+
+      {/* v0.7.2: 思考 tokens（reasoningTokens > 0 时显示） */}
+      {hasReasoning && (
+        <>
+          <span className="text-muted-foreground/50">·</span>
+          <span>思考 {formatCompact(usage.reasoningTokens!)}</span>
+        </>
+      )}
+
+      {/* v0.7.2: 工具续写 tokens（toolCallTokens > 0 时显示） */}
+      {hasToolCall && (
+        <>
+          <span className="text-muted-foreground/50">·</span>
+          <span>工具 {formatCompact(usage.toolCallTokens!)}</span>
+        </>
+      )}
 
       <span>·</span>
       <span>{usage.tokPerSec.toFixed(1)} tok/s</span>

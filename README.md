@@ -8,7 +8,7 @@
 > 
 > *Every conversation feels like a novel with you in it.*
 
-[![Version](https://img.shields.io/badge/version-v0.7.0-9d4edd?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.7.2-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -113,7 +113,7 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.5.9-debug.apk`
+📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.7.2-debug.apk`
 
 ---
 
@@ -141,6 +141,12 @@ RP-Hub/
 ---
 
 ## 📰 最新动态 · What's New
+
+### v0.7.2
+
+两阶段→单阶段架构重构：合并工具决策与 CoT/正文为单次 API 调用，模型通过原生 `tool_calls`（function calling）自行决定调用工具；system prompt 稳定，KV 缓存命中率提升。世界书召回重构为三策略混合召回（constant 直注 + 关键词触发 + 语义相似度），删除冗余 `world-search` 工具。新增 RecallResultCard 三级卡片 UI（输入/输出分区 + 展开收起 + 策略标签）、会话自动命名（首条 AI 回复后模型生成 3-6 字标题）、Token 计数增强（K/M 格式 + 思考 token + 工具续写 token + 全局计时）、正则脚本/UI 模板角色绑定 + 设置页多选 UI。修复 Phase 1 上下文缺失（`world_recall_result` 未过滤）、重试旧向量分片未清理、PNG 导出全白图、角色切换唤起键盘、PNG 导入未提取 UI 模板。翻译荧光改为字体描边、翻译动画仅首次播放、关于页背景铺满不截断、思考链按时间顺序展示、移除头脑风暴灯泡图标。
+
+> Two-stage → single-stage architecture refactor: merges tool decision + CoT/main content into a single API call; the model decides tool calls natively via `tool_calls` (function calling); system prompt stays stable, improving KV cache hit rate. World info recall refactored into a three-strategy hybrid recall (constant injection + keyword trigger + semantic similarity), removing the redundant `world-search` tool. Adds RecallResultCard three-level card UI (input/output separation + expand/collapse + strategy badges), session auto-naming (model generates 3-6 char title after first AI reply), enhanced token counter (K/M format + reasoning tokens + tool call tokens + global timing), regex/UI template character binding + settings page multi-select UI. Fixes Phase 1 context loss (`world_recall_result` not filtered), stale vector shards on retry, PNG export white image, keyboard popup on character switch, and PNG import missing UI template extraction. Translation glow replaced with font stroke, translation animation plays only on first render, about page background fills scroll area, thinking chain sorted chronologically, and brainstorm lightbulb icon removed.
 
 ### v0.7.0
 

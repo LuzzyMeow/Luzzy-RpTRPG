@@ -10,7 +10,7 @@
 import type { StateCreator } from "zustand";
 import { v4 as uuidv4 } from "uuid";
 
-import type { Character, WorldInfoEntry, RegexScriptGroup } from "~/types/luzzy";
+import type { Character, WorldInfoEntry, RegexScriptGroup, UiTemplate } from "~/types/luzzy";
 import { getItem, setItem, removeItem, getAllKeys } from "~/services/storage";
 import {
   LUXI_CHARACTER_NAME,
@@ -261,13 +261,20 @@ export const createCharacterSlice: StateCreator<
       }
     }
 
-    // 5. 删除正则脚本组（id.startsWith("{uuid}-regexgrp-")）
+    // 5. 删除正则脚本组（id.startsWith("{uuid}-regexgrp-")）+ 清理 enabledForCharacters
     try {
       const allRegexGroups = await getItem<RegexScriptGroup[]>("regexScripts", "regexGroups");
       if (allRegexGroups && allRegexGroups.length > 0) {
         const prefix = `${uuid}-regexgrp-`;
-        const filtered = allRegexGroups.filter((g) => !g.id.startsWith(prefix));
-        if (filtered.length !== allRegexGroups.length) {
+        // 删除前缀匹配的组，并从剩余组的 enabledForCharacters 中移除 uuid
+        const filtered = allRegexGroups
+          .filter((g) => !g.id.startsWith(prefix))
+          .map((g) => ({
+            ...g,
+            enabledForCharacters: (g.enabledForCharacters ?? []).filter((id) => id !== uuid),
+          }));
+        if (filtered.length !== allRegexGroups.length ||
+            allRegexGroups.some((g) => (g.enabledForCharacters ?? []).includes(uuid))) {
           await setItem("regexScripts", "regexGroups", filtered);
         }
       }
@@ -275,7 +282,7 @@ export const createCharacterSlice: StateCreator<
       console.error("[CharacterSlice] 清理正则脚本组失败:", e);
     }
 
-    // 6. 从知识库/技能/内置工具的 enabledForCharacters 中移除 uuid
+    // 6. 从知识库/技能/内置工具/UI模板的 enabledForCharacters 中移除 uuid
     try {
       // 知识库
       const knowledgeBases = get().knowledgeBases ?? [];
@@ -304,8 +311,17 @@ export const createCharacterSlice: StateCreator<
         }));
         set((state) => ({ builtinToolConfigs: updated }));
       }
+      // v0.7.1: UI 模板
+      const allUiTemplates = await getItem<UiTemplate[]>("uiTemplates", "uiTemplates");
+      if (allUiTemplates && allUiTemplates.some((t) => (t.enabledForCharacters ?? []).includes(uuid))) {
+        const updated = allUiTemplates.map((t) => ({
+          ...t,
+          enabledForCharacters: (t.enabledForCharacters ?? []).filter((id) => id !== uuid),
+        }));
+        await setItem("uiTemplates", "uiTemplates", updated);
+      }
     } catch (e) {
-      console.error("[CharacterSlice] 清理 UI 模板绑定失败:", e);
+      console.error("[CharacterSlice] 清理绑定数据失败:", e);
     }
   },
 

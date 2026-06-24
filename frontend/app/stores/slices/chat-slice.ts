@@ -33,6 +33,8 @@ import {
   migrateRegexScripts,
   extractMemory,
   DEFAULT_USER,
+  worldInfoKeyMatchesText,
+  passesWorldInfoProbability,
 } from "~/services/chatService";
 import {
   sendStreamRequest,
@@ -58,6 +60,7 @@ import {
 } from "~/services/toolService";
 import { loadVectorMemoryShards, searchVectorMemory, searchVectorMemoryWithScore, getEmbedding, cosineSimilarity, removeVectorMemoryShardsByTurn, loadWorldVectorMemoryShards, saveWorldVectorMemoryShards } from "~/services/memoryService";
 import { BUILTIN_PRESET_DEFAULTS } from "~/services/presetContent";
+import { generateSessionTitle } from "~/services/sessionService";
 import { BUILTIN_PROVIDERS } from "~/stores/slices/settings-slice";
 import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
 import { logger } from "~/services/logger";
@@ -104,50 +107,8 @@ const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   longTermMemoryCharacterIds: [],
 };
 
-/**
- * v0.5.1: 解析 AI 工具决策输出
- * 支持格式:
- * - <tool_calls>name1:query1|name2:query2</tool_calls>
- * - <callLabel:query> 或 <callLabel:query|callLabel2:query2>（单/多工具标签格式）
- */
-function parseToolDecisions(raw: string): Array<{ toolName: string; query: string }> {
-  const text = (raw || '').trim();
-  if (!text) return [];
-
-  // 格式 A: <tool_calls>name1:query1|name2:query2</tool_calls>
-  const blockMatch = text.match(/<tool_calls>([\s\S]*?)<\/tool_calls>/i);
-  if (blockMatch) {
-    const body = blockMatch[1].trim();
-    if (/^(NO_TOOLS|NONE)$/i.test(body)) return [];
-    return body.split('|').map(part => {
-      const colonIdx = part.indexOf(':');
-      if (colonIdx < 0) return { toolName: part.trim(), query: part.trim() };
-      return { toolName: part.substring(0, colonIdx).trim(), query: part.substring(colonIdx + 1).trim() };
-    }).filter(d => d.toolName);
-  }
-
-  // 格式 B: <callLabel:query> 或 <callLabel:query|callLabel2:query2>
-  // 匹配尖括号内的 name:query(|name:query)* 结构
-  const tagMatches = text.match(/<([a-zA-Z0-9_-]+):([^>]+)>/g);
-  if (tagMatches && tagMatches.length > 0) {
-    const decisions: Array<{ toolName: string; query: string }> = [];
-    for (const tag of tagMatches) {
-      const inner = tag.slice(1, -1); // 去掉 < >
-      const parts = inner.split('|');
-      for (const part of parts) {
-        const colonIdx = part.indexOf(':');
-        if (colonIdx < 0) continue;
-        const toolName = part.substring(0, colonIdx).trim();
-        const query = part.substring(colonIdx + 1).trim();
-        if (toolName) decisions.push({ toolName, query });
-      }
-    }
-    if (decisions.length > 0) return decisions;
-  }
-
-  if (/NO_TOOLS|不需要工具/i.test(text)) return [];
-  return [];
-}
+// v0.7.1: 单阶段架构 — parseToolDecisions 已删除
+// 模型通过原生 tool_calls (function calling) 自行决定调用工具
 
 /**
  * 获取聊天补全 API 的完整 URL
@@ -309,6 +270,15 @@ export const createChatSlice: StateCreator<
         await setItem("regexScripts", "regexGroups", regexGroups);
         await setItem("regexScripts", "regexScripts", []);
       }
+      // v0.7.1: 按当前角色过滤正则脚本组（enabledForCharacters 为空或 undefined 时全局生效）
+      const currentCharUuid = get().currentCharacterUuid;
+      if (currentCharUuid) {
+        regexGroups = regexGroups.filter(g =>
+          !g.enabledForCharacters ||
+          g.enabledForCharacters.length === 0 ||
+          g.enabledForCharacters.includes(currentCharUuid)
+        );
+      }
       const memorySettings = memorySettingsData ?? DEFAULT_MEMORY_SETTINGS;
       const vectorMemoryShards = vectorMemoryShardsData ?? [];
       // v0.6.2-fix: currentCharacter 为空时记录诊断日志，避免 pipeline 静默停摆
@@ -321,11 +291,12 @@ export const createChatSlice: StateCreator<
       const builtinToolConfigs = get().builtinToolConfigs;
       const toolGlobalSettings = get().toolGlobalSettings;
 
-      // v0.7.0: 两阶段架构（原三请求架构重构）
-      // - phase="tool": 阶段1, AI决定调用哪些工具,流式更新
-      // - phase="cot": 阶段2, CoT 思考(reasoning_content) + 正文(content),流式更新思考卡片和正文气泡
-      // - phase="main": 仅续写工具调用时使用（原阶段3逻辑已合并到阶段2）
-      // KV 缓存保护: 阶段1/2 system prompt 不同(阶段1跳过角色/预设),各自独立请求
+      // v0.7.1: 单阶段架构 — 合并原 Phase 1（工具决策）+ Phase 2（CoT/正文）
+      // 模型通过原生 tool_calls (function calling) 自行决定调用工具
+      // KV 缓存优化: system prompt 稳定（不再有 phase=1/2 差异），前缀缓存命中率提升
+
+      // v0.7.2: 全局计时 — 首次请求到正文结束（含工具续写）
+      const firstRequestStartTime = Date.now();
 
       // v0.4.1-fix: 带重试退避的 API 调用包装(针对 429 ServerOverloaded)
       // 最多重试 3 次,退避间隔递增(2s/4s/8s),重试期间显示提示
@@ -333,8 +304,6 @@ export const createChatSlice: StateCreator<
       const callApiWithRetry = async (
         msgId: string,
         contextMsgs: ChatMessage[],
-        phase: "tool" | "cot" | "main" = "cot",
-        cotContent?: string,
         skipToolsInjection: boolean = false, // v0.4.6: 续写请求时不注入 tools
       ): Promise<{ content: string; reasoning: string; cot: string; toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> }> => {
         const maxRetries = 3;
@@ -347,7 +316,7 @@ export const createChatSlice: StateCreator<
           }
 
           try {
-            return await callApiAndUpdate(msgId, contextMsgs, phase, cotContent, skipToolsInjection);
+            return await callApiAndUpdate(msgId, contextMsgs, skipToolsInjection);
           } catch (err) {
             // 用户取消不重试
             if (err instanceof DOMException && err.name === 'AbortError') throw err;
@@ -394,8 +363,6 @@ export const createChatSlice: StateCreator<
       const callApiAndUpdate = async (
         msgId: string,
         contextMsgs: ChatMessage[],
-        phase: "tool" | "cot" | "main" = "cot",
-        cotContent?: string,
         skipToolsInjection: boolean = false, // v0.4.6: 续写请求时不注入 tools
       ): Promise<{ content: string; reasoning: string; cot: string; toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> }> => {
         // 构建 API 上下文
@@ -408,8 +375,7 @@ export const createChatSlice: StateCreator<
           }
           return (st.user?.name?.trim() || st.user?.description?.trim()) ? st.user : DEFAULT_USER;
         })();
-        // v0.5.1: phase 数字映射，传入 buildContext 控制系统提示构建
-        const phaseNumber = phase === "tool" ? 1 : phase === "cot" ? 2 : 3;
+        // v0.7.1: 单阶段架构 — buildContext 不再有 phase 参数
         const { apiMessages: rawApiMessages } = await buildContext({
           messages: contextMsgs,
           character: currentCharacter,
@@ -424,7 +390,6 @@ export const createChatSlice: StateCreator<
           sessionId: currentSessionId ?? undefined,
           builtinToolConfigs, // v0.4.3: 传入内置工具配置，注入工具描述到 system prompt
           activeTools, // v0.4.6: 传入用户工具，统一注入工具描述
-          phase: phaseNumber, // v0.5.1: 控制系统提示段落（1=工具决策, 2=CoT, 3=正文）
         });
 
         // v0.4.3: 日志记录上下文构建完成
@@ -447,19 +412,7 @@ export const createChatSlice: StateCreator<
           };
         });
 
-        // v0.5.1: phase="tool" 时剥离 assistant 消息的角色名
-        // 避免模型因历史消息中带有 name:"角色名" 而认领角色身份，忽略工具决策指令
-        if (phase === "tool") {
-          for (const msg of apiMessages) {
-            if (msg.role === "assistant" && msg.name) {
-              delete msg.name;
-            }
-          }
-        }
-
-        // v0.7.0: 两阶段架构 — 已取消第三次请求（phase="main"）
-        // 原 phase="main" 的 cotContent 追加 + NSFW 内联指令已迁移到 chatService.ts
-        // 阶段2 单次请求同时完成 CoT 思考和正文输出，无需追加 assistant/user 消息
+        // v0.7.1: 单阶段架构 — 不再有 phase="tool" 角色名剥离
 
         // 多供应商路由：根据模型名前缀解析对应的供应商 URL/Key
         const chatApiUrl = getApiUrlForModel(
@@ -595,9 +548,9 @@ export const createChatSlice: StateCreator<
                 accumulatedReasoning += chunk.reasoningContent;
                 set({ isThinking: true });
                 // v0.5.5-arch: reasoning_content 创建「头脑风暴」节点（type=brainstorm）
-                // 每次请求的 reasoning 独立成节点，按 phase 区分，流式实时更新
+                // v0.7.1: 单阶段架构 — 不再有 phase 区分
                 const existingBrainstorm = agentSteps.find(
-                  (s) => s.type === "brainstorm" && s.phase === phaseNumber
+                  (s) => s.type === "brainstorm"
                 );
                 if (!existingBrainstorm) {
                   agentSteps.push({
@@ -607,7 +560,6 @@ export const createChatSlice: StateCreator<
                     content: accumulatedReasoning,
                     status: "running",
                     startedAt: Date.now(),
-                    phase: phaseNumber,
                   });
                 } else {
                   existingBrainstorm.content = accumulatedReasoning;
@@ -617,12 +569,12 @@ export const createChatSlice: StateCreator<
               if (chunk.content) {
                 accumulatedContent += chunk.content;
                 set({ isThinking: false, isReceiving: true });
-                // v0.7.0: 两阶段架构 — phase="cot" 的 content 现在是正文（或 <cot> 降级模式）
-                if (phase === "cot" && accumulatedContent.includes('<cot>')) {
+                // v0.7.1: 单阶段架构 — content 是正文（或 <cot> 降级模式）
+                if (accumulatedContent.includes('<cot>')) {
                   const fallbackCotResult = parseCot(accumulatedContent, false, true);
                   if (fallbackCotResult.cot) {
                     const existingCotOutput = agentSteps.find(
-                      (s) => s.type === "cot_output" && s.phase === phaseNumber
+                      (s) => s.type === "cot_output"
                     );
                     if (!existingCotOutput) {
                       agentSteps.push({
@@ -632,7 +584,6 @@ export const createChatSlice: StateCreator<
                         content: fallbackCotResult.cot,
                         status: "running",
                         startedAt: Date.now(),
-                        phase: phaseNumber,
                       });
                     } else {
                       existingCotOutput.content = fallbackCotResult.cot;
@@ -694,48 +645,29 @@ export const createChatSlice: StateCreator<
               // v0.5.5-arch: parseCot 仅用于正文阶段提取 <cot> 标签外的 main 内容
               // reasoning 和 content 已分别创建 brainstorm/cot_output 节点，不再合并到 thinking 节点
 
-              // v0.5.5-arch-fix: phase 感知的写入逻辑——三阶段严格隔离
-              // - phase=tool: 仅更新 agentSteps，绝不写 message.content（避免正文窜入气泡）
-              // - phase=cot: 仅更新 agentSteps（brainstorm + cot_output 节点），不写 message.content
-              //              思考卡片内容来自 agentSteps，不再依赖 message.cot 字符串
-              // - phase=main: 写 message.content 气泡
+              // v0.7.1: 单阶段架构 — 始终写入正文气泡和 agentSteps
+              // reasoning_content → brainstorm 节点（上方已创建）
+              // content → 正文气泡（parseCot 分离 <cot> 标签后的 main 内容）
               const now = Date.now();
               const willUpdate = (now - lastUpdateTick >= 16 || hasClosingTag);
               if (willUpdate) {
-                logger.debug("stream", `update: phase=${phase} reasoning=${accumulatedReasoning.length}chars content=${accumulatedContent.length}chars steps=${agentSteps.length}`);
+                logger.debug("stream", `update: reasoning=${accumulatedReasoning.length}chars content=${accumulatedContent.length}chars steps=${agentSteps.length}`);
                 lastUpdateTick = now;
                 const elapsedMs = now - requestStartTime;
                 const estimatedTokens = Math.ceil((accumulatedContent.length + accumulatedReasoning.length) / 4);
                 const tokPerSec = elapsedMs > 0 ? (estimatedTokens / (elapsedMs / 1000)) : 0;
 
-                if (phase === "tool") {
-                  // 工具决策阶段: 仅更新 agentSteps
-                  get().updateMessage(msgId, {
-                    loading: true,
-                    tokenUsage: {
-                      promptTokens: 0,
-                      completionTokens: estimatedTokens,
-                      responseTimeMs: elapsedMs,
-                      tokPerSec: Math.round(tokPerSec * 10) / 10,
-                    },
-                    agentSteps: [...agentSteps],
-                  });
-                } else {
-                  // v0.7.0: 两阶段架构 — phase="cot" 同时写入正文气泡和 agentSteps
-                  // reasoning_content → brainstorm 节点（上方已创建）
-                  // content → 正文气泡（parseCot 分离 <cot> 标签后的 main 内容）
-                  get().updateMessage(msgId, {
-                    content: cotResult.main || accumulatedContent,
-                    loading: false,
-                    tokenUsage: {
-                      promptTokens: 0,
-                      completionTokens: estimatedTokens,
-                      responseTimeMs: elapsedMs,
-                      tokPerSec: Math.round(tokPerSec * 10) / 10,
-                    },
-                    agentSteps: [...agentSteps],
-                  });
-                }
+                get().updateMessage(msgId, {
+                  content: cotResult.main || accumulatedContent,
+                  loading: false,
+                  tokenUsage: {
+                    promptTokens: 0,
+                    completionTokens: estimatedTokens,
+                    responseTimeMs: elapsedMs,
+                    tokPerSec: Math.round(tokPerSec * 10) / 10,
+                  },
+                  agentSteps: [...agentSteps],
+                });
               }
             },
           });
@@ -779,11 +711,10 @@ export const createChatSlice: StateCreator<
               status: "completed",
               startedAt: requestStartTime,
               endedAt: Date.now(),
-              phase: phaseNumber,
             });
           }
-          // v0.7.0: 两阶段架构 — 非流式 cot_output 仅在 <cot> 降级模式时创建
-          if (phase === "cot" && accumulatedContent.includes('<cot>')) {
+          // v0.7.1: 单阶段架构 — 非流式 cot_output 仅在 <cot> 降级模式时创建
+          if (accumulatedContent.includes('<cot>')) {
             const fallbackCot = parseCot(accumulatedContent);
             if (fallbackCot.cot) {
               agentSteps.push({
@@ -794,26 +725,16 @@ export const createChatSlice: StateCreator<
                 status: "completed",
                 startedAt: requestStartTime,
                 endedAt: Date.now(),
-                phase: phaseNumber,
               });
             }
           }
 
-          // v0.7.0: 两阶段架构 — 非流式 phase 感知写入
-          // agentSteps 仅在非空时设置，避免 undefined 覆盖已有值
-          if (phase === "tool") {
-            get().updateMessage(msgId, {
-              loading: true,
-              ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
-            });
-          } else {
-            // v0.7.0: phase="cot" 同时写入正文气泡和 agentSteps
-            get().updateMessage(msgId, {
-              content: cotResult.main || accumulatedContent,
-              loading: false,
-              ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
-            });
-          }
+          // v0.7.1: 单阶段架构 — 始终写入正文气泡和 agentSteps
+          get().updateMessage(msgId, {
+            content: cotResult.main || accumulatedContent,
+            loading: false,
+            ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
+          });
         }
 
         // v0.5.5-arch: 将 brainstorm/cot_output 节点标记为已完成
@@ -829,35 +750,49 @@ export const createChatSlice: StateCreator<
         // 修复 BUG：流式中 updateMessage 30ms 节流可能错过最后一个 chunk，
         // 导致 message.content 停留在中间态（例如未闭合 <think> 被吞），气泡空白
         // 此处用 useCache=true 走完成态缓存，确保最终内容正确写回 message
-        // v0.4.1: 根据 phase 控制最终更新行为
-        // v0.5.5-arch: 流式结束后最终态写入——三阶段隔离
+        // v0.7.1: 单阶段架构 — 始终写入正文气泡
         if (get().stream) {
           const finalCotResult = parseCot(accumulatedContent, true);
-          if (phase === "tool") {
-            // 工具决策阶段: 不写 content/cot，由外层解析决策
-          } else {
-            // v0.7.0: phase="cot" 同时写入正文气泡和 agentSteps
-            // 正文阶段: 更新正文气泡，同时保留 agentSteps
-            get().updateMessage(msgId, {
-              content: finalCotResult.main || accumulatedContent,
-              loading: false,
-              ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
-            });
-          }
+          get().updateMessage(msgId, {
+            content: finalCotResult.main || accumulatedContent,
+            loading: false,
+            ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
+          });
         }
 
+        // v0.7.2: Token 累积 — 续写时读取已有 tokenUsage 并累加
+        const existingTokenUsage = get().messages.find((m) => m.id === msgId)?.tokenUsage;
+        const isContinuation = !!existingTokenUsage;
+
         if (lastUsage) {
-          const elapsedMs = finalElapsedMs;
-          const promptTokens = Number(lastUsage.prompt_tokens ?? 0);
-          const completionTokens = Number(lastUsage.completion_tokens ?? 0);
-          const cachedTokens = Number(
+          const currentPromptTokens = Number(lastUsage.prompt_tokens ?? 0);
+          const currentCompletionTokens = Number(lastUsage.completion_tokens ?? 0);
+          const currentCachedTokens = Number(
             (lastUsage.prompt_tokens_details as Record<string, unknown>)?.cached_tokens ?? 0
           );
+
+          // v0.7.2: 累加已有 tokenUsage（续写场景）
+          const promptTokens = currentPromptTokens + (existingTokenUsage?.promptTokens ?? 0);
+          const completionTokens = currentCompletionTokens + (existingTokenUsage?.completionTokens ?? 0);
+          const cachedTokens = currentCachedTokens + (existingTokenUsage?.cachedTokens ?? 0);
+
+          // v0.7.2: 思考 tokens 估算（reasoning 内容长度 / 4）
+          const reasoningTokens = Math.ceil(accumulatedReasoning.length / 4) + (existingTokenUsage?.reasoningTokens ?? 0);
+
+          // v0.7.2: 工具续写累计 tokens（续写时本次请求的 prompt+completion 计入工具 token）
+          const toolCallTokens = isContinuation
+            ? (existingTokenUsage?.toolCallTokens ?? 0) + currentPromptTokens + currentCompletionTokens
+            : 0;
+
+          // v0.7.2: 全局计时 — 首次请求到正文结束
+          const globalElapsedMs = Date.now() - firstRequestStartTime;
+
           const cacheHitRate = promptTokens > 0
             ? Math.round((cachedTokens / promptTokens) * 1000) / 10
             : undefined;
-          const tokPerSec = elapsedMs > 0
-            ? Math.round((completionTokens / (elapsedMs / 1000)) * 10) / 10
+          const totalTokens = promptTokens + completionTokens + reasoningTokens + toolCallTokens;
+          const tokPerSec = globalElapsedMs > 0
+            ? Math.round((totalTokens / (globalElapsedMs / 1000)) * 10) / 10
             : 0;
 
           get().updateMessage(msgId, {
@@ -865,8 +800,10 @@ export const createChatSlice: StateCreator<
               promptTokens,
               cachedTokens: cachedTokens > 0 ? cachedTokens : undefined,
               completionTokens,
-              totalTokens: promptTokens + completionTokens,
-              responseTimeMs: elapsedMs,
+              reasoningTokens: reasoningTokens > 0 ? reasoningTokens : undefined,
+              toolCallTokens: toolCallTokens > 0 ? toolCallTokens : undefined,
+              totalTokens,
+              responseTimeMs: globalElapsedMs,
               tokPerSec,
               cacheHitRate,
             },
@@ -875,43 +812,42 @@ export const createChatSlice: StateCreator<
           });
         } else {
           // 无 usage 数据时，至少更新最终响应时间
-          const elapsedMs = finalElapsedMs;
+          const globalElapsedMs = Date.now() - firstRequestStartTime;
           const estimatedTokens = Math.ceil(accumulatedContent.length / 4);
-          const tokPerSec = elapsedMs > 0
-            ? Math.round((estimatedTokens / (elapsedMs / 1000)) * 10) / 10
+          const reasoningTokens = Math.ceil(accumulatedReasoning.length / 4) + (existingTokenUsage?.reasoningTokens ?? 0);
+          const toolCallTokens = isContinuation
+            ? (existingTokenUsage?.toolCallTokens ?? 0) + estimatedTokens
+            : 0;
+          const totalTokens = estimatedTokens + reasoningTokens + toolCallTokens + (existingTokenUsage?.promptTokens ?? 0);
+          const tokPerSec = globalElapsedMs > 0
+            ? Math.round((totalTokens / (globalElapsedMs / 1000)) * 10) / 10
             : 0;
           get().updateMessage(msgId, {
             tokenUsage: {
-              promptTokens: 0,
-              completionTokens: estimatedTokens,
-              responseTimeMs: elapsedMs,
+              promptTokens: existingTokenUsage?.promptTokens ?? 0,
+              completionTokens: estimatedTokens + (existingTokenUsage?.completionTokens ?? 0),
+              reasoningTokens: reasoningTokens > 0 ? reasoningTokens : undefined,
+              toolCallTokens: toolCallTokens > 0 ? toolCallTokens : undefined,
+              totalTokens,
+              responseTimeMs: globalElapsedMs,
               tokPerSec,
             },
             ...(agentSteps.length > 0 ? { agentSteps: [...agentSteps] } : {}),
           });
         }
 
-        // v0.5.5-arch: 返回 cot 字段供请求3使用
-        // phase=cot 时，只取 <cot> 标签内的思考内容 或 reasoning_content，
-        //   如果模型违规在标签外输出了剧情正文，必须丢弃，防止污染请求 3。
+        // v0.7.1: 单阶段架构 — 返回 CoT 和正文
+        // cot 字段 = reasoning_content + <cot> 标签内容
         const cotParsed = parseCot(accumulatedContent, true);
         const cotOnly = cotParsed.cot || cotParsed.main || accumulatedContent;
-        const finalCotForReturn = phase === "cot"
-          ? (
-              (accumulatedReasoning ? accumulatedReasoning + "\n" : "") +
-              cotOnly
-            ).trim()
-          : (
-              accumulatedReasoning +
-              (cotParsed.cot ? "\n" + cotParsed.cot : "")
-            ).trim();
+        const finalCotForReturn = (
+          (accumulatedReasoning ? accumulatedReasoning + "\n" : "") +
+          cotOnly
+        ).trim();
         // v0.4.6: 流式诊断日志（记录请求完成状态）
-        logger.info("stream", `请求完成: phase=${phase} 总字符=${accumulatedContent.length} cot=${finalCotForReturn.length}chars steps=${agentSteps.length} toolCalls=${accumulatedToolCalls.length}`);
-        // v0.5.6-fix: phase=main 时，仅当 content 完全为空才回退到 reasoning
-        // 避免 reasoning_content 污染正文气泡（DeepSeek-R1 等模型可能只输出 reasoning）
-        const finalContent = phase === "main" && !accumulatedContent.trim() && accumulatedReasoning.trim()
-          ? accumulatedReasoning
-          : accumulatedContent;
+        logger.info("stream", `请求完成: 总字符=${accumulatedContent.length} cot=${finalCotForReturn.length}chars steps=${agentSteps.length} toolCalls=${accumulatedToolCalls.length}`);
+        // v0.7.1: 单阶段架构 — content 即为正文
+        const finalContent = accumulatedContent;
         // v0.4.4: 返回 toolCalls 字段,供外层工具调用循环使用
         return { content: finalContent, reasoning: accumulatedReasoning, cot: finalCotForReturn, toolCalls: accumulatedToolCalls };
       };
@@ -984,6 +920,12 @@ export const createChatSlice: StateCreator<
               status: "completed",
               startedAt: recallCallStep.startedAt,
               endedAt: Date.now(),
+              recallResults: recallResults.length > 0 ? recallResults.map((r) => ({
+                id: uuidv4(),
+                content: r.shard.content,
+                score: r.score,
+                turn: r.shard.turn ?? -1,
+              })) : undefined,
             };
 
             // v0.4.1-fix: 添加到 toolCalls 和 agentSteps,显示为二级思考卡片
@@ -1069,212 +1011,162 @@ export const createChatSlice: StateCreator<
         logger.info("memory", `memory-recall 跳过: configEnabled=${memoryRecallConfig?.enabled} char=${!!currentCharacter?.uuid} embeddingModel=${!!memorySettings?.embeddingModel} shards=${vectorMemoryShards.length}`);
       }
 
-      // v0.7.0: world-recall 被动预执行（世界书语义召回）
-      // world-recall 从主动工具改为被动预执行，与 memory-recall 一致
+      // v0.7.2: world-recall 被动预执行（三策略混合召回）
+      // 策略1: constant=true → 直接注入全文（不使用嵌入模型）
+      // 策略2: keys 匹配用户输入 → 直接召回内容（不使用嵌入模型）
+      // 策略3: 非constant条目 → 嵌入向量语义检索（使用嵌入模型，无嵌入模型时跳过）
+      // 三策略结果不去重，若都满足则两种结果均存在
       const worldRecallConfig = builtinToolConfigs.find(
         (c) => c.type === "world-recall",
       );
       if (
         worldRecallConfig?.enabled &&
         currentCharacter?.uuid &&
-        memorySettings?.embeddingModel &&
         worldInfoEntries.length > 0
       ) {
-        logger.info("world", `世界书召回预执行启动（topK=${worldRecallConfig.resultCount ?? 8}）`);
+        const worldLimit = worldRecallConfig.resultCount || 8;
         const worldRecallQuery = messages.filter((m) => m.role === "user").pop()?.content || "";
-        if (worldRecallQuery.trim()) {
-          try {
-            const worldLimit = worldRecallConfig.resultCount || 8;
-            const queryEmbedding = await getEmbedding(
-              worldRecallQuery,
-              memorySettings,
-              settings,
-              allProviders,
-              get().apiProviderKeys,
-            );
-            const enabledEntries = worldInfoEntries.filter((e) => e.enabled);
-            const scored = await Promise.all(enabledEntries.map(async (e) => {
-              let entryEmbedding = e.embedding;
-              if (!entryEmbedding || entryEmbedding.length === 0) {
-                try {
-                  entryEmbedding = await getEmbedding(e.content, memorySettings, settings, allProviders, get().apiProviderKeys);
-                  e.embedding = entryEmbedding;
-                } catch {
-                  entryEmbedding = [];
+        logger.info("world", `世界书召回预执行启动（三策略混合，topK=${worldLimit}）`);
+        try {
+          const enabledEntries = worldInfoEntries.filter((e) => e.enabled);
+          const constantEntries = enabledEntries.filter((e) => e.constant);
+          const nonConstantEntries = enabledEntries.filter((e) => !e.constant);
+
+          type RecallResult = { entry: WorldInfoEntry; score: number; strategy: 'constant' | 'keyword' | 'semantic' };
+          const results: RecallResult[] = [];
+
+          // 策略1: constant 条目直接注入（score=1.0，不使用嵌入模型）
+          for (const e of constantEntries) {
+            results.push({ entry: e, score: 1.0, strategy: 'constant' });
+          }
+
+          // 策略2: 关键词匹配（非constant条目，概率检查 + keys匹配，不使用嵌入模型）
+          if (worldRecallQuery.trim()) {
+            for (const e of nonConstantEntries) {
+              if (!passesWorldInfoProbability(e)) continue;
+              if (!e.keys || e.keys.length === 0) continue;
+              const matchedKeys = e.keys.filter((key) =>
+                worldInfoKeyMatchesText(key, worldRecallQuery, e.useRegex),
+              );
+              if (matchedKeys.length > 0) {
+                results.push({ entry: e, score: matchedKeys.length, strategy: 'keyword' });
+              }
+            }
+          }
+
+          // 策略3: 语义相似度（所有非constant条目，使用嵌入模型）
+          if (memorySettings?.embeddingModel && worldRecallQuery.trim()) {
+            try {
+              const queryEmbedding = await getEmbedding(
+                worldRecallQuery,
+                memorySettings,
+                settings,
+                allProviders,
+                get().apiProviderKeys,
+              );
+              const semanticScored = await Promise.all(nonConstantEntries.map(async (e) => {
+                let entryEmbedding = e.embedding;
+                if (!entryEmbedding || entryEmbedding.length === 0) {
+                  try {
+                    entryEmbedding = await getEmbedding(e.content, memorySettings, settings, allProviders, get().apiProviderKeys);
+                    e.embedding = entryEmbedding;
+                  } catch {
+                    entryEmbedding = [];
+                  }
+                }
+                const score = entryEmbedding.length > 0 ? cosineSimilarity(queryEmbedding, entryEmbedding) : 0;
+                return { entry: e, score, strategy: 'semantic' as const };
+              }));
+              for (const s of semanticScored) {
+                if (Number.isFinite(s.score) && s.score > 0) {
+                  results.push(s);
                 }
               }
-              const score = entryEmbedding.length > 0 ? cosineSimilarity(queryEmbedding, entryEmbedding) : 0;
-              return { entry: e, score };
-            }));
-            const sorted = scored
-              .filter((s) => Number.isFinite(s.score) && s.score > 0)
-              .sort((a, b) => b.score - a.score)
-              .slice(0, worldLimit);
-            logger.info("world", `世界书召回完成: 找到 ${sorted.length} 条（topK=${worldLimit}）`);
-
-            if (sorted.length > 0) {
-              const worldInfoRecalls: WorldInfoRecall[] = sorted.map((s) => ({
-                id: uuidv4(),
-                entryName: s.entry.id || "未命名",
-                content: s.entry.content,
-                score: s.score,
-              }));
-              get().updateMessage(assistantMessageId, { worldInfoRecalls });
-
-              const recallText = sorted
-                .map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`)
-                .join("\n\n");
-              contextMessages.push({
-                id: uuidv4(),
-                role: "user",
-                content: `<world_recall_result>\n${recallText}\n</world_recall_result>`,
-                createdAt: Date.now(),
-              });
-
-              const worldRecallStep: AgentStep = {
-                id: uuidv4(),
-                type: "memory_inject",
-                title: "世界书召回",
-                content: recallText,
-                status: "completed",
-                startedAt: Date.now(),
-                endedAt: Date.now(),
-              };
-              const existingMsg = get().messages.find((m) => m.id === assistantMessageId);
-              get().updateMessage(assistantMessageId, {
-                agentSteps: [...(existingMsg?.agentSteps ?? []), worldRecallStep],
-              });
+            } catch (e) {
+              logger.warn("world", `世界书语义召回失败（constant+keyword结果仍可用）: ${e}`);
             }
-          } catch (e) {
-            logger.warn("world", `世界书召回预执行失败: ${e}`);
           }
+
+          // 合并排序：按策略优先级 constant > keyword > semantic，同策略内按 score 降序
+          const strategyOrder: Record<string, number> = { constant: 0, keyword: 1, semantic: 2 };
+          const sorted = results
+            .sort((a, b) => {
+              const sa = strategyOrder[a.strategy] ?? 99;
+              const sb = strategyOrder[b.strategy] ?? 99;
+              if (sa !== sb) return sa - sb;
+              return b.score - a.score;
+            })
+            .slice(0, worldLimit);
+
+          const cntConst = sorted.filter((s) => s.strategy === 'constant').length;
+          const cntKw = sorted.filter((s) => s.strategy === 'keyword').length;
+          const cntSem = sorted.filter((s) => s.strategy === 'semantic').length;
+          logger.info("world", `世界书召回完成: 找到 ${sorted.length} 条（constant=${cntConst} keyword=${cntKw} semantic=${cntSem}）`);
+
+          if (sorted.length > 0) {
+            const worldInfoRecalls: WorldInfoRecall[] = sorted.map((s) => ({
+              id: uuidv4(),
+              entryName: s.entry.id || s.entry.name || "未命名",
+              content: s.entry.content,
+              score: s.score,
+              strategy: s.strategy,
+            }));
+            get().updateMessage(assistantMessageId, { worldInfoRecalls });
+
+            const recallText = sorted
+              .map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id || s.entry.name || '未命名'}" strategy="${s.strategy}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`)
+              .join("\n\n");
+            contextMessages.push({
+              id: uuidv4(),
+              role: "user",
+              content: `<world_recall_result>\n${recallText}\n</world_recall_result>`,
+              createdAt: Date.now(),
+            });
+
+            const worldRecallStep: AgentStep = {
+              id: uuidv4(),
+              type: "memory_inject",
+              title: "世界书召回",
+              content: recallText,
+              status: "completed",
+              startedAt: Date.now(),
+              endedAt: Date.now(),
+              recallResults: worldInfoRecalls,
+            };
+            const existingMsg = get().messages.find((m) => m.id === assistantMessageId);
+            get().updateMessage(assistantMessageId, {
+              agentSteps: [...(existingMsg?.agentSteps ?? []), worldRecallStep],
+            });
+          }
+        } catch (e) {
+          logger.warn("world", `世界书召回预执行失败: ${e}`);
         }
       } else if (worldRecallConfig?.enabled) {
-        logger.info("world", `world-recall 跳过: configEnabled=${worldRecallConfig?.enabled} char=${!!currentCharacter?.uuid} embeddingModel=${!!memorySettings?.embeddingModel} entries=${worldInfoEntries.length}`);
+        logger.info("world", `world-recall 跳过: configEnabled=${worldRecallConfig?.enabled} char=${!!currentCharacter?.uuid} entries=${worldInfoEntries.length}`);
       }
 
-      // v0.5.1: vector-memory/keyword-search/world-search 仍由 AI 在请求 1 中主动决定调用
-
-      // v0.7.0: 两阶段架构（原三请求架构重构）
-      // 阶段1: 工具决策 → AI决定调哪些工具 → 执行
-      // 阶段2: CoT 思考 + 正文输出（合并原请求2+3，单次请求完成）
-      logger.info("api", "=== 两阶段架构开始 ===");
-
-      // 请求1: 工具决策
-      logger.info("api", "API 请求阶段1: 工具决策");
+      // v0.7.1: 单阶段架构 — 单次 API 请求完成 CoT 思考 + 正文输出
+      // 模型通过原生 tool_calls (function calling) 自行决定调用工具
+      // KV 缓存优化: system prompt 稳定（不再有 phase=1/2 差异），前缀缓存命中率提升
+      logger.info("api", "=== 单阶段架构开始 ===");
+      logger.info("api", "API 请求: CoT 思考 + 正文输出");
       {
         const msg = get().messages.find(m => m.id === assistantMessageId);
-        logger.info("stream", `请求1开始前: agentSteps数=${msg?.agentSteps?.length ?? 0}`);
+        logger.info("stream", `请求开始前: agentSteps数=${msg?.agentSteps?.length ?? 0}`);
       }
-      const { content: toolDecisionRaw, reasoning: toolReasoning } =
-        await callApiWithRetry(assistantMessageId, contextMessages, "tool");
-      logger.info("api", `API 响应阶段1: 工具决策完成（字符数=${toolDecisionRaw.length}）`);
-      logger.debug("tool", `请求1原始回复(前200字符): ${toolDecisionRaw.slice(0, 200)}`);
-
-      // 解析工具决策并执行
-      if (!abortController?.signal.aborted && toolDecisionRaw.trim()) {
-        const decisions = parseToolDecisions(toolDecisionRaw);
-        if (decisions.length > 0) {
-          logger.info("tool", `AI决定调用 ${decisions.length} 个工具: ${decisions.map(d => d.toolName).join(", ")}`);
-          for (const d of decisions) {
-            if (abortController?.signal.aborted) break;
-            try {
-              // 查找匹配的 ActiveTool 或 builtin config
-              let result = "";
-              const builtinConfig = builtinToolConfigs.find(c => c.enabled && c.type === d.toolName);
-              if (builtinConfig) {
-                // 构造临时 ActiveTool 并调用
-                const tempTool: ActiveTool = {
-                  id: `builtin-${d.toolName}`, name: d.toolName, type: builtinConfig.type === "anysearch" ? "web" : "vector",
-                  callName: d.toolName, description: d.toolName, enabled: true, resultCount: builtinConfig.resultCount || 8,
-                  worldInfoAccessMode: "all", enableMode: "all", mcpTools: [],
-                } as ActiveTool;
-                result = await executeActiveToolCall(
-                  { tool: tempTool, mode: "add", callLabel: d.toolName, query: d.query, raw: "", reason: "AI tool decision" },
-                  { messages: get().messages, character: currentCharacter, vectorMemoryShards, worldInfoEntries, tavilyApiKey: "", mcpSessionIds: new Map(), anysearchConfig: builtinConfig },
-                );
-              } else {
-                const charUuid = currentCharacter?.uuid ?? null;
-                const filtered = filterToolsForCharacter(activeTools, charUuid);
-                const userTool = filtered.find(t => t.callName === d.toolName || t.name === d.toolName);
-                if (userTool) {
-                  result = await executeActiveToolCall(
-                    { tool: userTool, mode: "add", callLabel: d.toolName, query: d.query, raw: "", reason: "AI tool decision" },
-                    { messages: get().messages, character: currentCharacter, vectorMemoryShards, worldInfoEntries, tavilyApiKey: "", mcpSessionIds: new Map(), anysearchConfig: builtinToolConfigs.find(c => c.type === "anysearch") },
-                  );
-                } else {
-                  result = `<builtin_tool_result status='error'>未找到工具: ${d.toolName}</builtin_tool_result>`;
-                  logger.warn("tool", `AI请求的工具不存在: ${d.toolName}（可用: ${[...builtinToolConfigs.filter(c=>c.enabled).map(c=>c.type), ...filterToolsForCharacter(activeTools, currentCharacter?.uuid ?? null).map(t=>t.callName||t.name)].join(", ")}）`);
-                }
-              }
-              const existingMsg = get().messages.find(m => m.id === assistantMessageId);
-              const callStep: AgentStep = { id: uuidv4(), type: "tool_call", title: d.toolName, content: d.query, status: "completed", startedAt: Date.now(), endedAt: Date.now(), phase: 1 };
-              const resultStep: AgentStep = { id: uuidv4(), type: "tool_result", title: d.toolName, content: result || "(空结果)", status: "completed", startedAt: Date.now(), endedAt: Date.now(), phase: 1 };
-              get().updateMessage(assistantMessageId, {
-                toolCalls: [...(existingMsg?.toolCalls ?? []), { id: uuidv4(), toolName: d.toolName, callLabel: d.toolName, query: d.query, reason: "AI tool decision", status: "completed", result: result || "(空结果)" }],
-                agentSteps: [...(existingMsg?.agentSteps ?? []), callStep, resultStep],
-              });
-              contextMessages.push({ id: uuidv4(), role: "user", content: `<tool_result tool="${d.toolName}">\n${result || "(空结果)"}\n</tool_result>`, createdAt: Date.now() });
-              logger.info("tool", `工具 ${d.toolName} 执行完成: 结果长度=${(result || "").length}`);
-            } catch (e) { logger.warn("tool", `工具 ${d.toolName} 执行失败: ${e}`); }
-          }
-        } else {
-          logger.info("tool", `AI决定不调用任何工具（原始回复非空但未匹配到工具标签）`);
-        }
-      } else {
-        logger.warn("tool", "请求1返回空响应，AI未输出任何工具决策");
-      }
-      if (abortController?.signal.aborted) return;
-
-      // v0.5.5-arch-fix: 缺陷A修复——请求1结果注入请求2/3上下文
-      // 三请求架构要求阶段间结果可见：请求2/3必须看到请求1的工具决策结果
-      // 将请求1的决策（NO_TOOLS 或 tool_calls 摘要）作为 assistant 消息追加到 contextMessages
-      if (toolDecisionRaw.trim()) {
-        const decisions = parseToolDecisions(toolDecisionRaw);
-        if (decisions.length > 0) {
-          const decisionSummary = decisions
-            .map(d => `${d.toolName}:${d.query}`)
-            .join("|");
-          contextMessages.push({
-            id: uuidv4(),
-            role: "assistant",
-            content: `<tool_decision>${decisionSummary}</tool_decision>`,
-            createdAt: Date.now(),
-          });
-        } else {
-          contextMessages.push({
-            id: uuidv4(),
-            role: "assistant",
-            content: "<tool_decision>NO_TOOLS</tool_decision>",
-            createdAt: Date.now(),
-          });
-        }
-      }
-
-      // 请求2: CoT 思考链
-      logger.info("api", "API 请求阶段2: CoT 思考链生成");
-      {
-        const msg = get().messages.find(m => m.id === assistantMessageId);
-        logger.info("stream", `请求2开始前: agentSteps数=${msg?.agentSteps?.length ?? 0}`);
-      }
-      const { content: cotRawContent, reasoning: cotReasoning, cot: cotContent, toolCalls: nativeToolCallsFromCot } =
-        await callApiWithRetry(assistantMessageId, contextMessages, "cot");
-      logger.info("api", `API 响应阶段2: CoT 完成（字符数=${cotContent.length}）`);
+      const { content: cotRawContent, reasoning: cotReasoning, cot: cotContent, toolCalls: nativeToolCallsFromMain } =
+        await callApiWithRetry(assistantMessageId, contextMessages);
+      logger.info("api", `API 响应: CoT+正文完成（CoT=${cotContent.length}字符，正文=${cotRawContent.length}字符）`);
+      logger.info("chat", `消息接收完成（CoT=${cotContent.length}字符，正文=${cotRawContent.length}字符）`);
 
       if (!cotRawContent.trim() && !cotReasoning.trim() && !cotContent.trim()) {
-        get().updateMessage(assistantMessageId, { loading: false, error: "API 返回空响应(CoT 阶段)" });
+        get().updateMessage(assistantMessageId, { loading: false, error: "API 返回空响应" });
         return;
       }
       if (abortController?.signal.aborted) return;
 
-      // v0.7.0: 两阶段架构 — 阶段2 已同时完成 CoT 思考和正文输出，取消第三次请求
-      // 阶段2返回值: content=正文, reasoning=CoT思考, cot=CoT内容(降级模式)
-      // v0.7.0-fix: nativeToolCallsFromMain 设为 null，防止阶段2触发续写导致重复 CoT+正文
       const accumulatedContent = cotRawContent;
       const accumulatedReasoning = cotReasoning;
-      const nativeToolCallsFromMain = null as Array<{ id: string; function: { name: string; arguments: string } }> | null;
-      logger.info("api", `API 响应阶段2: CoT+正文完成（CoT=${cotContent.length}字符，正文=${accumulatedContent.length}字符）`);
-      logger.info("chat", `消息接收完成（CoT=${cotContent.length}字符，正文=${accumulatedContent.length}字符）`);
 
       // v0.5.3: Phase 3 完成后检查 abort，避免卸载后继续执行工具调用
       if (abortController?.signal.aborted) return;
@@ -1380,114 +1272,8 @@ export const createChatSlice: StateCreator<
             if (scored.length === 0) return "<builtin_tool_result status='empty'>未找到匹配的消息。</builtin_tool_result>";
             return scored.map((s, i) => `  <message index="${i + 1}" role="${s.item.role}" score="${s.score}">\n    ${s.item.content.slice(0, 500)}\n  </message>`).join('\n\n');
           }
-          // world-recall: 世界书语义检索（需要嵌入模型）
-          // v0.5.3: 移除 enabled 二次过滤——加载时已按 bookId 过滤，buildContext 已按 enabled 过滤
-          // v0.5.7: 无嵌入模型时降级为关键词搜索
-          if (toolName === "world-recall" && worldInfoEntries.length > 0) {
-            if (!memorySettings?.embeddingModel) {
-              // v0.5.7: 无嵌入模型降级为关键词搜索
-              const enabled = worldInfoEntries;
-              let terms = query.split(/[\s,，、;；|｜/\\]+/u).map((t) => t.trim().toLowerCase()).filter(Boolean);
-              if (terms.length === 1 && /[\u4e00-\u9fa5]/.test(terms[0]) && terms[0].length > 2) {
-                const orig = terms[0];
-                const bigrams: string[] = [];
-                for (let i = 0; i < orig.length - 1; i++) bigrams.push(orig.slice(i, i + 2));
-                terms = [orig, ...bigrams];
-              }
-              const matched = enabled.map((e) => {
-                const lowerContent = String(e.content || '').toLowerCase();
-                const lowerKeys = (e.keys || []).map((k) => String(k).toLowerCase());
-                const contentMatches = terms.filter((t) => lowerContent.includes(t));
-                const keyMatches = terms.filter((t) => lowerKeys.some((k) => k.includes(t)));
-                const exactKeyMatches = terms.filter((t) => lowerKeys.some((k) => k === t));
-                return { entry: e, score: contentMatches.length + keyMatches.length * 2 + exactKeyMatches.length * 5 };
-              }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
-              if (matched.length === 0) return "<builtin_tool_result status='empty'>世界书检索未找到匹配条目（无嵌入模型，降级为关键词搜索）。</builtin_tool_result>";
-              return matched.map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`).join('\n\n');
-            }
-            const enabled = worldInfoEntries;
-            const queryEmbedding = await executeWithTimeout(() =>
-              getEmbedding(query, memorySettings, settings, allProviders, get().apiProviderKeys),
-            );
-            // v0.5.3: 对缺少 embedding 的条目实时懒加载生成
-            const scored = await Promise.all(enabled.map(async (e) => {
-              let entryEmbedding = e.embedding || [];
-              if (entryEmbedding.length === 0 && e.content) {
-                try {
-                  entryEmbedding = await getEmbedding(e.content, memorySettings, settings, allProviders, get().apiProviderKeys);
-                  e.embedding = entryEmbedding; // 写回缓存，后续调用直接命中
-                } catch {
-                  entryEmbedding = [];
-                }
-              }
-              const score = entryEmbedding.length > 0 ? cosineSimilarity(queryEmbedding, entryEmbedding) : 0;
-              return { entry: e, score };
-            }));
-            const sorted = scored.sort((a, b) => b.score - a.score).slice(0, limit);
-            if (sorted.length === 0) return "<builtin_tool_result status='empty'>没有已启用的世界书条目。</builtin_tool_result>";
-            // v0.5.3: 持久化懒加载的 embedding 到 IndexedDB
-            try {
-              const allWorldInfo = await getItem<WorldInfoEntry[]>("worldInfo", "worldInfo");
-              if (allWorldInfo) {
-                const updated = allWorldInfo.map(wi => {
-                  const match = enabled.find(e => e.id === wi.id);
-                  return match && match.embedding ? { ...wi, embedding: match.embedding } : wi;
-                });
-                await setItem("worldInfo", "worldInfo", updated);
-
-                // v0.6.2-fix: 同步更新 worldVectorMemory 分片，保持与 generateWorldInfoEmbeddings 行为一致
-                const updatedEntries = updated.filter(wi => wi.embedding && wi.embedding.length > 0);
-                const bookGroups = new Map<string, WorldInfoEntry[]>();
-                for (const wi of updatedEntries) {
-                  const bid = wi.bookId || "__global__";
-                  if (!bookGroups.has(bid)) bookGroups.set(bid, []);
-                  bookGroups.get(bid)!.push(wi);
-                }
-                for (const [bookId, groupEntries] of bookGroups) {
-                  const shards: VectorMemoryShard[] = groupEntries.map(e => ({
-                    id: e.id,
-                    content: e.content,
-                    turn: 0,
-                    embedding: e.embedding!,
-                    createdAt: Date.now(),
-                  }));
-                  const existing = await loadWorldVectorMemoryShards(bookId);
-                  const merged = [...existing];
-                  for (const s of shards) {
-                    const idx = merged.findIndex(m => m.id === s.id);
-                    if (idx >= 0) merged[idx] = s;
-                    else merged.push(s);
-                  }
-                  await saveWorldVectorMemoryShards(bookId, merged);
-                }
-              }
-            } catch { /* 持久化失败不影响工具结果 */ }
-            return sorted.map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`).join('\n\n');
-          }
-          // world-search: 世界书关键词搜索
-          // v0.5.3: 移除 enabled 二次过滤
-          // v0.5.7: 单个中文长词增加 2-gram 拆分
-          if (toolName === "world-search") {
-            const enabled = worldInfoEntries;
-            let terms = query.split(/[\s,，、;；|｜/\\]+/u).map((t) => t.trim().toLowerCase()).filter(Boolean);
-            // v0.5.7: 当仅有单个关键词且包含中文时，增加 2-gram 拆分提升匹配率
-            if (terms.length === 1 && /[\u4e00-\u9fa5]/.test(terms[0]) && terms[0].length > 2) {
-              const orig = terms[0];
-              const bigrams: string[] = [];
-              for (let i = 0; i < orig.length - 1; i++) bigrams.push(orig.slice(i, i + 2));
-              terms = [orig, ...bigrams];
-            }
-            const matched = enabled.map((e) => {
-              const lowerContent = String(e.content || '').toLowerCase();
-              const lowerKeys = (e.keys || []).map((k) => String(k).toLowerCase());
-              const contentMatches = terms.filter((t) => lowerContent.includes(t));
-              const keyMatches = terms.filter((t) => lowerKeys.some((k) => k.includes(t)));
-              const exactKeyMatches = terms.filter((t) => lowerKeys.some((k) => k === t));
-              return { entry: e, score: contentMatches.length + keyMatches.length * 2 + exactKeyMatches.length * 5 };
-            }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
-            if (matched.length === 0) return "<builtin_tool_result status='empty'>世界书检索未找到匹配条目。</builtin_tool_result>";
-            return matched.map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`).join('\n\n');
-          }
+          // v0.7.2: world-recall 主动 handler 已删除 — 预执行三策略（constant+keyword+semantic）已完整覆盖
+          // v0.7.2: world-search handler 已删除 — 内置工具已从 BuiltinToolType 移除
           // anysearch: 联网搜索（复用 executeActiveToolCall 的 anysearch 逻辑）
           if (toolName === "anysearch") {
             const anysearchTool: ActiveTool = {
@@ -1742,16 +1528,13 @@ export const createChatSlice: StateCreator<
           await callApiWithRetry(
             continuationMessage.id,
             newContextMessages,
-            "main",
-            undefined, // v0.4.6: 不追加 cotContent
             true, // v0.4.6: skipToolsInjection
           );
         }
       } else if (activeTools.length > 0 || builtinToolConfigs.some((c) => c.enabled)) {
-        // v0.7.0-fix: 两阶段架构 — 阶段2 是最终阶段，不需要文本标签续写
-        // 工具决策在阶段1 已完成，阶段2 仅输出 CoT+正文
-        // 将 MAX_CONTINUATIONS 降为 0，跳过续写循环，防止重复 CoT+正文
-        const v070MaxContinuations = 0;
+        // v0.7.1: 单阶段架构 — 模型通过原生 tool_calls 自行决定工具调用
+        // 文本标签续写循环保留（MAX_CONTINUATIONS），用于处理模型输出 <tool_calls> 文本标签的场景
+        const v071MaxContinuations = MAX_CONTINUATIONS;
         const characterUuid = currentCharacter?.uuid ?? null;
         const filteredTools = filterToolsForCharacter(
           activeTools,
@@ -1759,9 +1542,9 @@ export const createChatSlice: StateCreator<
         );
 
         // v0.4.6: 最多迭代 MAX_CONTINUATIONS 次以防止无限循环
-        for (let iteration = 0; iteration < v070MaxContinuations; iteration++) {
-          if (iteration === v070MaxContinuations - 1) {
-            logger.warn("api", "达到最大续写次数限制: " + v070MaxContinuations);
+        for (let iteration = 0; iteration < v071MaxContinuations; iteration++) {
+          if (iteration === v071MaxContinuations - 1) {
+            logger.warn("api", "达到最大续写次数限制: " + v071MaxContinuations);
           }
           // 检查是否已被用户取消，避免取消后继续发起工具调用与 API 请求
           if (abortController?.signal.aborted) break;
@@ -1859,8 +1642,6 @@ export const createChatSlice: StateCreator<
               await callApiWithRetry(
                 continuationMessage.id,
                 newContextMessages,
-                "main",
-                cotContent,
                 true, // skipToolsInjection
               );
 
@@ -1958,8 +1739,6 @@ export const createChatSlice: StateCreator<
               await callApiWithRetry(
                 continuationMessage.id,
                 newContextMessages,
-                "main",
-                cotContent,
               );
 
             // 检查空响应
@@ -2035,6 +1814,35 @@ export const createChatSlice: StateCreator<
           logger.error("memory", `记忆提取失败: ${(e as Error).message}`);
           toast.error(`向量记忆生成失败：${(e as Error).message}`);
         });
+      }
+
+      // v0.7.2: 会话自动命名 — 首条 AI 回复完成后，若标题仍为"新会话"则调用模型生成标题
+      if (currentSessionId) {
+        const currentSession = get().sessions.find((s) => s.id === currentSessionId);
+        if (currentSession && currentSession.title === "新会话") {
+          const recentMessages = get().messages
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .slice(-4);
+          if (recentMessages.length >= 2) {
+            generateSessionTitle(recentMessages, settings)
+              .then((title) => {
+                // 容错：取前 10 字，防止超长标题
+                const cleanTitle = title.replace(/^["'""\n]+|["'""\n]+$/g, "").trim().slice(0, 10);
+                if (cleanTitle && cleanTitle.length > 0) {
+                  // 再次检查标题是否仍为"新会话"（用户可能已手动改名）
+                  const latestSession = get().sessions.find((s) => s.id === currentSessionId);
+                  if (latestSession && latestSession.title === "新会话") {
+                    get().renameSession(currentSessionId, cleanTitle);
+                    void get().saveSessions();
+                    logger.info("chat", `会话自动命名: "${cleanTitle}"`);
+                  }
+                }
+              })
+              .catch(() => {
+                // 静默失败，保留"新会话"
+              });
+          }
+        }
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -2173,7 +1981,7 @@ export const createChatSlice: StateCreator<
     regenerate: async () => {
       if (!get().currentCharacter) return;
       if (get().isGenerating) return;
-      const { messages } = get();
+      const { messages, currentSessionId } = get();
       if (messages.length === 0) return;
 
       // 找到最后一条 assistant 消息
@@ -2185,6 +1993,20 @@ export const createChatSlice: StateCreator<
         }
       }
       if (lastAssistantIndex === -1) return;
+
+      // v0.7.1-fix: 重试前清理旧向量记忆分片（与 retryMessage 行为一致）
+      // 避免记忆召回预执行搜索到重试前的旧内容
+      const currentCharacter = get().characters?.find(c => c.uuid === get().currentCharacterUuid);
+      if (currentCharacter?.uuid) {
+        const turnNumber = messages.slice(0, lastAssistantIndex).filter(m => m.role === "user").length;
+        if (turnNumber > 0) {
+          await removeVectorMemoryShardsByTurn(
+            currentCharacter.uuid,
+            turnNumber,
+            currentSessionId ?? undefined,
+          );
+        }
+      }
 
       // 移除最后的 assistant 消息
       const newMessages = messages.slice(0, lastAssistantIndex);
@@ -2219,7 +2041,7 @@ export const createChatSlice: StateCreator<
       const userMessage: ChatMessage = {
         id: uuidv4(),
         role: "user",
-        content: "请继续剧情的发展，请勿重复上一轮的剧情内容和言行。",
+        content: "[system message]\n用户要求继续剧情的发展，请勿重复上一轮的剧情内容和言行。",
         createdAt: Date.now(),
       };
 

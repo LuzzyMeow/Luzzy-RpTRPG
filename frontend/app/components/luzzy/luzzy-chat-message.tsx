@@ -449,17 +449,23 @@ function TranslationCard({
   const [displayedLength, setDisplayedLength] = React.useState(0);
   const [isTyping, setIsTyping] = React.useState(false);
   const typingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasPlayedRef = React.useRef(false);
 
   const highlightEnabled = highlightSettings?.enabled ?? false;
   const highlightColor = highlightSettings?.color ?? "inherit";
 
   const handleToggle = React.useCallback(() => {
     if (!expanded) {
-      setDisplayedLength(0);
-      setIsTyping(true);
+      if (hasPlayedRef.current) {
+        setDisplayedLength(translatedContent.length);
+        setIsTyping(false);
+      } else {
+        setDisplayedLength(0);
+        setIsTyping(true);
+      }
     }
     setExpanded(!expanded);
-  }, [expanded]);
+  }, [expanded, translatedContent.length]);
 
   React.useEffect(() => {
     if (typingTimerRef.current) {
@@ -471,6 +477,7 @@ function TranslationCard({
     }
     if (displayedLength >= translatedContent.length) {
       setIsTyping(false);
+      hasPlayedRef.current = true;
       return;
     }
     const charsPerFrame = Math.max(1, Math.floor(translatedContent.length / 80));
@@ -486,8 +493,13 @@ function TranslationCard({
 
   React.useEffect(() => {
     if (expanded && translatedContent) {
-      setDisplayedLength(0);
-      setIsTyping(true);
+      if (hasPlayedRef.current) {
+        setDisplayedLength(translatedContent.length);
+        setIsTyping(false);
+      } else {
+        setDisplayedLength(0);
+        setIsTyping(true);
+      }
     }
   }, [expanded, translatedContent]);
 

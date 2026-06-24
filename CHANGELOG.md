@@ -1,5 +1,102 @@
 # Changelog
 
+## v0.7.2
+
+> v0.7.1 + v0.7.2 合并发布。两阶段请求架构正式重构为**单阶段架构**——合并工具决策与 CoT/正文为单次 API 调用，模型通过原生 `tool_calls`（function calling）自行决定调用工具。世界书召回重构为三策略混合召回，新增三级卡片 UI、Token 计数增强、会话自动命名等 20+ 项改进。
+
+### 🏗️ 架构重构（核心）
+
+- **两阶段 → 单阶段请求架构**
+  - 旧两阶段：① 工具决策（`TOOL_DECISION_PROMPT`）→ ② CoT 思考 + 正文（`STAGE2_COMBINED_PROTOCOL` + `NSFW_CREATION_MODE_DECLARATION`），两次串行 API 调用
+  - 新单阶段：单次 API 请求内完成工具决策 + CoT 思考 + 正文输出，模型通过原生 `tool_calls`（function calling）自行决定调用工具
+  - 删除 `TOOL_DECISION_PROMPT`、`STAGE2_COMBINED_PROTOCOL`、`NSFW_CREATION_MODE_DECLARATION` 三个协议常量
+  - `LUZZY_PRESET_CONTENT` 重写为自完备的单一文本（Step 1-9 + 工具调用通用协议 + CoT 协议 + 正文协议 + NSFW 声明）
+  - 预设内不硬编码任何工具名称，工具列表由 `buildToolDescriptions()` 在 `buildContext` 末尾动态生成
+  - `buildContext` 移除 `phase` 参数及分支
+  - **KV 缓存影响分析**：system prompt 稳定（不再有 phase=1/2 差异），前缀缓存命中率提升
+- **世界书召回三策略混合重构**
+  - 删除 `world-search` 内置工具（功能与 `world-recall` 重叠）
+  - `world-recall` 增强为三种策略混合召回：
+    - **总是激活**（`constant=true`）：直接注入全文内容，不使用嵌入模型
+    - **关键词触发**（`keys` 匹配用户输入）：直接召回内容，不使用嵌入模型
+    - **语义相似度**（非 constant 剩余条目）：嵌入向量语义检索，使用嵌入模型
+  - 三策略结果不去重，若都满足则两种结果均存在
+  - 合并去重排序：按策略优先级 constant > keyword > semantic，同策略内按 score 降序
+
+### 🐛 修复
+
+- **修复 Phase 1 上下文缺失**（致命）
+  - `buildContext` phase=1 提取最近 1 条 user 消息时仅过滤 `memory_recall_result`，未过滤 `world_recall_result`
+  - 导致模型看到的是 `<world_recall_result>` 被动工具召回内容，而非用户实际输入
+  - 修复：过滤条件同时排除 `<world_recall_result>`
+- **修复重试时旧向量记忆分片未清理**（高）
+  - `regenerate` 函数缺失 `removeVectorMemoryShardsByTurn` 调用，重试后旧分片仍在 IDB
+  - memory-recall 预执行在生成之前，窗口期内旧分片已被加载并参与搜索
+  - 修复：在删除旧 assistant message 前，先调用 `removeVectorMemoryShardsByTurn`
+- **修复 PNG 导出全白图**（高）
+  - `exportPng()` 在 `appendChild` 后立即调用 `toPng()`，浏览器未完成布局计算和字体加载
+  - Android WebView 对 `left:-9999px` 离屏元素可能完全跳过渲染
+  - 修复：容器定位改为 `opacity:0; pointer-events:none; position:fixed; top:0; left:0`，插入 `requestAnimationFrame` + `setTimeout(200)` 等待渲染
+- **修复角色切换自动唤起输入法**（中）
+  - Android WebView 在 Sheet/Dialog 关闭后自动将焦点恢复到 textarea，触发软键盘
+  - 修复：`handleSelectCharacter` 中 `setShowCharacterPicker(false)` 之前执行 `document.activeElement.blur()`
+- **修复角色卡 PNG 导入未提取 UI 模板**（中）
+  - `characters.tsx` 调用了 regex 提取，未调用 `extractUiTemplatesFromCard`
+  - 修复：导入流程补全 UI 模板提取并存入 IndexedDB
+
+### ✨ 新功能
+
+- **RecallResultCard 三级卡片 UI**
+  - 记忆召回/世界书召回节点新增三级分类卡片
+  - 每个召回条目独立可展开/收起，明确分离输入参数区和输出结果区
+  - 支持全部展开/全部收起快捷操作
+  - 策略标签徽章（总是激活/关键词命中/语义相似度）
+  - 三态动画：进入（fade-in + slide-down）、交互（spring）、退出（fade-out + slide-up）
+- **会话自动命名**
+  - 首条 AI 回复完成后，自动调用模型生成 3-6 字中文标题
+  - 容错：模型调用失败静默保留"新会话"；返回超长内容取前 10 字；用户已手动改名则跳过
+- **Token 计数器增强**
+  - `TokenUsage` 新增 `reasoningTokens`（思考 token 估算）、`toolCallTokens`（工具续写合计）、`totalTokens`（全部轮次合计）
+  - `responseTimeMs` 改为全局计时（首次请求 → 正文结束，含工具续写）
+  - K/M 格式化：≥1000 → 1.2K，≥1,000,000 → 1.2M
+  - 布局改为 `flex-nowrap` 防止折行
+- **正则脚本 + UI 模板角色绑定**
+  - `RegexScriptGroup` 新增 `enabledForCharacters?: string[]` 字段
+  - 导入角色卡后，正则脚本组和 UI 模板自动绑定到当前角色
+  - 正则脚本设置页和 UI 模板设置页新增角色多选绑定控件
+  - 未选任何角色 = 全局生效；选指定角色 = 仅这些角色生效
+- **关于页日志新增"世界"分类 Tab**
+  - `world-recall` 重构后 world 分类日志大量增加（启动/完成/跳过/语义失败）
+  - 关于页日志查看器新增"世界"Tab 筛选
+
+### 🎨 UI 优化
+
+- **翻译文本荧光效果改为字体描边**
+  - 取消三层 `text-shadow` 荧光效果，改为 `-webkit-text-stroke: 0.5px` 字体描边
+  - 提升翻译内容在背景图上的清晰度与可读性
+- **翻译流式动画仅首次播放**
+  - 翻译打字机动画仅在翻译结果首次出现时播放
+  - 用户切页再切回时直接显示全文，不重复触发动画
+- **关于页背景重新设计**
+  - 替换 Aurora 飘动模糊色块为简洁几何/暗色调背景
+  - 背景铺满整个滚动区域（`fixed inset-0`），滚动后不截断
+- **思考链按时间顺序展示**
+  - 思考链卡片按 `startedAt` 时间戳排序，反映实际发生顺序
+  - 移除固定 phase 分组逻辑（brainstormP1 → Tools → brainstormP2 → ...）
+  - 预期展示：被动工具（记忆召回）→ 头脑风暴（模型思考）→ 主动工具（模型调用）→ ...
+- **移除头脑风暴灯泡图标**
+  - 移除 brainstorm 节点的 `IconLight` 图标，使思考卡片头部简洁统一
+
+### 📦 工程变更
+
+- Android `versionCode` 39→41，`versionName` 0.7.0→0.7.2
+- 版本号同步：`package.json` / `about.tsx` / TRPG iframe 缓存参数（`?_v=0.7.2`）均更新
+- 删除 `world-search` 内置工具：`BuiltinToolType`、`BUILTIN_TOOL_INFO`、`buildToolDescriptions`、`builtinToolConfigs` 默认值、`apiClient.ts` schema 定义、`tool-calls.test.ts` 测试用例
+- `presetContent.ts` 提示词示例 `world-search` → `world-recall`
+- `CHANGELOG.md` / `README.md` 同步更新
+
+---
+
 ## v0.7.0
 
 ### 🏗️ 架构重构（核心）
