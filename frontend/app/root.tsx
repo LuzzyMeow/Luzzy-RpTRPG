@@ -16,7 +16,6 @@ import "./i18n";
 import { Toaster } from "./components/ui/sonner";
 import { ThemeProvider } from "./components/theme-provider";
 import { LuzzySplash } from "./components/luzzy/luzzy-splash";
-import { GlobalTrpgIframe } from "./components/luzzy/luzzy-global-trpg-iframe";
 import { ConfirmProvider } from "./components/luzzy/luzzy-confirm";
 import { BindingDeleteConfirmProvider } from "./components/luzzy/luzzy-binding-delete-dialog";
 import { initLogger, logger } from "./services/logger";
@@ -167,7 +166,6 @@ function AppContent() {
           ) : (
             <>
               <Outlet />
-              <GlobalTrpgIframe />
               <Toaster position="top-center" />
             </>
           )}

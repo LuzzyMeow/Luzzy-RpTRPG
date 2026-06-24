@@ -1,219 +1,525 @@
 /**
- * TRPG 页面
+ * TRPG 页面（v0.8.0 完整重写）
  *
- * v0.3.0 变更：
- * - iframe 提升为全局组件（GlobalTrpgIframe），在 root.tsx 中渲染
- * - 本页面仅提供布局外壳（header + 说明弹窗），iframe 由全局组件 display 控制
- * - 切换页面再切回时 iframe 不重新加载，状态保持
+ * 四区域布局（从上到下）：
+ * 1. 顶部模式切换栏：游戏模式 / 设计模式 + 设置齿轮
+ * 2. 中部剧情正文区：消息列表（Narrator 7 段渲染）
+ * 3. 底部输入栏：文本输入 + 发送按钮
+ * 4. 底部功能栏：存档/背包/角色/地图 4个图标按钮
  *
- * v0.2.0 功能：
- * - 代理无感知化：移除代理配置弹窗，改为说明弹窗
- * - 弹窗提示：TRPG 模式使用全局自定义供应商 API
- * - 图标迁移至 game-icon-pack
+ * 动画：三态丝滑动画（进入/交互/退出），使用 motion/react
+ * 图标：全部使用 game-icon-pack
  */
 
 import * as React from "react";
 import type { Route } from "./+types/trpg";
-import { IconLink, IconInfo, IconExclamation } from "~/components/luzzy/luzzy-icons";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  IconDice,
+  IconBook,
+  IconSend,
+  IconSave,
+  IconBackpack,
+  IconCharacter,
+  IconMap,
+  IconSettings,
+  IconInfo,
+  IconPlus,
+  IconChevronRight,
+} from "~/components/luzzy/luzzy-icons";
 
 import { useAppStore } from "~/stores";
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { Button } from "~/components/ui/button";
+import { Textarea } from "~/components/ui/textarea";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogDescription,
-} from "~/components/ui/dialog";
-import { pressableSubtle } from "~/lib/motion-presets";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "~/components/ui/sheet";
+import {
+  springSoft,
+  springSnappy,
+  springGentle,
+  easeFast,
+  easeInOut,
+  pressableSubtle,
+  fadeSlide,
+  slideInBottom,
+} from "~/lib/motion-presets";
+import { logger } from "~/services/logger";
+
+import { SaveSheet } from "~/components/trpg/sheets/save-sheet";
+import { InventorySheet } from "~/components/trpg/sheets/inventory-sheet";
+import { CharacterSheet } from "~/components/trpg/sheets/character-sheet";
+import { MapSheet } from "~/components/trpg/sheets/map-sheet";
+import { TrpgSettingsPanel } from "~/components/trpg/trpg-settings-panel";
+import { NarratorMessage } from "~/components/trpg/narrator-message";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "TRPG - LUZZY" }];
 }
 
-const TRPG_IFRAME_URL = "https://aisandboxgame.com/";
-
 export default function TrpgPage() {
-  const trpgNoticeDismissed = useAppStore((s) => s.trpgNoticeDismissed);
-  const setTrpgNoticeDismissed = useAppStore((s) => s.setTrpgNoticeDismissed);
+  // ===== Store 状态 =====
+  const trpgMode = useAppStore((s) => s.trpgMode);
+  const setTrpgMode = useAppStore((s) => s.setTrpgMode);
+  const trpgMessages = useAppStore((s) => s.trpgMessages);
+  const trpgIsGenerating = useAppStore((s) => s.trpgIsGenerating);
+  const trpgInputDraft = useAppStore((s) => s.trpgInputDraft);
+  const setTrpgInputDraft = useAppStore((s) => s.setTrpgInputDraft);
+  const trpgSave = useAppStore((s) => s.trpgSave);
+  const trpgActiveSheet = useAppStore((s) => s.trpgActiveSheet);
+  const setTrpgActiveSheet = useAppStore((s) => s.setTrpgActiveSheet);
+  const sendTrpgMessage = useAppStore((s) => s.sendTrpgMessage);
+  const loadAllSaves = useAppStore((s) => s.loadAllSaves);
+  const loadAllWorldCards = useAppStore((s) => s.loadAllWorldCards);
+  const loadTrpgModel = useAppStore((s) => s.loadTrpgModel);
 
-  // 自动弹出：进入页面时若未永久关闭则显示说明
-  const [showNotice, setShowNotice] = React.useState(false);
+  // ===== 本地状态 =====
+  const [showInfo, setShowInfo] = React.useState(false);
+  const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
+  // ===== 初始化 =====
   React.useEffect(() => {
-    if (!trpgNoticeDismissed) {
-      setShowNotice(true);
+    loadTrpgModel();
+    void loadAllSaves();
+    void loadAllWorldCards();
+    logger.info("trpg", "TRPG 页面初始化");
+  }, [loadTrpgModel, loadAllSaves, loadAllWorldCards]);
+
+  // ===== 自动滚动到底部 =====
+  React.useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [trpgMessages]);
+
+  // ===== 发送消息 =====
+  const handleSend = React.useCallback(async () => {
+    const input = trpgInputDraft.trim();
+    if (!input || trpgIsGenerating) return;
+    if (!trpgSave) {
+      setTrpgActiveSheet("save");
+      return;
     }
-  }, [trpgNoticeDismissed]);
+    await sendTrpgMessage(input);
+  }, [trpgInputDraft, trpgIsGenerating, trpgSave, sendTrpgMessage, setTrpgActiveSheet]);
 
-  /** 手动打开说明（通过 Header 信息按钮） */
-  const openNotice = React.useCallback(() => {
-    setShowNotice(true);
-  }, []);
+  // ===== 键盘事件 =====
+  const handleKeyDown = React.useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void handleSend();
+      }
+    },
+    [handleSend],
+  );
 
-  /** 仅本次关闭（下次进入仍会弹出） */
-  const handleClose = React.useCallback(() => {
-    setShowNotice(false);
-  }, []);
+  // ===== Sheet 开关 =====
+  const openSheet = React.useCallback(
+    (sheet: "save" | "inventory" | "character" | "map" | "settings") => {
+      setTrpgActiveSheet(sheet);
+    },
+    [setTrpgActiveSheet],
+  );
 
-  /** 永久关闭（不再自动弹出，可通过信息按钮手动查看） */
-  const handleDismissForever = React.useCallback(() => {
-    setTrpgNoticeDismissed(true);
-    setShowNotice(false);
-  }, [setTrpgNoticeDismissed]);
+  const closeSheet = React.useCallback(() => {
+    setTrpgActiveSheet(null);
+  }, [setTrpgActiveSheet]);
 
   return (
     <LuzzyLayout
       title="TRPG"
       actions={
-        <>
-          <Button variant="ghost" size="icon" asChild {...pressableSubtle}>
-            <a
-              href={TRPG_IFRAME_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="在新窗口打开"
-            >
-              <IconLink className="size-4" />
-            </a>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={openNotice}
-            aria-label="TRPG 说明"
-            {...pressableSubtle}
-          >
-            <IconInfo className="size-4" />
-          </Button>
-        </>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setShowInfo(true)}
+          aria-label="TRPG 说明"
+          {...pressableSubtle}
+        >
+          <IconInfo className="size-4" />
+        </Button>
       }
       contentClassName="!overflow-hidden"
     >
-      {/* v0.3.0: iframe 已提升为全局组件 GlobalTrpgIframe，在 root.tsx 中渲染 */}
-      {/* 本页面 main 内容区留空，全局 iframe 通过 fixed 定位填满此区域 */}
+      <div className="flex h-full flex-col overflow-hidden">
+        {/* ===== 区域 1：顶部模式切换栏 ===== */}
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={springSnappy}
+          className="flex shrink-0 items-center gap-2 border-b border-border/20 bg-background/40 px-3 py-2 backdrop-blur-sm"
+        >
+          <div className="flex rounded-lg border border-border/30 bg-muted/30 p-0.5">
+            <motion.button
+              type="button"
+              onClick={() => setTrpgMode("game")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                trpgMode === "game"
+                  ? "bg-primary/15 text-primary shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <IconDice className="size-3.5" />
+              游戏模式
+            </motion.button>
+            <motion.button
+              type="button"
+              onClick={() => setTrpgMode("design")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                trpgMode === "design"
+                  ? "bg-primary/15 text-primary shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <IconBook className="size-3.5" />
+              设计模式
+            </motion.button>
+          </div>
 
-      {/* TRPG 模式说明弹窗 */}
-      <Dialog open={showNotice} onOpenChange={setShowNotice}>
-        {/* v0.4.6: overflow-y-auto 替代 overflow-hidden,避免 flex 布局在 Android WebView 上因 dvh 计算偏差导致 footer 与文字重叠 */}
-        <DialogContent className="max-h-[90vh] min-w-0 overflow-y-auto max-w-md flex flex-col gap-0">
-          <DialogHeader className="shrink-0">
-            <DialogTitle className="flex items-center gap-2">
+          {/* 当前存档信息 */}
+          {trpgSave && (
+            <motion.div
+              key={trpgSave.saveId}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={springSoft}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+            >
+              <IconChevronRight className="size-3" />
+              <span className="truncate max-w-[120px]">{trpgSave.title}</span>
+            </motion.div>
+          )}
+
+          {/* 右侧设置齿轮 */}
+          <div className="flex-1" />
+          <motion.button
+            type="button"
+            onClick={() => openSheet("settings")}
+            className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
+              trpgActiveSheet === "settings"
+                ? "bg-primary/15 text-primary"
+                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            }`}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            aria-label="TRPG 设置"
+          >
+            <IconSettings className="size-4" />
+          </motion.button>
+        </motion.div>
+
+        {/* ===== 区域 2：中部剧情正文区 ===== */}
+        <div className="relative flex-1 overflow-hidden">
+          <div className="h-full overflow-y-auto px-4 py-3">
+            {trpgMessages.length === 0 ? (
+              <EmptyState onCreateSave={() => openSheet("save")} />
+            ) : (
+              <div className="mx-auto max-w-3xl space-y-4">
+                <AnimatePresence mode="popLayout">
+                  {trpgMessages.map((msg) => (
+                    <motion.div
+                      key={msg.id}
+                      layout
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={springSoft}
+                    >
+                      {msg.role === "user" ? (
+                        <UserMessage content={msg.content} />
+                      ) : (
+                        <NarratorMessage message={msg} />
+                      )}
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+                {trpgIsGenerating && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="flex items-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    >
+                      <IconDice className="size-3.5" />
+                    </motion.div>
+                    正在生成...
+                  </motion.div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ===== 区域 3：底部输入栏 ===== */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={springSnappy}
+          className="shrink-0 border-t border-border/20 bg-background/60 backdrop-blur-xl backdrop-saturate-150"
+        >
+          <div className="flex items-end gap-2 px-3 py-2">
+            <Textarea
+              value={trpgInputDraft}
+              onChange={(e) => setTrpgInputDraft(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={trpgSave ? "输入你的行动..." : "请先创建或加载存档..."}
+              disabled={trpgIsGenerating}
+              className="min-h-[40px] max-h-[120px] resize-none border-border/30 bg-muted/30 text-sm"
+              rows={1}
+            />
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <Button
+                size="icon"
+                onClick={handleSend}
+                disabled={!trpgInputDraft.trim() || trpgIsGenerating}
+                className="size-10 shrink-0 rounded-full"
+              >
+                <IconSend className="size-4" />
+              </Button>
+            </motion.div>
+          </div>
+        </motion.div>
+
+        {/* ===== 区域 4：底部功能栏 ===== */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={springSnappy}
+          className="flex shrink-0 items-center justify-around border-t border-border/20 bg-background/40 px-2 py-1.5 backdrop-blur-sm"
+          style={{
+            paddingBottom: "env(safe-area-inset-bottom)",
+          }}
+        >
+          <ToolbarButton
+            icon={<IconSave className="size-5" />}
+            label="存档"
+            onClick={() => openSheet("save")}
+            active={trpgActiveSheet === "save"}
+          />
+          <ToolbarButton
+            icon={<IconBackpack className="size-5" />}
+            label="背包"
+            onClick={() => openSheet("inventory")}
+            active={trpgActiveSheet === "inventory"}
+            disabled={!trpgSave}
+          />
+          <ToolbarButton
+            icon={<IconCharacter className="size-5" />}
+            label="角色"
+            onClick={() => openSheet("character")}
+            active={trpgActiveSheet === "character"}
+            disabled={!trpgSave}
+          />
+          <ToolbarButton
+            icon={<IconMap className="size-5" />}
+            label="地图"
+            onClick={() => openSheet("map")}
+            active={trpgActiveSheet === "map"}
+            disabled={!trpgSave}
+          />
+        </motion.div>
+      </div>
+
+      {/* ===== 侧边 Sheet 面板（浮层，不属于四区域布局） ===== */}
+      <Sheet open={trpgActiveSheet === "save"} onOpenChange={(o) => !o && closeSheet()}>
+        <SheetContent side="right" className="w-full sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <IconSave className="size-4 text-primary" />
+              存档管理
+            </SheetTitle>
+            <SheetDescription>创建、加载或删除存档</SheetDescription>
+          </SheetHeader>
+          <SaveSheet />
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={trpgActiveSheet === "inventory"} onOpenChange={(o) => !o && closeSheet()}>
+        <SheetContent side="right" className="w-full sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <IconBackpack className="size-4 text-primary" />
+              背包
+            </SheetTitle>
+            <SheetDescription>查看和管理物品</SheetDescription>
+          </SheetHeader>
+          <InventorySheet />
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={trpgActiveSheet === "character"} onOpenChange={(o) => !o && closeSheet()}>
+        <SheetContent side="right" className="w-full sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <IconCharacter className="size-4 text-primary" />
+              角色卡
+            </SheetTitle>
+            <SheetDescription>查看角色属性和状态</SheetDescription>
+          </SheetHeader>
+          <CharacterSheet />
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={trpgActiveSheet === "map"} onOpenChange={(o) => !o && closeSheet()}>
+        <SheetContent side="right" className="w-full sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <IconMap className="size-4 text-primary" />
+              地图
+            </SheetTitle>
+            <SheetDescription>已知地标和位置</SheetDescription>
+          </SheetHeader>
+          <MapSheet />
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={trpgActiveSheet === "settings"} onOpenChange={(o) => !o && closeSheet()}>
+        <SheetContent side="right" className="w-full sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <IconSettings className="size-4 text-primary" />
+              TRPG 设置
+            </SheetTitle>
+            <SheetDescription>配置模型和参数</SheetDescription>
+          </SheetHeader>
+          <TrpgSettingsPanel />
+        </SheetContent>
+      </Sheet>
+
+      {/* 说明弹窗 */}
+      <Sheet open={showInfo} onOpenChange={setShowInfo}>
+        <SheetContent side="bottom" className="max-h-[80vh]">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
               <IconInfo className="size-5 text-primary" />
               TRPG 模式说明
-            </DialogTitle>
-            <DialogDescription>
-              了解 TRPG 模式如何配置 API 服务
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex-1 min-h-0 overflow-y-auto py-2 pr-2">
-            <div className="space-y-3 text-sm leading-relaxed">
-              {/* 核心提示：必须使用代理 */}
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                <p className="font-medium text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
-                  <IconExclamation className="size-4" />
-                  重要提示
-                </p>
-                <p className="mt-1.5 text-foreground">
-                  TRPG 模式<strong>必须通过本地代理</strong>才能正常工作（解决 Android WebView CORS 限制与火山方舟自动注入问题）。
-                </p>
-                <p className="mt-1 text-muted-foreground text-xs">
-                  本地代理地址：<code className="bg-muted/50 px-1 rounded">http://localhost:18527</code>（应用启动时自动运行）
-                </p>
-              </div>
-
-              {/* 配置说明 */}
-              <div className="rounded-lg border border-border/50 bg-muted/30 p-3">
-                <p className="font-medium text-foreground">快速配置</p>
-                <ul className="mt-2 space-y-2 text-muted-foreground">
-                  <li>
-                    <span className="inline-flex items-center justify-center size-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold mr-1.5">1</span>
-                    前往 <span className="font-medium text-foreground">设置 → API 连接与服务</span>，新增一个<strong>自定义供应商</strong>
-                  </li>
-                  <li>
-                    <span className="inline-flex items-center justify-center size-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold mr-1.5">2</span>
-                    根据你使用的模型，填写对应的 API 地址（见下方两种场景）
-                  </li>
-                  <li>
-                    <span className="inline-flex items-center justify-center size-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold mr-1.5">3</span>
-                    在 TRPG 网页内选择该模型即可开始游戏
-                  </li>
-                </ul>
-              </div>
-
-              {/* 场景一：火山方舟编码计划 */}
-              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                <p className="font-medium text-foreground flex items-center gap-1.5">
-                  <span className="inline-flex items-center justify-center size-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold">A</span>
-                  使用火山方舟编码计划模型
-                </p>
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  适用于 doubao 等火山方舟编码计划模型，API Key 由代理自动注入
-                </p>
-                <div className="mt-2 space-y-1.5">
-                  <div>
-                    <span className="text-xs font-medium text-foreground">API 地址填写：</span>
-                    <div className="mt-0.5 rounded bg-muted/50 p-2 text-xs font-mono break-all">
-                      http://localhost:18527/v3
-                    </div>
-                  </div>
-                  <div>
-                    <span className="text-xs font-medium text-foreground">API Key：</span>
-                    <span className="text-xs text-muted-foreground ml-1">随意填写（代理自动注入真实 Key）</span>
-                  </div>
-                  <div>
-                    <span className="text-xs font-medium text-foreground">模型名称：</span>
-                    <span className="text-xs text-muted-foreground ml-1">填写火山方舟模型名（如 doubao-1.5-pro-32k）</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* 场景二：其他供应商 */}
-              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                <p className="font-medium text-foreground flex items-center gap-1.5">
-                  <span className="inline-flex items-center justify-center size-4 rounded-full bg-primary/15 text-primary text-[10px] font-bold">B</span>
-                  使用其他供应商（DeepSeek、GPT、Claude 等）
-                </p>
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  适用于所有需要绕过 CORS 的第三方 API，代理会转发请求
-                </p>
-                <div className="mt-2 space-y-1.5">
-                  <div>
-                    <span className="text-xs font-medium text-foreground">API 地址填写：</span>
-                    <div className="mt-0.5 rounded bg-muted/50 p-2 text-xs font-mono break-all">
-                      http://localhost:18527/v1?_target=你的真实API地址
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    示例（DeepSeek）：
-                    <code className="bg-muted/50 px-1 rounded ml-1 break-all">http://localhost:18527/v1?_target=https://api.deepseek.com/v1</code>
-                  </p>
-                  <div>
-                    <span className="text-xs font-medium text-foreground">API Key：</span>
-                    <span className="text-xs text-muted-foreground ml-1">填写该供应商的真实 API Key</span>
-                  </div>
-                  <div>
-                    <span className="text-xs font-medium text-foreground">模型名称：</span>
-                    <span className="text-xs text-muted-foreground ml-1">填写该供应商支持的模型名</span>
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-xs text-muted-foreground pt-1">
-                💡 提示：TRPG 模式仅识别<strong>自定义供应商</strong>的模型，内置供应商（如官方豆包、DeepSeek 内置配置）不会被调用。
+            </SheetTitle>
+            <SheetDescription>v0.8.0 原生 TRPG 引擎</SheetDescription>
+          </SheetHeader>
+          <div className="space-y-3 overflow-y-auto px-1 pb-4 text-sm leading-relaxed">
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+              <p className="font-medium text-foreground">原生 TRPG 引擎</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                v0.8.0 版本已完全重写为原生 React TRPG 引擎，基于 D&D 5e SRD 5.2.1 规则，支持 d20 检定、战斗裁决、社交互动、探索系统等完整功能。
+              </p>
+            </div>
+            <div className="rounded-lg border border-border/50 bg-muted/30 p-3">
+              <p className="font-medium text-foreground">快速开始</p>
+              <ul className="mt-2 space-y-1.5 text-xs text-muted-foreground">
+                <li>1. 点击「存档」按钮创建新存档</li>
+                <li>2. 在「设置」中选择 TRPG 模型</li>
+                <li>3. 在输入框中描述你的行动</li>
+                <li>4. 引擎会自动执行 d20 检定和规则裁决</li>
+              </ul>
+            </div>
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+              <p className="font-medium text-amber-600 dark:text-amber-400">提示</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                TRPG 模式使用独立的模型配置，请在设置面板中选择专用模型。所有数值计算由本地引擎执行，不信任 LLM 的计算结果。
               </p>
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-2 shrink-0 pt-3 border-t border-border/40">
-            <Button variant="outline" onClick={handleDismissForever}>
-              不再提示
-            </Button>
-            <Button onClick={handleClose}>我已了解</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </LuzzyLayout>
+  );
+}
+
+// ============================================================================
+// 子组件
+// ============================================================================
+
+/** 空状态 */
+function EmptyState({ onCreateSave }: { onCreateSave: () => void }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={springGentle}
+      className="flex h-full flex-col items-center justify-center gap-4 text-center"
+    >
+      <motion.div
+        animate={{ rotate: [0, 10, -10, 0] }}
+        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <IconDice className="size-16 text-primary/40" />
+      </motion.div>
+      <div>
+        <h2 className="text-lg font-semibold">开始你的冒险</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          创建一个新存档，开启 TRPG 之旅
+        </p>
+      </div>
+      <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+        <Button onClick={onCreateSave} className="gap-2">
+          <IconPlus className="size-4" />
+          创建存档
+        </Button>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/** 用户消息 */
+function UserMessage({ content }: { content: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={springSnappy}
+      className="flex justify-end"
+    >
+      <div className="max-w-[80%] rounded-2xl rounded-tr-sm border border-primary/20 bg-primary/10 px-3 py-2 text-sm">
+        {content}
+      </div>
+    </motion.div>
+  );
+}
+
+/** 工具栏按钮（底部功能栏专用：垂直布局，图标在上文字在下） */
+function ToolbarButton({
+  icon,
+  label,
+  onClick,
+  active,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      whileHover={{ scale: disabled ? 1 : 1.08, y: disabled ? 0 : -1 }}
+      whileTap={{ scale: disabled ? 1 : 0.92 }}
+      className={`flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 transition-colors ${
+        active
+          ? "bg-primary/15 text-primary"
+          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+      } ${disabled ? "opacity-40" : ""}`}
+    >
+      {icon}
+      <span className="text-[10px] font-medium">{label}</span>
+    </motion.button>
   );
 }

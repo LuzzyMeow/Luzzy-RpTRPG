@@ -24,7 +24,9 @@ import type {
   BuiltinToolConfig,
   BuiltinToolType,
   ActiveTool,
+  ToolGlobalMode,
 } from '~/types/luzzy';
+import { PASSIVE_TOOL_TYPES } from '~/types/luzzy';
 import { parseCot } from '~/services/markdownService';
 import {
   buildVectorMemory,
@@ -73,6 +75,12 @@ export interface BuildContextParams {
   builtinToolConfigs?: BuiltinToolConfig[];
   /** v0.4.6: 用户工具（用于注入工具描述到 system prompt） */
   activeTools?: ActiveTool[];
+  /** v0.7.3-fix: 跳过 [World Info] 注入到 system prompt（当 world-recall 预执行已注入 <world_recall_result> 时为 true，避免双重注入+反馈回路） */
+  skipWorldInfoInjection?: boolean;
+  /** v0.8.1: 工具模式（控制协议注入方式：force=文本标签，active/adaptive=原生 function calling） */
+  toolMode?: ToolGlobalMode;
+  /** v0.8.1: Agentic 循环最大步数（写入协议提示词） */
+  maxAgentSteps?: number;
 }
 
 /** buildContext 返回值 */
@@ -106,7 +114,7 @@ export interface ExtractMemoryParams {
  *
  * 用于在 system prompt 末尾注入工具描述，提升模型主动调用工具的概率
  */
-const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
+export const BUILTIN_TOOL_INFO: Record<BuiltinToolType, {
   callLabel: string;
   description: string;
   parameters: Record<string, unknown>;
@@ -210,8 +218,8 @@ function buildToolDescriptions(
   const addGroup = (title: string, configs: typeof enabledBuiltin, tools?: typeof enabledActive) => {
     const items: string[] = [];
     for (const c of configs) {
-      // v0.7.2: memory-recall 和 world-recall 均为被动触发，不在 available_tools 列出
-      if (c.type === 'memory-recall' || c.type === 'world-recall') continue;
+      // v0.8.1: 使用 PASSIVE_TOOL_TYPES 常量过滤被动触发工具
+      if (PASSIVE_TOOL_TYPES.has(c.type)) continue;
       const info = BUILTIN_TOOL_INFO[c.type];
       if (info) items.push(`- \`${info.callLabel}\`: ${info.description}（返回 ${c.resultCount} 条）`);
     }
@@ -236,6 +244,35 @@ function buildToolDescriptions(
 
   lines.push('\n</available_tools>');
   return lines.join('\n');
+}
+
+/**
+ * v0.8.1: 构建原生 function calling 协议提示词
+ * 在 active/adaptive 模式下注入 system prompt，引导模型使用原生 tool_calls
+ * 不注入 <available_tools> 文本标签，避免双协议冲突
+ */
+function buildNativeToolProtocol(maxSteps: number): string {
+  return `<tool_protocol>
+当前使用原生 function calling 协议。通过 API 的 tools 参数调用工具，禁止输出 <tool_calls> 文本标签。
+
+【强制规则】
+1. 每次回复前必须至少调用一个最相关的工具。不调用任何工具就直接回复是严重错误。
+2. 可在单次回复中进行多轮工具调用——先调用工具收集信息，基于结果决定是否需要更多工具，直到信息充分后输出正文。
+3. 工具调用优先于正文输出。首次响应中仅进行工具调用（reasoning_content 可正常思考），正文在工具结果返回后的续写中输出。
+4. 最多可进行 ${maxSteps} 轮工具调用。信息充分后停止调用工具，输出正文。
+
+【查询关键词规则】
+- 从上下文中提取具体实体名称（地名、人名、物品、事件、概念）
+- query 参数为空格分隔的多个关键词
+- 禁止泛化词："当前" "现在" "地点" "设定" "信息" "情况" "背景"
+- 正确：query="清龙城 第2区 市集 摊位"
+- 错误：query="周围环境场景设定"
+
+【多轮调用策略】
+- 第一轮：根据用户消息提取关键词，调用最相关的工具
+- 后续轮次：根据前一轮工具结果，补充查询相关实体或换用其他工具
+- 信息充分后：输出角色对话或场景描写（正文）
+</tool_protocol>`;
 }
 
 // ============================================================================
@@ -473,11 +510,15 @@ export const buildContext = async (
   const activeWorldInfo = worldInfoEntries.filter((e) => e.enabled);
 
   // 2. 世界书关键词匹配（扫描最近的消息）
-  const triggeredWorldInfo = matchWorldInfoEntries(
-    activeWorldInfo,
-    messages,
-    DEFAULT_WORLD_INFO_SCAN_DEPTH,
-  );
+  // v0.7.3-fix: 当 world-recall 预执行已注入 <world_recall_result> 时跳过此步骤，避免双重注入+反馈回路
+  // 回退保障：预执行失败时 skipWorldInfoInjection 保持 false，走经典注入路径
+  const triggeredWorldInfo = params.skipWorldInfoInjection
+    ? []
+    : matchWorldInfoEntries(
+        activeWorldInfo,
+        messages,
+        DEFAULT_WORLD_INFO_SCAN_DEPTH,
+      );
 
   // 3. 构建系统提示词
   const systemPromptParts: string[] = [];
@@ -548,10 +589,20 @@ export const buildContext = async (
 
   // v0.4.3: 注入内置工具描述，提升模型主动调用工具的概率
   // v0.4.6: 同时注入用户工具描述，统一标签格式
-  // 工具描述追加到 system prompt 末尾，不破坏前缀（KV 缓存友好）
-  const toolDescriptions = buildToolDescriptions(params.builtinToolConfigs, params.activeTools);
-  if (toolDescriptions) {
-    systemPromptParts.push(toolDescriptions);
+  // v0.8.1: 按 toolMode 条件分支 — force 模式注入 <available_tools> 文本标签，active/adaptive 模式注入原生 function calling 协议
+  const toolMode = params.toolMode ?? 'active';
+  const maxSteps = params.maxAgentSteps ?? 10;
+
+  if (toolMode === 'force') {
+    // force 模式：注入 <available_tools> 文本标签列表（现有逻辑）
+    const toolDescriptions = buildToolDescriptions(params.builtinToolConfigs, params.activeTools);
+    if (toolDescriptions) {
+      systemPromptParts.push(toolDescriptions);
+    }
+  } else {
+    // active/adaptive 模式：注入原生 function calling 协议指引
+    // 不注入 <available_tools>，避免双协议冲突
+    systemPromptParts.push(buildNativeToolProtocol(maxSteps));
   }
 
   const systemPrompt = systemPromptParts.join('\n\n');

@@ -11,6 +11,7 @@
  * - world: 世界书操作（v0.4.1 新增）
  * - tool: 工具调用详情（v0.4.1 新增）
  * - stream: 流式输出诊断（v0.4.6 新增）
+ * - trpg: TRPG 模式事件（v0.8.0 新增）
  *
  * 存储路径：/Documents/LUZZY/logs/YYYYMMDD.log
  * 每次启动创建/追加当日 log 文件，启动时清理 3 天前的 log 文件
@@ -19,7 +20,7 @@
  */
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-type LogCategory = 'app' | 'agent' | 'api' | 'user' | 'chat' | 'memory' | 'world' | 'tool' | 'stream';
+type LogCategory = 'app' | 'agent' | 'api' | 'user' | 'chat' | 'memory' | 'world' | 'tool' | 'stream' | 'trpg';
 export type { LogLevel, LogCategory };
 
 interface LogEntry {

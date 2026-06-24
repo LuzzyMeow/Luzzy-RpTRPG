@@ -196,6 +196,11 @@ export const createCharacterSlice: StateCreator<
       characters: state.characters.filter((c) => c.uuid !== uuid),
       currentCharacterUuid:
         state.currentCharacterUuid === uuid ? null : state.currentCharacterUuid,
+      // v0.7.3-fix: 同步清除 currentCharacter 和 messages，避免聊天页仍显示已删除角色的会话
+      currentCharacter:
+        state.currentCharacter?.uuid === uuid ? null : state.currentCharacter,
+      messages:
+        state.currentCharacter?.uuid === uuid ? [] : state.messages,
     }));
     await get().saveCharacters();
     // 清理关联的聊天记录

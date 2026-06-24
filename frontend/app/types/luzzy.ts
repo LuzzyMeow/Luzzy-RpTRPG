@@ -656,6 +656,8 @@ export type ToolGlobalMode = 'force' | 'active' | 'adaptive';
 /** 工具全局设置 */
 export interface ToolGlobalSettings {
   mode: ToolGlobalMode;
+  /** v0.8.1: Agentic 循环最大步数（1-20，默认 10） */
+  maxAgentSteps: number;
 }
 
 /** SKILL（技能） */
@@ -686,6 +688,15 @@ export type BuiltinToolType =
   | 'memory-recall'
   | 'world-recall'  // v0.4.3 新增:世界书召回（嵌入模型）；v0.7.2: 合并 world-search，三策略混合召回
   | 'anysearch';
+
+/**
+ * v0.8.1: 被动触发工具集合
+ * 这些工具由系统预执行，不注入 tools 参数，不出现在 agentic 循环中
+ */
+export const PASSIVE_TOOL_TYPES: ReadonlySet<BuiltinToolType> = new Set([
+  'memory-recall',
+  'world-recall',
+]);
 
 /** 内置工具配置 */
 export interface BuiltinToolConfig {

@@ -29,6 +29,7 @@ import { createUISlice } from "~/stores/slices/ui-slice";
 import { createSessionSlice } from "~/stores/slices/session-slice";
 import { createKnowledgeBaseSlice } from "~/stores/slices/knowledge-base-slice";
 import { createSkillSlice } from "~/stores/slices/skill-slice";
+import { createTrpgSlice } from "~/stores/slices/trpg-slice";
 import type { AppStoreState } from "~/stores/slices/types";
 
 /**
@@ -70,6 +71,9 @@ const PERSIST_KEYS = [
   "currentCharacterUuid",
   "knowledgeBases",
   "skills",
+  // v0.8.0: TRPG 模式持久化
+  "trpgMode",
+  "trpgModel",
 ] as const;
 
 export const useAppStore = create<AppStoreState>()(
@@ -85,6 +89,8 @@ export const useAppStore = create<AppStoreState>()(
       ...createSessionSlice(...args),
       ...createKnowledgeBaseSlice(...args),
       ...createSkillSlice(...args),
+      // v0.8.0 新增 TRPG slice
+      ...createTrpgSlice(...args),
     }),
     {
       name: "luzzy-settings", // localStorage 键名

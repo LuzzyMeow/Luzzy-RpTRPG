@@ -44,7 +44,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.7.3";
+const APP_VERSION = "v0.8.1";
 
 /** v0.5.8: 关于页动态文案轮播 */
 const ABOUT_PHRASES = [
@@ -65,6 +65,7 @@ const CATEGORY_TABS: { key: LogCategory | "all"; label: string }[] = [
   { key: "world", label: "世界" },
   { key: "chat", label: "聊天" },
   { key: "agent", label: "Agent" },
+  { key: "trpg", label: "TRPG" },
 ];
 
 /** 日志级别选项 */
@@ -288,7 +289,7 @@ export default function AboutPage() {
   return (
     <LuzzyLayout title="关于">
       <div className="relative h-full w-full overflow-hidden">
-        {/* 背景层：fixed inset-0 铺满整个视口，脱离滚动流，滚动后不截断 */}
+        {/* 背景层：absolute inset-0 铺满父容器，置于内容之下 */}
         <LuzzyAuroraBackground />
         {/* 内容层：relative z-10 可滚动，置于背景之上 */}
         <div className="relative z-10 h-full w-full overflow-y-auto overflow-x-hidden">

@@ -125,9 +125,10 @@ export const DEFAULT_HIGHLIGHT_SETTINGS: HighlightSettings = {
   pattern: "",
 };
 
-/** 默认工具全局设置（v0.2.0；v0.3.3 默认改为强制模式） */
+/** 默认工具全局设置（v0.2.0；v0.3.3 默认改为强制模式；v0.8.1 默认改为 active + Agentic 循环） */
 export const DEFAULT_TOOL_GLOBAL_SETTINGS: ToolGlobalSettings = {
-  mode: "force",
+  mode: "active",
+  maxAgentSteps: 10,
 };
 
 /** 默认内置工具配置（v0.2.0；v0.3.3 默认启用三个记忆工具）
@@ -762,7 +763,18 @@ export const createSettingsSlice: StateCreator<
       highlightSettings: { ...state.highlightSettings, ...settings },
     })),
 
-  setToolGlobalMode: (mode) => set({ toolGlobalSettings: { mode } }),
+  setToolGlobalMode: (mode) =>
+    set((state) => ({
+      toolGlobalSettings: { ...state.toolGlobalSettings, mode },
+    })),
+
+  setMaxAgentSteps: (steps) =>
+    set((state) => ({
+      toolGlobalSettings: {
+        ...state.toolGlobalSettings,
+        maxAgentSteps: Math.max(1, Math.min(20, steps)),
+      },
+    })),
 
   updateBuiltinToolConfig: (type, partial) =>
     set((state) => ({
@@ -858,11 +870,20 @@ export const createSettingsSlice: StateCreator<
           typeof data.highlightSettings === "object"
             ? (data.highlightSettings as HighlightSettings)
             : state.highlightSettings,
-        toolGlobalSettings:
-          data.toolGlobalSettings &&
-          typeof data.toolGlobalSettings === "object"
-            ? (data.toolGlobalSettings as ToolGlobalSettings)
-            : state.toolGlobalSettings,
+        toolGlobalSettings: (() => {
+          const saved = data.toolGlobalSettings;
+          if (!saved || typeof saved !== 'object') {
+            return { ...DEFAULT_TOOL_GLOBAL_SETTINGS };
+          }
+          // v0.8.1: 强制迁移 force → active，补全 maxAgentSteps 默认值
+          const savedMode = (saved as ToolGlobalSettings).mode;
+          return {
+            mode: savedMode === 'force' ? 'active' : (savedMode ?? 'active'),
+            maxAgentSteps: typeof (saved as ToolGlobalSettings).maxAgentSteps === 'number'
+              ? Math.max(1, Math.min(20, (saved as ToolGlobalSettings).maxAgentSteps!))
+              : 10,
+          };
+        })(),
         builtinToolConfigs:
           Array.isArray(data.builtinToolConfigs) &&
           data.builtinToolConfigs.length > 0

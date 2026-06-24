@@ -28,6 +28,7 @@ import {
   IconTag,
   IconLink,
   IconInfo,
+  IconRefresh,
 } from "~/components/luzzy/luzzy-icons";
 
 import { useAppStore } from "~/stores";
@@ -1381,6 +1382,7 @@ function BuiltinToolsTab() {
   );
   const toolGlobalSettings = useAppStore((s) => s.toolGlobalSettings);
   const setToolGlobalMode = useAppStore((s) => s.setToolGlobalMode);
+  const setMaxAgentSteps = useAppStore((s) => s.setMaxAgentSteps);
   const characters = useAppStore((s) => s.characters);
   // v0.3.3: 从 IndexedDB 加载记忆设置以检查嵌入模型配置状态
   const [hasEmbeddingModel, setHasEmbeddingModel] = React.useState(false);
@@ -1412,6 +1414,42 @@ function BuiltinToolsTab() {
       <ScrollArea className="h-full w-full">
         <div className="min-w-0 space-y-4 pb-4">
           {/* v0.5.1: 工具全局模式已废弃，默认所有已启用工具在请求1对AI可见 */}
+
+          {/* v0.8.1: Agentic 循环最大步数配置 */}
+          <motion.div
+            layout
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <Card className="gap-3 p-4 transition-all hover:shadow-md">
+              <div className="flex items-start gap-2">
+                <IconRefresh className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-medium">Agentic 最大步数</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    模型在单次回复中最多可进行的工具调用轮次。步数越多推理越深，但 token 消耗也越大。
+                  </p>
+                </div>
+                <span className="text-sm font-mono text-primary">
+                  {toolGlobalSettings.maxAgentSteps}
+                </span>
+              </div>
+              <div className="grid gap-2">
+                <Slider
+                  value={[toolGlobalSettings.maxAgentSteps]}
+                  min={1}
+                  max={20}
+                  step={1}
+                  onValueChange={(v) => setMaxAgentSteps(v[0])}
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>1</span>
+                  <span>20</span>
+                </div>
+              </div>
+            </Card>
+          </motion.div>
 
           {/* 内置工具列表 */}
           {validConfigs.map((config, i) => {

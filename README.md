@@ -8,7 +8,7 @@
 > 
 > *Every conversation feels like a novel with you in it.*
 
-[![Version](https://img.shields.io/badge/version-v0.7.3-9d4edd?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.8.1-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -113,7 +113,7 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.7.3-debug.apk`
+📦 **输出路径**: `android/app/build/outputs/apk/debug/LUZZY-v0.8.1-debug.apk`
 
 ---
 
@@ -141,6 +141,12 @@ RP-Hub/
 ---
 
 ## 📰 最新动态 · What's New
+
+### v0.8.1
+
+Agentic 多步工具调用循环：单次回复中模型可进行最多 10 步（可配 1-20）工具调用循环，模型自主决定何时信息充分并输出正文，支持链式检索（world-recall → vector-memory → keyword-search）。首次 API 请求使用 `tool_choice: 'required'` 强制工具调用，API 不支持时自动回退 `'auto'`。被动工具（memory-recall / world-recall）从 `tools` 参数过滤避免干扰主动决策。续写请求注入 tools 参数支持多步循环。`Set<string>` 循环检测防止重复调用。条件协议注入按模式分离（force 文本标签 / active 原生 function calling）。工具页新增 maxAgentSteps 滑块配置 UI。默认工具模式从 force 改为 active。Step 8 提示词强化 RP 场景工具调用指导。
+
+> Agentic multi-step tool call loop: within a single reply the model can perform up to 10 (configurable 1-20) tool call rounds, autonomously deciding when information is sufficient to output the main content, supporting chained retrieval (world-recall → vector-memory → keyword-search). First API request uses `tool_choice: 'required'` to force tool calls, auto-falling back to `'auto'` when unsupported. Passive tools (memory-recall / world-recall) are filtered from the `tools` parameter to avoid interfering with active decisions. Continuation requests inject tools to support multi-step loops. `Set<string>` loop detection prevents duplicate calls. Conditional protocol injection separates by mode (force text tags / active native function calling). Tool page adds maxAgentSteps slider config UI. Default tool mode changed from force to active. Step 8 prompt strengthened with RP-scenario tool call guidance.
 
 ### v0.7.2
 

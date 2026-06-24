@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.8.1
+
+### 🏗️ 架构（核心）
+
+- **Agentic 多步工具调用循环**：单次回复中模型可进行最多 10 步（可配 1-20）工具调用循环。模型自主决定何时信息充分并输出正文，支持链式检索（如 world-recall → vector-memory → keyword-search）。替代旧的单次续写 + skipToolsInjection 机制
+- **tool_choice: 'required' 首次强制工具调用**：首次 API 请求使用 `tool_choice: 'required'` 强制模型调用工具；API 不支持时自动回退到 `'auto'`（识别 400/Bad Request/tool_choice 错误）
+- **被动工具过滤**：`memory-recall` 和 `world-recall` 从 `tools` 参数中过滤，仅保留在 system prompt 标注"已自动执行"，避免被动工具干扰主动决策
+- **续写请求 tools 注入**：续写请求 `skipToolsInjection: false`，确保模型在 Agentic 循环中仍可见工具参数，支持多步链式调用
+- **循环检测**：`Set<string>` 记录 `toolName|queryNormalized` 对，任意重复即终止循环（RP 场景最优策略——工具结果已持久化在消息历史中，重新查同一关键词是浪费）
+- **条件协议注入**：force 模式注入 `<available_tools>` 文本标签列表；active/adaptive 模式注入 `buildNativeToolProtocol()` 原生 function calling 协议指引，避免双协议冲突
+
+### ✨ 优化
+
+- **maxAgentSteps 配置 UI**：工具页新增 Agentic 最大步数滑块（1-20，默认 10），使用 motion.div 进入动画 + game-icon-pack IconRefresh 图标，与现有工具卡片视觉风格一致
+- **默认工具模式从 force 改为 active**：新用户默认使用原生 function calling 协议；旧用户 force 模式自动迁移为 active，但用户可手动切回 force
+- **Step 8 提示词强化**：新增【强制工具调用 — 无例外】小节，强调 RP 场景下主动检索记忆和世界书设定是保持角色一致性的关键，新增"宁可多调用工具也不要遗漏关键信息"指导
+
+### 🐛 修复
+
+- **续写时工具"消失"**：旧代码续写时 `skipToolsInjection: true` 导致模型看不到工具无法继续检索；修复为 `false` 支持多步循环
+- **被动工具干扰主动决策**：`memory-recall` 和 `world-recall` 出现在 `tools` 参数中干扰模型主动工具选择；修复为从 `tools` 过滤
+- **工具描述质量差**：旧代码工具描述仅为工具名（如 `"world-recall"`）；修复为使用 `BUILTIN_TOOL_INFO` 完整中文描述
+
+### 📦 工程变更
+
+- Android `versionCode` 43→44，`versionName` 0.8.0→0.8.1
+- 版本号同步：`package.json` / `frontend/package.json` / `about.tsx` / `android/app/build.gradle` / `android-patches/build.gradle` 均更新
+- `MAX_CONTINUATIONS` 常量删除，改为动态读取 `toolGlobalSettings.maxAgentSteps`
+- `callApiWithRetry` / `callApiAndUpdate` 签名从 `boolean` 改为 `options` 对象
+- `CHANGELOG.md` / `README.md` 同步更新
+
+---
+
 ## v0.7.3
 
 ### 🐛 修复

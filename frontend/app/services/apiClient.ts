@@ -379,6 +379,8 @@ export interface ApiRequestBodySettings {
     callName: string;
     description: string;
   }>;
+  /** v0.8.1: true → tool_choice: 'required'（强制工具调用），false/undefined → 'auto' */
+  forceToolCall?: boolean;
 }
 
 /**
@@ -553,7 +555,7 @@ export const buildApiRequestBody = (
         parameters: buildToolSchema(tool.type),
       },
     }));
-    result.tool_choice = 'auto';
+    result.tool_choice = settings.forceToolCall ? 'required' : 'auto';
   }
 
   // 自定义 JSON 合并（优先级最高，可覆盖思考字段和 tools）

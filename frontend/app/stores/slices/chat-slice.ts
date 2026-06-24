@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 聊天 Slice（Zustand slice）
  *
  * 管理聊天消息、生成状态、API 调用、历史记录持久化等。
@@ -27,6 +27,7 @@ import type {
   WorldInfoRecall,
   ToolCall,
 } from "~/types/luzzy";
+import { PASSIVE_TOOL_TYPES } from "~/types/luzzy";
 import {
   buildContext,
   processRegex,
@@ -35,6 +36,7 @@ import {
   DEFAULT_USER,
   worldInfoKeyMatchesText,
   passesWorldInfoProbability,
+  BUILTIN_TOOL_INFO,
 } from "~/services/chatService";
 import {
   sendStreamRequest,
@@ -66,8 +68,7 @@ import type { AppStoreState, ChatSlice } from "~/stores/slices/types";
 import { logger } from "~/services/logger";
 import { toast } from "sonner";
 
-// v0.4.6: 文本标签路径最大续写次数限制，防止无限循环
-const MAX_CONTINUATIONS = 3;
+// v0.8.1: MAX_CONTINUATIONS 已移除，改为动态读取 toolGlobalSettings.maxAgentSteps
 
 // ============================================================================
 // 辅助函数
@@ -290,6 +291,8 @@ export const createChatSlice: StateCreator<
       // v0.3.0 新增：从 store 读取内置工具配置
       const builtinToolConfigs = get().builtinToolConfigs;
       const toolGlobalSettings = get().toolGlobalSettings;
+      // v0.8.1: Agentic 循环最大步数（动态读取，替代旧的 MAX_CONTINUATIONS）
+      const maxAgentSteps = toolGlobalSettings.maxAgentSteps ?? 10;
 
       // v0.7.1: 单阶段架构 — 合并原 Phase 1（工具决策）+ Phase 2（CoT/正文）
       // 模型通过原生 tool_calls (function calling) 自行决定调用工具
@@ -298,17 +301,28 @@ export const createChatSlice: StateCreator<
       // v0.7.2: 全局计时 — 首次请求到正文结束（含工具续写）
       const firstRequestStartTime = Date.now();
 
+      // v0.7.3-fix: 标记 world-recall 预执行是否成功
+      // 为 true 时跳过 buildContext 内的 [World Info] 注入，避免双重注入+反馈回路
+      // 预执行失败时保持 false，buildContext 走经典注入路径作为回退
+      // 声明在 callApiAndUpdate 之前，确保闭包能正确捕获
+      let worldRecallPreExecuted = false;
+
       // v0.4.1-fix: 带重试退避的 API 调用包装(针对 429 ServerOverloaded)
       // 最多重试 3 次,退避间隔递增(2s/4s/8s),重试期间显示提示
       // v0.4.4: 返回值新增 toolCalls 字段,支持原生 tool_calls 透传
+      // v0.8.1: 签名改为 options 对象 + tool_choice: 'required' 回退机制
       const callApiWithRetry = async (
         msgId: string,
         contextMsgs: ChatMessage[],
-        skipToolsInjection: boolean = false, // v0.4.6: 续写请求时不注入 tools
+        options: {
+          skipToolsInjection?: boolean;
+          forceToolCall?: boolean;
+        } = {},
       ): Promise<{ content: string; reasoning: string; cot: string; toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> }> => {
         const maxRetries = 3;
         const baseDelays = [2000, 4000, 8000]; // 递增退避
         let lastError: unknown;
+        let triedForceToolCallFallback = false; // v0.8.1: tool_choice 回退标记
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           if (abortController?.signal.aborted) {
@@ -316,13 +330,29 @@ export const createChatSlice: StateCreator<
           }
 
           try {
-            return await callApiAndUpdate(msgId, contextMsgs, skipToolsInjection);
+            return await callApiAndUpdate(msgId, contextMsgs, options);
           } catch (err) {
             // 用户取消不重试
             if (err instanceof DOMException && err.name === 'AbortError') throw err;
 
-            // 检查是否为 429 错误
             const errMessage = err instanceof Error ? err.message : String(err);
+
+            // v0.8.1: 回退机制 — tool_choice: 'required' 不支持时回退到 'auto'
+            if (
+              options.forceToolCall &&
+              !triedForceToolCallFallback &&
+              (errMessage.includes('400') ||
+                errMessage.includes('tool_choice') ||
+                errMessage.includes('invalid') ||
+                errMessage.includes('Bad Request'))
+            ) {
+              logger.warn('api', 'tool_choice: "required" 不被支持，回退到 "auto"');
+              triedForceToolCallFallback = true;
+              options = { ...options, forceToolCall: false };
+              continue; // 立即重试，不等待
+            }
+
+            // 检查是否为 429 错误
             const is429 = errMessage.includes('429') ||
                           errMessage.includes('TooManyRequests') ||
                           errMessage.includes('ServerOverloaded') ||
@@ -363,8 +393,13 @@ export const createChatSlice: StateCreator<
       const callApiAndUpdate = async (
         msgId: string,
         contextMsgs: ChatMessage[],
-        skipToolsInjection: boolean = false, // v0.4.6: 续写请求时不注入 tools
+        options: {
+          skipToolsInjection?: boolean;
+          forceToolCall?: boolean;
+        } = {},
       ): Promise<{ content: string; reasoning: string; cot: string; toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> }> => {
+        const skipToolsInjection = options.skipToolsInjection ?? false;
+        const forceTool = options.forceToolCall ?? false;
         // 构建 API 上下文
         // v0.5.0: 从 store 读取当前激活的用户档案，覆写默认空档案
         const activeUser = (() => {
@@ -376,6 +411,7 @@ export const createChatSlice: StateCreator<
           return (st.user?.name?.trim() || st.user?.description?.trim()) ? st.user : DEFAULT_USER;
         })();
         // v0.7.1: 单阶段架构 — buildContext 不再有 phase 参数
+        // v0.7.3-fix: 传入 skipWorldInfoInjection，当 world-recall 预执行成功时跳过经典注入
         const { apiMessages: rawApiMessages } = await buildContext({
           messages: contextMsgs,
           character: currentCharacter,
@@ -388,8 +424,11 @@ export const createChatSlice: StateCreator<
           vectorMemoryShards,
           memorySettings,
           sessionId: currentSessionId ?? undefined,
-          builtinToolConfigs, // v0.4.3: 传入内置工具配置，注入工具描述到 system prompt
-          activeTools, // v0.4.6: 传入用户工具，统一注入工具描述
+          builtinToolConfigs,
+          activeTools,
+          skipWorldInfoInjection: worldRecallPreExecuted,
+          toolMode: toolGlobalSettings.mode, // v0.8.1: 传入工具模式
+          maxAgentSteps: maxAgentSteps, // v0.8.1: 传入 Agentic 最大步数
         });
 
         // v0.4.3: 日志记录上下文构建完成
@@ -458,17 +497,16 @@ export const createChatSlice: StateCreator<
 
         // v0.4.4: 注入 activeTools 到 buildApiRequestBody（仅非 force 模式）
         // force 模式下由预执行逻辑处理工具，不注入 tools 参数避免重复调用
-        // activeTools 在 line 775 加载，由于 callApiAndUpdate 是闭包且在 activeTools 初始化后才被调用，可安全引用
-        // v0.4.6: 将内置工具也纳入 tools 参数，让支持 function calling 的模型能看到内置工具
-        // v0.4.6: 续写请求（skipToolsInjection=true）时不注入 tools，防止模型再次发起 tool_calls 导致无限循环
+        // v0.8.1: 过滤被动工具（PASSIVE_TOOL_TYPES），使用 BUILTIN_TOOL_INFO 真实描述
+        // v0.8.1: 续写请求（skipToolsInjection=false）仍注入 tools，支持 Agentic 多步循环
         const builtinToolsForRequest =
           toolGlobalSettings.mode !== "force" && !skipToolsInjection
             ? builtinToolConfigs
-                .filter((c) => c.enabled)
+                .filter((c) => c.enabled && !PASSIVE_TOOL_TYPES.has(c.type))
                 .map((c) => ({
                   type: c.type,
-                  callName: c.type, // 内置工具使用 type 作为 callName（kebab-case）
-                  description: c.type, // 描述由 buildToolSchema 内部映射提供
+                  callName: c.type,
+                  description: BUILTIN_TOOL_INFO[c.type]?.description ?? c.type,
                   isBuiltin: true as const,
                 }))
             : [];
@@ -501,6 +539,7 @@ export const createChatSlice: StateCreator<
             thinkingDepth,
             customRequestBody: get().customRequestBody,
             activeTools: activeToolsForRequest,
+            forceToolCall: forceTool, // v0.8.1: 首次请求强制 tool_choice: 'required'
           },
         );
 
@@ -1013,9 +1052,12 @@ export const createChatSlice: StateCreator<
 
       // v0.7.2: world-recall 被动预执行（三策略混合召回）
       // 策略1: constant=true → 直接注入全文（不使用嵌入模型）
-      // 策略2: keys 匹配用户输入 → 直接召回内容（不使用嵌入模型）
+      // 策略2: keys 匹配最近消息 → 直接召回内容（不使用嵌入模型）
       // 策略3: 非constant条目 → 嵌入向量语义检索（使用嵌入模型，无嵌入模型时跳过）
-      // 三策略结果不去重，若都满足则两种结果均存在
+      // v0.7.3-fix: 三策略结果按 entry.id 去重（保留策略优先级最高的）
+      // v0.7.3-fix: 语义召回添加相似度阈值（0.3），避免注入完全不相关的条目
+      // v0.7.3-fix: 运行时生成的 embedding 异步持久化到 IndexedDB
+      // v0.7.3-fix: 关键词扫描窗口与 buildContext 对齐（最近 2 条消息）
       const worldRecallConfig = builtinToolConfigs.find(
         (c) => c.type === "world-recall",
       );
@@ -1025,7 +1067,10 @@ export const createChatSlice: StateCreator<
         worldInfoEntries.length > 0
       ) {
         const worldLimit = worldRecallConfig.resultCount || 8;
-        const worldRecallQuery = messages.filter((m) => m.role === "user").pop()?.content || "";
+        // v0.7.3-fix: 关键词扫描使用最近 2 条消息（与 buildContext DEFAULT_WORLD_INFO_SCAN_DEPTH 对齐）
+        const keywordScanText = messages.slice(-2).map((m) => m.content).join("\n");
+        // 语义检索仅使用最后一条 user 消息，保持语义精确性
+        const semanticQuery = messages.filter((m) => m.role === "user").pop()?.content || "";
         logger.info("world", `世界书召回预执行启动（三策略混合，topK=${worldLimit}）`);
         try {
           const enabledEntries = worldInfoEntries.filter((e) => e.enabled);
@@ -1041,12 +1086,13 @@ export const createChatSlice: StateCreator<
           }
 
           // 策略2: 关键词匹配（非constant条目，概率检查 + keys匹配，不使用嵌入模型）
-          if (worldRecallQuery.trim()) {
+          // v0.7.3-fix: 使用 keywordScanText（最近 2 条消息）而非仅最后一条 user 消息
+          if (keywordScanText.trim()) {
             for (const e of nonConstantEntries) {
               if (!passesWorldInfoProbability(e)) continue;
               if (!e.keys || e.keys.length === 0) continue;
               const matchedKeys = e.keys.filter((key) =>
-                worldInfoKeyMatchesText(key, worldRecallQuery, e.useRegex),
+                worldInfoKeyMatchesText(key, keywordScanText, e.useRegex),
               );
               if (matchedKeys.length > 0) {
                 results.push({ entry: e, score: matchedKeys.length, strategy: 'keyword' });
@@ -1055,10 +1101,14 @@ export const createChatSlice: StateCreator<
           }
 
           // 策略3: 语义相似度（所有非constant条目，使用嵌入模型）
-          if (memorySettings?.embeddingModel && worldRecallQuery.trim()) {
+          // v0.7.3-fix: 添加相似度阈值 0.3，避免注入完全不相关的条目
+          // v0.7.3-fix: 运行时生成的 embedding 收集后异步持久化
+          const WORLD_RECALL_SIMILARITY_THRESHOLD = 0.3;
+          const embeddingsGenerated: Array<{ id: string; embedding: number[] }> = [];
+          if (memorySettings?.embeddingModel && semanticQuery.trim()) {
             try {
               const queryEmbedding = await getEmbedding(
-                worldRecallQuery,
+                semanticQuery,
                 memorySettings,
                 settings,
                 allProviders,
@@ -1070,6 +1120,8 @@ export const createChatSlice: StateCreator<
                   try {
                     entryEmbedding = await getEmbedding(e.content, memorySettings, settings, allProviders, get().apiProviderKeys);
                     e.embedding = entryEmbedding;
+                    // v0.7.3-fix: 收集运行时生成的 embedding，稍后持久化
+                    embeddingsGenerated.push({ id: e.id, embedding: entryEmbedding });
                   } catch {
                     entryEmbedding = [];
                   }
@@ -1078,7 +1130,8 @@ export const createChatSlice: StateCreator<
                 return { entry: e, score, strategy: 'semantic' as const };
               }));
               for (const s of semanticScored) {
-                if (Number.isFinite(s.score) && s.score > 0) {
+                // v0.7.3-fix: 使用阈值过滤，避免注入完全不相关的条目
+                if (Number.isFinite(s.score) && s.score > WORLD_RECALL_SIMILARITY_THRESHOLD) {
                   results.push(s);
                 }
               }
@@ -1087,9 +1140,26 @@ export const createChatSlice: StateCreator<
             }
           }
 
-          // 合并排序：按策略优先级 constant > keyword > semantic，同策略内按 score 降序
+          // v0.7.3-fix: 按 entry.id 去重（保留策略优先级更高的，同策略保留 score 更高的）
           const strategyOrder: Record<string, number> = { constant: 0, keyword: 1, semantic: 2 };
-          const sorted = results
+          const dedupedMap = new Map<string, RecallResult>();
+          for (const r of results) {
+            const existing = dedupedMap.get(r.entry.id);
+            if (!existing) {
+              dedupedMap.set(r.entry.id, r);
+            } else {
+              const existingPriority = strategyOrder[existing.strategy] ?? 99;
+              const newPriority = strategyOrder[r.strategy] ?? 99;
+              if (newPriority < existingPriority || (newPriority === existingPriority && r.score > existing.score)) {
+                dedupedMap.set(r.entry.id, r);
+              }
+            }
+          }
+          const dedupedResults = Array.from(dedupedMap.values());
+          const dedupRemoved = results.length - dedupedResults.length;
+
+          // 排序：按策略优先级 constant > keyword > semantic，同策略内按 score 降序
+          const sorted = dedupedResults
             .sort((a, b) => {
               const sa = strategyOrder[a.strategy] ?? 99;
               const sb = strategyOrder[b.strategy] ?? 99;
@@ -1101,12 +1171,29 @@ export const createChatSlice: StateCreator<
           const cntConst = sorted.filter((s) => s.strategy === 'constant').length;
           const cntKw = sorted.filter((s) => s.strategy === 'keyword').length;
           const cntSem = sorted.filter((s) => s.strategy === 'semantic').length;
-          logger.info("world", `世界书召回完成: 找到 ${sorted.length} 条（constant=${cntConst} keyword=${cntKw} semantic=${cntSem}）`);
+          logger.info("world", `世界书召回完成: 找到 ${sorted.length} 条（constant=${cntConst} keyword=${cntKw} semantic=${cntSem}，去重移除 ${dedupRemoved} 条）`);
+
+          // v0.7.3-fix: 异步持久化运行时生成的 embedding 到 IndexedDB
+          if (embeddingsGenerated.length > 0) {
+            try {
+              const allEntries = await getItem<WorldInfoEntry[]>('worldInfo', 'worldInfo');
+              if (allEntries) {
+                const merged = allEntries.map((wi) => {
+                  const gen = embeddingsGenerated.find((g) => g.id === wi.id);
+                  return gen ? { ...wi, embedding: gen.embedding } : wi;
+                });
+                await setItem('worldInfo', 'worldInfo', merged);
+                logger.info("world", `世界书 embedding 持久化: ${embeddingsGenerated.length} 条`);
+              }
+            } catch (persistErr) {
+              logger.warn("world", `世界书 embedding 持久化失败（不影响本次召回）: ${(persistErr as Error).message}`);
+            }
+          }
 
           if (sorted.length > 0) {
             const worldInfoRecalls: WorldInfoRecall[] = sorted.map((s) => ({
               id: uuidv4(),
-              entryName: s.entry.id || s.entry.name || "未命名",
+              entryName: s.entry.name || s.entry.id || "未命名",
               content: s.entry.content,
               score: s.score,
               strategy: s.strategy,
@@ -1114,7 +1201,7 @@ export const createChatSlice: StateCreator<
             get().updateMessage(assistantMessageId, { worldInfoRecalls });
 
             const recallText = sorted
-              .map((s, i) => `  <entry index="${i + 1}" name="${s.entry.id || s.entry.name || '未命名'}" strategy="${s.strategy}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`)
+              .map((s, i) => `  <entry index="${i + 1}" name="${s.entry.name || s.entry.id || '未命名'}" strategy="${s.strategy}" score="${s.score.toFixed(3)}">\n    ${s.entry.content.slice(0, 4000)}\n  </entry>`)
               .join("\n\n");
             contextMessages.push({
               id: uuidv4(),
@@ -1137,6 +1224,9 @@ export const createChatSlice: StateCreator<
             get().updateMessage(assistantMessageId, {
               agentSteps: [...(existingMsg?.agentSteps ?? []), worldRecallStep],
             });
+
+            // v0.7.3-fix: 标记预执行成功，跳过 buildContext 内的经典注入
+            worldRecallPreExecuted = true;
           }
         } catch (e) {
           logger.warn("world", `世界书召回预执行失败: ${e}`);
@@ -1155,7 +1245,9 @@ export const createChatSlice: StateCreator<
         logger.info("stream", `请求开始前: agentSteps数=${msg?.agentSteps?.length ?? 0}`);
       }
       const { content: cotRawContent, reasoning: cotReasoning, cot: cotContent, toolCalls: nativeToolCallsFromMain } =
-        await callApiWithRetry(assistantMessageId, contextMessages);
+        await callApiWithRetry(assistantMessageId, contextMessages, {
+          forceToolCall: true, // v0.8.1: 首次请求强制 tool_choice: 'required'
+        });
       logger.info("api", `API 响应: CoT+正文完成（CoT=${cotContent.length}字符，正文=${cotRawContent.length}字符）`);
       logger.info("chat", `消息接收完成（CoT=${cotContent.length}字符，正文=${cotRawContent.length}字符）`);
 
@@ -1327,8 +1419,9 @@ export const createChatSlice: StateCreator<
       };
 
       if (nativeToolCalls && nativeToolCalls.length > 0) {
-        // === v0.4.4: 原生 tool_calls 模式 ===
-        logger.info("api", `检测到原生 tool_calls（数量=${nativeToolCalls.length}），进入原生工具调用模式`);
+        // === v0.8.1: Agentic 多步循环 ===
+        // 替代旧的单次续写逻辑，支持最多 maxAgentSteps 轮工具调用
+        logger.info("api", `检测到原生 tool_calls（数量=${nativeToolCalls.length}），进入 Agentic 循环（最大 ${maxAgentSteps} 步）`);
 
         // 获取当前消息的 agentSteps 作为初始值
         const nativeAgentSteps: AgentStep[] = [
@@ -1361,9 +1454,19 @@ export const createChatSlice: StateCreator<
           toolCalls: [...nativeToolCallRecords, ...persistedToolCalls],
         });
 
-        for (const tc of nativeToolCalls) {
+        // v0.8.1: 循环检测 — 记录已执行的 (tool, query) 对，重复即终止
+        const executedCalls = new Set<string>();
+
+        let currentToolCalls = nativeToolCalls;
+        let stepCount = 0;
+
+        while (stepCount < maxAgentSteps) {
           if (abortController?.signal.aborted) break;
-          try {
+
+          // 执行本轮所有工具调用
+          for (const tc of currentToolCalls) {
+            if (abortController?.signal.aborted) break;
+
             // 解析工具参数
             let toolArgs: { query?: string; keys?: string };
             try {
@@ -1371,142 +1474,159 @@ export const createChatSlice: StateCreator<
             } catch {
               toolArgs = { query: tc.function.arguments };
             }
-
             const queryStr = toolArgs.query ?? '';
-            logger.info("api", `执行原生工具调用: ${tc.function.name}（query=${queryStr.slice(0, 50)}）`);
 
-            // 添加 tool_call 步骤（运行中）
-            const nativeCallStepId = uuidv4();
-            const nativeCallStep: AgentStep = {
-              id: nativeCallStepId,
-              type: "tool_call",
-              title: tc.function.name,
-              content: queryStr,
-              status: "running",
-              startedAt: Date.now(),
-            };
-            nativeAgentSteps.push(nativeCallStep);
-            get().updateMessage(assistantMessageId, {
-              agentSteps: [...nativeAgentSteps],
-            });
+            // v0.8.1: 循环检测 — 同一 (tool, query) 已执行过 → 终止
+            const callKey = `${tc.function.name}|${queryStr.trim().toLowerCase()}`;
+            if (executedCalls.has(callKey)) {
+              logger.warn("api", `检测到重复工具调用（${tc.function.name}: ${queryStr}），终止 Agentic 循环`);
+              stepCount = maxAgentSteps; // 强制退出外层 while
+              break;
+            }
+            executedCalls.add(callKey);
 
-            // 执行工具
-            const rawResult = await executeToolByName(tc.function.name, queryStr);
+            try {
+              logger.info("api", `[Agentic 步骤 ${stepCount + 1}/${maxAgentSteps}] 执行: ${tc.function.name}（query=${queryStr.slice(0, 50)}）`);
 
-            // v0.4.4: 工具结果长度限制（2000 字符）
-            const truncatedResult = rawResult.length > 2000
-              ? rawResult.slice(0, 2000) + '\n...[结果已截断]'
-              : rawResult;
+              // 添加 tool_call 步骤（运行中）
+              const nativeCallStepId = uuidv4();
+              const nativeCallStep: AgentStep = {
+                id: nativeCallStepId,
+                type: "tool_call",
+                title: tc.function.name,
+                content: queryStr,
+                status: "running",
+                startedAt: Date.now(),
+              };
+              nativeAgentSteps.push(nativeCallStep);
+              get().updateMessage(assistantMessageId, {
+                agentSteps: [...nativeAgentSteps],
+              });
 
-            // 标记 tool_call 完成，添加 tool_result 步骤
-            nativeCallStep.status = "completed";
-            nativeCallStep.endedAt = Date.now();
-            const nativeResultStep: AgentStep = {
-              id: uuidv4(),
-              type: "tool_result",
-              title: tc.function.name,
-              content: truncatedResult,
-              status: "completed",
-              startedAt: nativeCallStep.startedAt,
-              endedAt: Date.now(),
-            };
-            nativeAgentSteps.push(nativeResultStep);
+              // 执行工具
+              const rawResult = await executeToolByName(tc.function.name, queryStr);
 
-            // 记录 ToolCall
-            const matchedTool = filteredTools.find(
-              (t) => t.callName === tc.function.name || t.name === tc.function.name,
-            );
-            nativeToolCallRecords.push({
-              id: uuidv4(),
-              toolName: matchedTool?.name ?? tc.function.name,
-              callLabel: tc.function.name,
-              query: queryStr,
-              reason: "native tool_calls",
-              status: "completed" as const,
-              result: truncatedResult,
-            });
+              // v0.4.4: 工具结果长度限制（2000 字符）
+              const truncatedResult = rawResult.length > 2000
+                ? rawResult.slice(0, 2000) + '\n...[结果已截断]'
+                : rawResult;
 
-            // v0.4.6: 将工具结果持久化到 store（使用 user 角色 + XML 标签 + metadata）
-            // buildContext 会识别 metadata.isToolResult 并转换为 OpenAI 的 role:'tool' 格式
-            // 同时保留在 contextMessages 中以兼容当前请求的上下文
-            const toolResultMessage: ChatMessage = {
-              id: uuidv4(),
-              role: "user",
-              content: `<tool_call_result tool="${tc.function.name}">\n${truncatedResult}\n</tool_call_result>`,
-              createdAt: Date.now(),
-              metadata: {
-                toolCallId: tc.id,
-                toolName: tc.function.name,
-                isToolResult: true,
-              },
-            };
-            get().addMessage(toolResultMessage);
-            contextMessages.push(toolResultMessage);
+              // 标记 tool_call 完成，添加 tool_result 步骤
+              nativeCallStep.status = "completed";
+              nativeCallStep.endedAt = Date.now();
+              const nativeResultStep: AgentStep = {
+                id: uuidv4(),
+                type: "tool_result",
+                title: tc.function.name,
+                content: truncatedResult,
+                status: "completed",
+                startedAt: nativeCallStep.startedAt,
+                endedAt: Date.now(),
+              };
+              nativeAgentSteps.push(nativeResultStep);
 
-            // 更新消息
-            get().updateMessage(assistantMessageId, {
-              toolCalls: [...nativeToolCallRecords],
-              agentSteps: [...nativeAgentSteps],
-            });
-          } catch (e) {
-            // v0.4.4: 错误容错 - 工具失败不中断主流程
-            console.warn('[Tool Calls] 工具执行失败:', tc.function.name, e);
-            const errorMsg = e instanceof Error ? e.message : String(e);
+              // 记录 ToolCall
+              const matchedTool = filteredTools.find(
+                (t) => t.callName === tc.function.name || t.name === tc.function.name,
+              );
+              nativeToolCallRecords.push({
+                id: uuidv4(),
+                toolName: matchedTool?.name ?? tc.function.name,
+                callLabel: tc.function.name,
+                query: queryStr,
+                reason: "native tool_calls",
+                status: "completed" as const,
+                result: truncatedResult,
+              });
 
-            // 添加错误步骤
-            const errorStep: AgentStep = {
-              id: uuidv4(),
-              type: "tool_call",
-              title: tc.function.name,
-              content: errorMsg,
-              status: "error",
-              startedAt: Date.now(),
-              endedAt: Date.now(),
-            };
-            nativeAgentSteps.push(errorStep);
+              // v0.4.6: 将工具结果持久化到 store（使用 user 角色 + XML 标签 + metadata）
+              // buildContext 会识别 metadata.isToolResult 并转换为 OpenAI 的 role:'tool' 格式
+              const toolResultMessage: ChatMessage = {
+                id: uuidv4(),
+                role: "user",
+                content: `<tool_call_result tool="${tc.function.name}">\n${truncatedResult}\n</tool_call_result>`,
+                createdAt: Date.now(),
+                metadata: {
+                  toolCallId: tc.id,
+                  toolName: tc.function.name,
+                  isToolResult: true,
+                },
+              };
+              get().addMessage(toolResultMessage);
+              contextMessages.push(toolResultMessage);
 
-            const matchedTool = filteredTools.find(
-              (t) => t.callName === tc.function.name || t.name === tc.function.name,
-            );
-            nativeToolCallRecords.push({
-              id: uuidv4(),
-              toolName: matchedTool?.name ?? tc.function.name,
-              callLabel: tc.function.name,
-              query: '',
-              reason: "native tool_calls",
-              status: "error" as const,
-              error: errorMsg,
-            });
+              // 更新消息
+              get().updateMessage(assistantMessageId, {
+                toolCalls: [...nativeToolCallRecords],
+                agentSteps: [...nativeAgentSteps],
+              });
+            } catch (e) {
+              // v0.4.4: 错误容错 - 工具失败不中断主流程
+              console.warn('[Tool Calls] 工具执行失败:', tc.function.name, e);
+              const errorMsg = e instanceof Error ? e.message : String(e);
 
-            // v0.4.6: 将错误信息持久化到 store（与成功路径一致的格式）
-            const toolErrorMessage: ChatMessage = {
-              id: uuidv4(),
-              role: "user",
-              content: `<tool_call_result tool="${tc.function.name}">\n工具执行失败: ${errorMsg}\n</tool_call_result>`,
-              createdAt: Date.now(),
-              metadata: {
-                toolCallId: tc.id,
-                toolName: tc.function.name,
-                isToolResult: true,
-              },
-            };
-            get().addMessage(toolErrorMessage);
-            contextMessages.push(toolErrorMessage);
+              // 添加错误步骤
+              const errorStep: AgentStep = {
+                id: uuidv4(),
+                type: "tool_call",
+                title: tc.function.name,
+                content: errorMsg,
+                status: "error",
+                startedAt: Date.now(),
+                endedAt: Date.now(),
+              };
+              nativeAgentSteps.push(errorStep);
 
-            get().updateMessage(assistantMessageId, {
-              toolCalls: [...nativeToolCallRecords],
-              agentSteps: [...nativeAgentSteps],
-            });
+              const matchedTool = filteredTools.find(
+                (t) => t.callName === tc.function.name || t.name === tc.function.name,
+              );
+              nativeToolCallRecords.push({
+                id: uuidv4(),
+                toolName: matchedTool?.name ?? tc.function.name,
+                callLabel: tc.function.name,
+                query: '',
+                reason: "native tool_calls",
+                status: "error" as const,
+                error: errorMsg,
+              });
+
+              // v0.4.6: 将错误信息持久化到 store（与成功路径一致的格式）
+              const toolErrorMessage: ChatMessage = {
+                id: uuidv4(),
+                role: "user",
+                content: `<tool_call_result tool="${tc.function.name}">\n工具执行失败: ${errorMsg}\n</tool_call_result>`,
+                createdAt: Date.now(),
+                metadata: {
+                  toolCallId: tc.id,
+                  toolName: tc.function.name,
+                  isToolResult: true,
+                },
+              };
+              get().addMessage(toolErrorMessage);
+              contextMessages.push(toolErrorMessage);
+
+              get().updateMessage(assistantMessageId, {
+                toolCalls: [...nativeToolCallRecords],
+                agentSteps: [...nativeAgentSteps],
+              });
+            }
           }
-        }
 
-        // 更新消息的 agentSteps
-        get().updateMessage(assistantMessageId, { agentSteps: [...nativeAgentSteps] });
+          // 更新消息的 agentSteps
+          get().updateMessage(assistantMessageId, { agentSteps: [...nativeAgentSteps] });
 
-        // 续写（基于工具结果继续生成）
-        if (!abortController?.signal.aborted && nativeToolCalls.length > 0) {
-          logger.info("api", "原生工具调用完成，发起续写请求");
-          // 创建新的 assistant 消息用于续写
+          if (stepCount >= maxAgentSteps) break;
+
+          stepCount++;
+          if (stepCount >= maxAgentSteps) {
+            logger.warn("api", `达到最大 Agentic 步数: ${maxAgentSteps}`);
+            break;
+          }
+
+          if (abortController?.signal.aborted) break;
+
+          // v0.8.1: 续写请求 — tool_choice: 'auto'，仍注入 tools 支持多步循环
+          logger.info("api", `Agentic 循环续写（步骤 ${stepCount}/${maxAgentSteps}），发起续写请求`);
           const continuationMessage: ChatMessage = {
             id: uuidv4(),
             role: "assistant",
@@ -1520,28 +1640,40 @@ export const createChatSlice: StateCreator<
           const newContextMessages = get().messages.filter(
             (m) => m.id !== continuationMessage.id,
           );
-          // v0.4.6: 续写请求不追加 cotContent（工具结果已在 messages 中，避免顺序错乱）
-          // 续写时从 get().messages 取（已包含 assistant(tool_calls) + user(tool_result) 消息）
-          // v0.4.6: 续写请求不注入 tools，防止模型再次发起 tool_calls 导致无限循环
-          // v0.4.6: 原生 tool_calls 路径无需 MAX_CONTINUATIONS 循环保护，
-          //         因为 skipToolsInjection=true 在 API 层面阻止模型再次发起 tool_calls
-          await callApiWithRetry(
+          // v0.8.1: 续写请求注入 tools（skipToolsInjection=false），支持模型继续调用工具
+          // forceToolCall=false → tool_choice: 'auto'，模型可选择继续调用或输出正文
+          const { toolCalls: nextToolCalls } = await callApiWithRetry(
             continuationMessage.id,
             newContextMessages,
-            true, // v0.4.6: skipToolsInjection
+            {
+              skipToolsInjection: false, // 关键修复: 续写仍注入 tools
+              forceToolCall: false,      // 续写用 auto，模型可选择继续调用或输出正文
+            },
           );
+
+          if (!nextToolCalls || nextToolCalls.length === 0) {
+            logger.info("api", `Agentic 循环完成（${stepCount} 步），模型输出最终正文`);
+            break;
+          }
+
+          // 模型发起了新的工具调用，继续循环
+          currentToolCalls = nextToolCalls;
         }
+
+        // 最终更新 agentSteps
+        get().updateMessage(assistantMessageId, { agentSteps: [...nativeAgentSteps] });
       } else if (activeTools.length > 0 || builtinToolConfigs.some((c) => c.enabled)) {
         // v0.7.1: 单阶段架构 — 模型通过原生 tool_calls 自行决定工具调用
-        // 文本标签续写循环保留（MAX_CONTINUATIONS），用于处理模型输出 <tool_calls> 文本标签的场景
-        const v071MaxContinuations = MAX_CONTINUATIONS;
+        // v0.8.1: 文本标签续写循环保留，用于处理模型输出 <tool_calls> 文本标签的场景
+        //         迭代上限从 MAX_CONTINUATIONS 改为动态 maxAgentSteps
+        const v071MaxContinuations = maxAgentSteps;
         const characterUuid = currentCharacter?.uuid ?? null;
         const filteredTools = filterToolsForCharacter(
           activeTools,
           characterUuid,
         );
 
-        // v0.4.6: 最多迭代 MAX_CONTINUATIONS 次以防止无限循环
+        // v0.8.1: 最多迭代 maxAgentSteps 次以防止无限循环
         for (let iteration = 0; iteration < v071MaxContinuations; iteration++) {
           if (iteration === v071MaxContinuations - 1) {
             logger.warn("api", "达到最大续写次数限制: " + v071MaxContinuations);
@@ -1638,11 +1770,11 @@ export const createChatSlice: StateCreator<
               const newContextMessages = get().messages.filter(
                 (m) => m.id !== continuationMessage.id,
               );
-              // v0.4.6: 续写请求不注入 tools，防止无限循环
+              // v0.8.1: 续写请求注入 tools（skipToolsInjection=false），支持 Agentic 多步循环
               await callApiWithRetry(
                 continuationMessage.id,
                 newContextMessages,
-                true, // skipToolsInjection
+                { skipToolsInjection: false },
               );
 
               currentAssistantId = continuationMessage.id;
@@ -1739,6 +1871,7 @@ export const createChatSlice: StateCreator<
               await callApiWithRetry(
                 continuationMessage.id,
                 newContextMessages,
+                { skipToolsInjection: false }, // v0.8.1: 续写注入 tools 支持 Agentic 循环
               );
 
             // 检查空响应

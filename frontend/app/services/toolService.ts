@@ -953,20 +953,20 @@ const executeWorldInfoSearch = (
     if (enabled.length === 0) {
       return '<active_tool_result status="empty" world_info_mode="list">没有已启用的世界书条目。</active_tool_result>';
     }
-    const names = enabled.map((e, i) => `  <entry index="${i + 1}" name="${e.id}">`).join('\n');
+    const names = enabled.map((e, i) => `  <entry index="${i + 1}" name="${e.name || e.id}">`).join('\n');
     return `<active_tool_result status="ok" type="world_info" world_info_mode="list">\n${names}\n</active_tool_result>`;
   }
 
   if (cleanQuery.toLowerCase().startsWith('read ')) {
     const targetName = cleanQuery.slice(5).trim();
     const matched = enabled.filter((e) =>
-      String(e.id || '').toLowerCase().includes(targetName.toLowerCase()),
+      String(e.name || e.id || '').toLowerCase().includes(targetName.toLowerCase()),
     );
     if (matched.length === 0) {
       return `<active_tool_result status="empty" world_info_mode="read">未找到名称包含 "${targetName}" 的世界书条目。</active_tool_result>`;
     }
     const formatted = matched
-      .map((e, i) => `  <entry index="${i + 1}" name="${e.id}">\n    ${trimText(e.content, 6000)}\n  </entry>`)
+      .map((e, i) => `  <entry index="${i + 1}" name="${e.name || e.id}">\n    ${trimText(e.content, 6000)}\n  </entry>`)
       .join('\n\n');
     return `<active_tool_result status="ok" type="world_info" world_info_mode="read">\n${formatted}\n</active_tool_result>`;
   }
@@ -1000,7 +1000,7 @@ const executeWorldInfoSearch = (
     .slice(0, ACTIVE_TOOL_MAX_RESULT_COUNT)
     .map((item, i) => {
       const e = item.entry;
-      return `  <entry index="${i + 1}" name="${e.id}" order="${e.order}">\n    ${trimText(e.content, 4000)}\n  </entry>`;
+      return `  <entry index="${i + 1}" name="${e.name || e.id}" order="${e.order}">\n    ${trimText(e.content, 4000)}\n  </entry>`;
     })
     .join('\n\n');
 

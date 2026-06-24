@@ -173,6 +173,8 @@ export interface SettingsSlice {
   setTranslationSettings: (settings: Partial<TranslationSettings>) => void;
   setHighlightSettings: (settings: Partial<HighlightSettings>) => void;
   setToolGlobalMode: (mode: ToolGlobalSettings['mode']) => void;
+  /** v0.8.1: 设置 Agentic 循环最大步数（1-20） */
+  setMaxAgentSteps: (steps: number) => void;
   updateBuiltinToolConfig: (
     type: BuiltinToolType,
     partial: Partial<BuiltinToolConfig>,
@@ -301,6 +303,61 @@ export interface SkillSlice {
 }
 
 // ============================================================================
+// TRPG Slice（v0.8.0 新增）
+// ============================================================================
+
+import type {
+  TrpgMode,
+  TrpgMessage,
+  SaveSlot,
+  WorldCard,
+} from '~/types/trpg';
+import type { SemiStableCache } from '~/services/trpg/trpgContextService';
+
+/** TRPG Sheet 面板类型 */
+export type TrpgSheetType = 'save' | 'inventory' | 'character' | 'map' | 'settings' | null;
+
+/** TRPG Slice */
+export interface TrpgSlice {
+  // ===== 状态 =====
+  trpgMode: TrpgMode;
+  trpgModel: string;
+  trpgMessages: TrpgMessage[];
+  trpgSave: SaveSlot | null;
+  trpgWorldCard: WorldCard | null;
+  trpgIsGenerating: boolean;
+  trpgInputDraft: string;
+  trpgActiveSheet: TrpgSheetType;
+  trpgAllSaves: SaveSlot[];
+  trpgAllWorldCards: WorldCard[];
+  /** v0.8.0: 半稳定层缓存（跨轮次复用 layer2，最大化 KV 缓存命中） */
+  trpgPrevSemiStable: SemiStableCache | null;
+
+  // ===== Actions：模式与设置 =====
+  setTrpgMode: (mode: TrpgMode) => void;
+  setTrpgModel: (model: string) => void;
+  loadTrpgModel: () => void;
+
+  // ===== Actions：输入 =====
+  setTrpgInputDraft: (draft: string) => void;
+  setTrpgActiveSheet: (sheet: TrpgSheetType) => void;
+
+  // ===== Actions：存档管理 =====
+  loadTrpgSave: (saveId: string) => Promise<void>;
+  createTrpgSave: (worldCardId: string | null, character?: import('~/types/trpg').TrpgCharacter) => Promise<string>;
+  saveTrpgSave: () => Promise<void>;
+  deleteTrpgSave: (saveId: string) => Promise<void>;
+  loadAllSaves: () => Promise<void>;
+  loadAllWorldCards: () => Promise<void>;
+  importWorldCard: (json: string) => Promise<void>;
+  removeWorldCard: (cardId: string) => Promise<void>;
+
+  // ===== Actions：消息发送 =====
+  sendTrpgMessage: (input: string) => Promise<void>;
+  stopTrpgGenerating: () => void;
+}
+
+// ============================================================================
 // 组合类型
 // ============================================================================
 
@@ -312,4 +369,5 @@ export type AppStoreState = SettingsSlice &
   ClockSlice &
   SessionSlice &
   KnowledgeBaseSlice &
-  SkillSlice;
+  SkillSlice &
+  TrpgSlice;
