@@ -1,9 +1,9 @@
 <div align="center">
 
-<img src="docs/brand-logos/luzzy.png" width="80" height="80" alt="LUZZY" />&nbsp;&nbsp;&nbsp;
-<img src="docs/brand-logos/deepseek.png" width="80" height="80" alt="DeepSeek" />&nbsp;&nbsp;&nbsp;
-<img src="docs/brand-logos/zai.png" width="80" height="80" alt="Z.ai · 智谱清言" />&nbsp;&nbsp;&nbsp;
-<img src="docs/brand-logos/trae.png" width="80" height="80" alt="Trae IDE & Trae Work" />
+<img src="doc/brand-logos/luzzy.png" width="80" height="80" alt="LUZZY" />&nbsp;&nbsp;&nbsp;
+<img src="doc/brand-logos/deepseek.png" width="80" height="80" alt="DeepSeek" />&nbsp;&nbsp;&nbsp;
+<img src="doc/brand-logos/zai.png" width="80" height="80" alt="Z.ai · 智谱清言" />&nbsp;&nbsp;&nbsp;
+<img src="doc/brand-logos/trae.png" width="80" height="80" alt="Trae IDE & Trae Work" />
 
 # LUZZY · 鹿溪
 
