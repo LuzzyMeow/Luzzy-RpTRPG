@@ -661,10 +661,7 @@ function LuzzyChatMessageImpl({
         )}
         */}
 
-        {/* v0.7.0: 世界书召回（被动预执行结果） */}
-        {!isUser && message.worldInfoRecalls && message.worldInfoRecalls.length > 0 && (
-          <WorldInfoRecallsCard recalls={message.worldInfoRecalls} />
-        )}
+        {/* v0.7.0: 世界书召回结果已合并到时间线 memory_inject 节点中展示，不再单独渲染卡片 */}
 
         {/* 消息正文 */}
         <div

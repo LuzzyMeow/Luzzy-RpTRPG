@@ -1135,7 +1135,7 @@ export const createChatSlice: StateCreator<
                 id: uuidv4(),
                 type: "memory_inject",
                 title: "世界书召回",
-                content: `查询: ${worldRecallQuery}\n结果: ${sorted.length} 条`,
+                content: recallText,
                 status: "completed",
                 startedAt: Date.now(),
                 endedAt: Date.now(),
@@ -1267,12 +1267,13 @@ export const createChatSlice: StateCreator<
       }
       if (abortController?.signal.aborted) return;
 
-      // 请求3: 正文
-      logger.info("api", "API 请求阶段3: 正文生成");
-      const { content: accumulatedContent, reasoning: accumulatedReasoning, toolCalls: nativeToolCallsFromMain } =
-        await callApiWithRetry(assistantMessageId, contextMessages, "main", cotContent);
-      console.log('[Phase main result]', accumulatedContent.slice(0, 100));
-      logger.info("api", `API 响应阶段3: 正文完成（字符数=${accumulatedContent.length}）`);
+      // v0.7.0: 两阶段架构 — 阶段2 已同时完成 CoT 思考和正文输出，取消第三次请求
+      // 阶段2返回值: content=正文, reasoning=CoT思考, cot=CoT内容(降级模式)
+      // v0.7.0-fix: nativeToolCallsFromMain 设为 null，防止阶段2触发续写导致重复 CoT+正文
+      const accumulatedContent = cotRawContent;
+      const accumulatedReasoning = cotReasoning;
+      const nativeToolCallsFromMain = null as Array<{ id: string; function: { name: string; arguments: string } }> | null;
+      logger.info("api", `API 响应阶段2: CoT+正文完成（CoT=${cotContent.length}字符，正文=${accumulatedContent.length}字符）`);
       logger.info("chat", `消息接收完成（CoT=${cotContent.length}字符，正文=${accumulatedContent.length}字符）`);
 
       // v0.5.3: Phase 3 完成后检查 abort，避免卸载后继续执行工具调用
@@ -1747,8 +1748,10 @@ export const createChatSlice: StateCreator<
           );
         }
       } else if (activeTools.length > 0 || builtinToolConfigs.some((c) => c.enabled)) {
-        // === 回退到文本标签解析模式（原有逻辑） ===
-        // v0.4.6: 同时支持用户工具和内置工具的文本标签
+        // v0.7.0-fix: 两阶段架构 — 阶段2 是最终阶段，不需要文本标签续写
+        // 工具决策在阶段1 已完成，阶段2 仅输出 CoT+正文
+        // 将 MAX_CONTINUATIONS 降为 0，跳过续写循环，防止重复 CoT+正文
+        const v070MaxContinuations = 0;
         const characterUuid = currentCharacter?.uuid ?? null;
         const filteredTools = filterToolsForCharacter(
           activeTools,
@@ -1756,9 +1759,9 @@ export const createChatSlice: StateCreator<
         );
 
         // v0.4.6: 最多迭代 MAX_CONTINUATIONS 次以防止无限循环
-        for (let iteration = 0; iteration < MAX_CONTINUATIONS; iteration++) {
-          if (iteration === MAX_CONTINUATIONS - 1) {
-            logger.warn("api", "达到最大续写次数限制: " + MAX_CONTINUATIONS);
+        for (let iteration = 0; iteration < v070MaxContinuations; iteration++) {
+          if (iteration === v070MaxContinuations - 1) {
+            logger.warn("api", "达到最大续写次数限制: " + v070MaxContinuations);
           }
           // 检查是否已被用户取消，避免取消后继续发起工具调用与 API 请求
           if (abortController?.signal.aborted) break;
