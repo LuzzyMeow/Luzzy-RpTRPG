@@ -6,6 +6,7 @@ import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import java.lang.ref.WeakReference
 
 /**
  * WebViewClient:控制 URL 加载行为。
@@ -16,12 +17,15 @@ import android.webkit.WebViewClient
  * - 仅处理 shouldOverrideUrlLoading:把内部链接(localhost / 127.0.0.1)留给 WebView,
  *   外部链接(http/https 真实域名)交由系统浏览器打开
  * - v0.4.6: onPageFinished 通知 MainActivity WebView 已加载完成,关闭 SplashScreen
+ * - v0.8.6-fix: 使用 WeakReference 持有 Activity,避免内存泄漏
  */
-class LuzzyWebViewClient(private val activity: MainActivity) : WebViewClient() {
+class LuzzyWebViewClient(activity: MainActivity) : WebViewClient() {
 
     companion object {
         private const val TAG = "LuzzyWebViewClient"
     }
+
+    private val activityRef = WeakReference<MainActivity>(activity)
 
     override fun shouldOverrideUrlLoading(
         view: WebView?,
@@ -29,6 +33,7 @@ class LuzzyWebViewClient(private val activity: MainActivity) : WebViewClient() {
     ): Boolean {
         val url = request?.url ?: return false
         val host = url.host ?: return false
+        val activity = activityRef.get() ?: return false
         // 内部链接(本地 HTTP 服务器、API 代理服务器)在 WebView 内打开
         if (host == "localhost" || host == "127.0.0.1") {
             return false
@@ -48,7 +53,7 @@ class LuzzyWebViewClient(private val activity: MainActivity) : WebViewClient() {
     // v0.4.6: 页面加载完成,通知 MainActivity 关闭 SplashScreen
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
-        activity.onWebViewPageFinished()
+        activityRef.get()?.onWebViewPageFinished()
         Log.i(TAG, "Page finished: $url")
     }
 }

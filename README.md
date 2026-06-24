@@ -18,7 +18,7 @@
 
 > **每次对话，都像一本有你的小说。**
 
-[![Version](https://img.shields.io/badge/version-v0.8.5-9d4edd?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.8.6-9d4edd?style=flat-square)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-ffb703?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-219ebc?style=flat-square)](#)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -126,6 +126,10 @@ RP-Hub/
 ---
 
 ## 最新动态
+
+### v0.8.6
+
+APK 启动闪退根因修复：app/build.gradle 缺少 Kotlin 插件声明导致 5 个 .kt 文件未编译进 APK，启动时 ClassNotFoundException 立即闪退。同步修复 java.util.Base64 在 Android 7.0/7.1 崩溃、SplashScreen 死锁、NanoHTTPD 主线程阻塞、restoreState 白屏、服务器启动失败无错误页面、Capacitor 依赖清理、WebView Client 内存泄漏、sessionStorage 异常。
 
 ### v0.8.5
 

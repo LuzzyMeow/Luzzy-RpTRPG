@@ -3,6 +3,8 @@ package com.luzzymeow.luzzy
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
@@ -15,6 +17,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import fi.iki.elonen.NanoHTTPD
 
@@ -118,11 +122,29 @@ class MainActivity : AppCompatActivity() {
         splashScreenViewProvider.setKeepOnScreenCondition { !webViewLoaded }
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        // 先启动资源服务器(含重试),再 initWebView 加载页面
-        startWebAssetServerIfNeeded()
+        // v0.8.6-fix: SplashScreen 超时兜底,避免 WebAssetServer 启动失败时永久卡住
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!webViewLoaded) {
+                webViewLoaded = true
+                Log.w(TAG, "Splash timeout (10s), forcing dismiss")
+            }
+        }, 10000)
+        // v0.8.6-fix: 服务器启动移到后台线程,避免主线程阻塞导致 ANR
+        // 使用 CountDownLatch 同步,最多等待 2 秒
+        val serverLatch = CountDownLatch(1)
+        Thread {
+            startWebAssetServerIfNeeded()
+            serverLatch.countDown()
+        }.start()
+        try {
+            serverLatch.await(2, TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Log.w(TAG, "Server startup wait interrupted: ${e.message}")
+        }
         initWebView(savedInstanceState)
         registerDownloadListenerIfNeeded()
-        startProxyServerIfNeeded()
+        // API Proxy Server 非关键路径,完全异步启动
+        Thread { startProxyServerIfNeeded() }.start()
     }
 
     override fun onResume() {
@@ -133,8 +155,11 @@ class MainActivity : AppCompatActivity() {
             webView.resumeTimers()
         }
         registerDownloadListenerIfNeeded()
-        startWebAssetServerIfNeeded()
-        startProxyServerIfNeeded()
+        // v0.8.6-fix: 服务器启动移到后台线程,避免主线程阻塞
+        Thread {
+            startWebAssetServerIfNeeded()
+            startProxyServerIfNeeded()
+        }.start()
     }
 
     // v0.4.6: 完善 WebView 生命周期,避免从其他 app 返回时白屏
@@ -277,15 +302,31 @@ class MainActivity : AppCompatActivity() {
         // v0.4.6: 优先恢复 WebView 状态(避免 Activity 重建后白屏)
         // 注意:restoreState 恢复的是 WebView 历史栈,不恢复前端 JS 状态
         // 前端使用 IndexedDB 持久化,恢复后会从存储重新加载
+        // v0.8.6-fix: restoreState 后不提前 return,继续执行 loadUrl 作为兜底
+        // 避免 WebAssetServer 未就绪时恢复的页面无法加载资源
         if (savedInstanceState != null) {
             val restored = webView.restoreState(savedInstanceState)
             if (restored != null) {
                 Log.i(TAG, "WebView state restored from savedInstanceState")
-                // 状态恢复后,WebView 会自动加载历史栈顶部的 URL
-                // 但如果 WebAssetServer 未就绪,需要等待
                 webViewLoaded = false
-                return
             }
+        }
+
+        // v0.8.6-fix: 服务器启动失败时加载本地错误页面,避免白屏
+        if (webAssetServer == null || !webAssetServer!!.isAlive) {
+            Log.e(TAG, "WebAssetServer not running, loading error page")
+            webView.loadDataWithBaseURL(
+                null,
+                """<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+                <body style="font-family:sans-serif;padding:24px;text-align:center;background:#f5f5f5;color:#333">
+                <h2>启动失败</h2><p>资源服务器启动失败,请重启应用。</p>
+                <p style="color:#999;font-size:12px">如果问题持续,请清除应用数据后重试。</p>
+                </body></html>""".trimIndent(),
+                "text/html",
+                "UTF-8",
+                null
+            )
+            return
         }
 
         // 加载前端入口
@@ -331,8 +372,9 @@ class MainActivity : AppCompatActivity() {
 
     // v0.4.6: WebAssetServer 启动添加重试逻辑(最多 3 次,间隔 100ms)
     // 避免端口占用或初始化竞态导致白屏
-    private fun startWebAssetServerIfNeeded() {
-        if (webAssetServer != null && webAssetServer!!.isAlive) return
+    // v0.8.6-fix: 返回 Boolean 表示启动成功/失败,供调用方决定是否加载错误页面
+    private fun startWebAssetServerIfNeeded(): Boolean {
+        if (webAssetServer != null && webAssetServer!!.isAlive) return true
         val maxRetries = 3
         var attempt = 0
         while (attempt < maxRetries) {
@@ -340,7 +382,7 @@ class MainActivity : AppCompatActivity() {
                 webAssetServer = WebAssetServer(applicationContext, WEB_ASSET_PORT)
                 webAssetServer!!.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
                 Log.i(TAG, "Web Asset Server started on port $WEB_ASSET_PORT (attempt ${attempt + 1})")
-                return
+                return true
             } catch (e: Exception) {
                 attempt++
                 Log.e(TAG, "Failed to start Web Asset Server (attempt $attempt/$maxRetries): ${e.message}", e)
@@ -350,11 +392,17 @@ class MainActivity : AppCompatActivity() {
                 } catch (ignore: Exception) {}
                 webAssetServer = null
                 if (attempt < maxRetries) {
-                    Thread.sleep(100)
+                    try {
+                        Thread.sleep(100)
+                    } catch (ignore: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
                 }
             }
         }
         Log.e(TAG, "Web Asset Server failed to start after $maxRetries attempts")
+        return false
     }
 
     private fun stopWebAssetServer() {

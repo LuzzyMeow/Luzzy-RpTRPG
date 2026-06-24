@@ -59,7 +59,12 @@ function AppContent() {
   const location = useLocation();
   const [showSplash, setShowSplash] = useState(() => {
     // 本会话已显示过启动屏则跳过
-    return sessionStorage.getItem("luzzy-splash-shown") ? false : true;
+    // v0.8.6-fix: 包裹 try-catch,避免 WebView 隐私模式下 sessionStorage 抛 SecurityError
+    try {
+      return sessionStorage.getItem("luzzy-splash-shown") ? false : true;
+    } catch {
+      return true;
+    }
   });
 
   // v0.3.6: 修复从后台切回前台时白屏问题
@@ -192,7 +197,12 @@ function AppContent() {
               <LuzzySplash
                 onComplete={() => {
                   setShowSplash(false);
-                  sessionStorage.setItem("luzzy-splash-shown", "1");
+                  // v0.8.6-fix: 包裹 try-catch,避免 WebView 隐私模式下 sessionStorage 抛 SecurityError
+                  try {
+                    sessionStorage.setItem("luzzy-splash-shown", "1");
+                  } catch {
+                    // ignore
+                  }
                 }}
               />
             ) : (

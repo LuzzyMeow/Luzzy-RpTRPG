@@ -7,12 +7,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
-import java.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -65,7 +65,7 @@ class NativeBridge(private val context: Context) {
             val baseDir = resolveDirectory(directory) ?: return ""
             val targetFile = File(baseDir, path)
             if (recursive) targetFile.parentFile?.mkdirs()
-            val bytes = Base64.getDecoder().decode(base64Data)
+            val bytes = Base64.decode(base64Data, Base64.DEFAULT)
             FileOutputStream(targetFile).use { it.write(bytes) }
             val uri = FileProvider.getUriForFile(
                 context,

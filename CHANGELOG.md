@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.8.6
+
+### 🚨 P0 根因修复：APK 启动闪退
+
+- **Kotlin 插件缺失修复**：`android/app/build.gradle` 缺少 `apply plugin: 'org.jetbrains.kotlin.android'`，导致 5 个 `.kt` 文件（MainActivity.kt、NativeBridge.kt、WebAssetServer.kt、LuzzyWebViewClient.kt、LuzzyWebChromeClient.kt）未被编译进 APK，AndroidManifest 引用的 `com.luzzymeow.luzzy.MainActivity` 类不存在，启动时抛出 `ClassNotFoundException` 立即闪退
+
+### 🔧 P1 严重风险修复
+
+- **Base64 兼容性修复**：`NativeBridge.kt` 使用 `java.util.Base64`（Java 8 API，需 API 26+），在 Android 7.0/7.1（API 24-25）上调用 `writeFile` 时抛出 `NoClassDefFoundError`；替换为 `android.util.Base64`
+- **SplashScreen 死锁修复**：`webViewLoaded` 仅在 `onPageFinished` 中设为 true，WebAssetServer 启动失败时永久卡住；新增 10 秒超时兜底强制关闭 SplashScreen
+- **NanoHTTPD 主线程阻塞修复**：`startWebAssetServerIfNeeded()` 和 `startProxyServerIfNeeded()` 在主线程执行 socket 绑定 + `Thread.sleep(100)`，严重时触发 ANR；移到后台线程启动，使用 `CountDownLatch` 同步等待最多 2 秒
+
+### 🛠️ P2 中等风险修复
+
+- **restoreState 白屏修复**：Activity 重建后 `restoreState` 成功时提前 `return` 跳过 `loadUrl`，WebAssetServer 未就绪时恢复的页面无法加载资源；改为继续执行 `loadUrl` 作为兜底
+- **服务器启动失败错误页面**：3 次重试失败后仅记录日志，WebView 尝试加载不存在的服务器显示白屏；新增本地错误页面加载
+- **Capacitor 依赖清理**：项目已迁移到原生 Kotlin 架构，但 build.gradle 仍保留 `implementation project(':capacitor-android')` 和 `implementation project(':capacitor-cordova-android-plugins')`；移除未使用的 Capacitor 依赖、settings.gradle include、capacitor.build.gradle apply、capacitor.config.json
+
+### 🧹 P3 低风险优化
+
+- **WebView Client 内存泄漏修复**：`LuzzyWebViewClient` 和 `LuzzyWebChromeClient` 持有 MainActivity 强引用，Activity 销毁后回调可能崩溃；改为 `WeakReference<MainActivity>`
+- **sessionStorage 异常保护**：WebView 隐私模式下 `sessionStorage.getItem/setItem` 可能抛 `SecurityError`；包裹 try-catch
+- **JVM Target 统一**：Kotlin 默认 JVM 21，Java 默认 1.8，编译报 `Inconsistent JVM-target compatibility`；统一为 JVM 17
+
+### 📦 工程变更
+
+- Android `versionCode` 48→49，`versionName` 0.8.5→0.8.6
+- 前端版本号同步 v0.8.5→v0.8.6
+- `android-patches/build.gradle` 同步所有修复
+
 ## v0.8.5
 
 ### 🔧 深度检查与优化

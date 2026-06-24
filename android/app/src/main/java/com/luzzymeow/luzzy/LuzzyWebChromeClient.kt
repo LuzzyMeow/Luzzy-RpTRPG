@@ -8,16 +8,20 @@ import android.webkit.JsResult
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import java.lang.ref.WeakReference
 
 /**
  * WebChromeClient:处理 console.log、JS alert/confirm/prompt、文件选择等。
  *
  * 将前端 console 输出转发到 Android Logcat,便于调试。
  * v0.4.6: 重写 onShowFileChooser,支持 <input type="file"> 角色卡导入。
+ * v0.8.6-fix: 使用 WeakReference 持有 Activity,避免内存泄漏
  */
 class LuzzyWebChromeClient(
-    private val activity: MainActivity
+    activity: MainActivity
 ) : WebChromeClient() {
+
+    private val activityRef = WeakReference<MainActivity>(activity)
 
     override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
         val msg = consoleMessage ?: return super.onConsoleMessage(consoleMessage)
@@ -52,6 +56,10 @@ class LuzzyWebChromeClient(
         filePathCallback: ValueCallback<Array<Uri>>?,
         fileChooserParams: FileChooserParams?
     ): Boolean {
+        val activity = activityRef.get() ?: run {
+            filePathCallback?.onReceiveValue(null)
+            return false
+        }
         activity.cancelFilePathCallback()
         activity.filePathCallback = filePathCallback
 
