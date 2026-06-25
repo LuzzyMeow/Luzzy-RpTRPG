@@ -44,7 +44,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.8.9";
+const APP_VERSION = "v0.8.10";
 
 /** v0.5.8: 关于页动态文案轮播 */
 const ABOUT_PHRASES = [
@@ -242,7 +242,11 @@ export default function AboutPage() {
   }, [allLogs, categoryFilter, levelFilter]);
 
   // v0.8.7-urgent: useDeferredValue 让 React 在空闲时处理日志列表渲染，避免阻塞流式
+  // v0.8.10-fix: allLogs 为空时跳过 deferred，避免首次进入关于页时空白一闪
+  // 注意：保持 useDeferredValue 始终调用以遵守 React hooks 规则（hooks 顺序必须稳定），
+  // 用 displayLogs 派生变量在渲染层跳过 deferred 结果
   const deferredLogs = React.useDeferredValue(filteredLogs);
+  const displayLogs = allLogs.length === 0 ? [] : deferredLogs;
 
   // v0.5.8: 日志自动吸附底部
   React.useEffect(() => {
@@ -541,13 +545,13 @@ export default function AboutPage() {
                     onScroll={handleLogScroll}
                     className="max-h-[600px] overflow-auto rounded-md border bg-muted/30 cv-auto" // v0.8.7-urgent: D7 添加 cv-auto 优化长列表渲染
                   >
-                    {deferredLogs.length === 0 ? (
+                    {displayLogs.length === 0 ? (
                       <div className="p-4 text-center text-xs text-muted-foreground">
                         暂无匹配日志。去聊一句触发流式诊断吧。
                       </div>
                     ) : (
                       <div className="space-y-0">
-                        {deferredLogs.map((entry, idx) => {
+                        {displayLogs.map((entry, idx) => {
                           const isExpanded = expandedId === idx;
                           const colorClass = LEVEL_COLORS[entry.level];
                           return (
@@ -607,7 +611,7 @@ export default function AboutPage() {
                     )}
                   </div>
                   {/* v0.5.8: 回到底部浮动按钮（在滚动容器外，relative 容器内） */}
-                  {userScrolledUp && deferredLogs.length > 0 && (
+                  {userScrolledUp && displayLogs.length > 0 && (
                     <div className="absolute bottom-3 right-3 z-10">
                       <Button
                         variant="secondary"

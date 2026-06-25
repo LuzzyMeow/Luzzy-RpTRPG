@@ -9,6 +9,8 @@
 
 import type { ThinkingDepth } from "~/types/luzzy";
 import { isNativePlatform } from "~/services/nativeBridge";
+// v0.8.10: 流式诊断日志（请求/响应/首块时间戳），便于排查"API 是否真流"
+import { logger } from "~/services/logger";
 
 /** 本地代理基础地址（仅原生平台使用） */
 const NATIVE_PROXY_BASE = "http://localhost:18527";
@@ -973,6 +975,15 @@ const sendStreamRequestViaFetch = async (
 ): Promise<StreamRequestResult> => {
   const { url, apiKey, body, signal, onChunk, onError } = params;
 
+  // v0.8.10: 流式诊断日志 — 请求发起时记录 url / model / stream / thinking 字段
+  // 便于排查"API 是否真流"问题（如 stream=false 导致非流式响应、thinking 配置错误等）
+  const requestStartTs = Date.now();
+  const bodyForLog = body as Record<string, unknown>;
+  logger.info(
+    "stream",
+    `请求发起: url=${url} model=${String(bodyForLog.model ?? "?")} stream=${String(bodyForLog.stream ?? "?")} thinking=${JSON.stringify(bodyForLog.thinking ?? "?")}`,
+  );
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -1006,6 +1017,12 @@ const sendStreamRequestViaFetch = async (
 
   const contentType = response.headers.get("content-type") ?? "";
   const isStream = contentType.includes("text/event-stream");
+  // v0.8.10: 流式诊断日志 — 记录响应 content-type 与是否走流式路径
+  // 若 isStream=false 但请求 stream=true，说明 API 未返回流式响应（可能是代理或网关转码）
+  logger.info(
+    "stream",
+    `响应接收: content-type="${contentType}" isStream=${isStream} elapsed=${Date.now() - requestStartTs}ms`,
+  );
   const reader = isStream ? response.body?.getReader() : undefined;
 
   if (!isStream || !reader) {
@@ -1053,11 +1070,21 @@ const sendStreamRequestViaFetch = async (
   // 流式响应：逐块读取并解析 SSE
   const decoder = new TextDecoder();
   let buffer = "";
+  // v0.8.10: 流式诊断日志 — 记录首块到达时间，便于排查 API 流式延迟（如代理缓冲、网关 batch）
+  let firstChunkTs = 0;
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      // v0.8.10: 首块到达时记录 elapsed（仅记录一次）
+      if (firstChunkTs === 0) {
+        firstChunkTs = Date.now();
+        logger.info(
+          "stream",
+          `首块到达: elapsed=${firstChunkTs - requestStartTs}ms`,
+        );
+      }
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";

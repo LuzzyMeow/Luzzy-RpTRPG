@@ -114,7 +114,9 @@ export default function TrpgPage() {
     return source.slice(-displayCount);
   }, [trpgMode, trpgDesignSession?.messages, trpgMessages, displayCount]);
   // v0.8.7-urgent: D11 useDeferredValue 让 React 在空闲时处理消息列表更新，避免阻塞流式渲染
-  const deferredVisibleMessages = React.useDeferredValue(visibleMessages);
+  // v0.8.10-fix: 流式期间不使用 useDeferredValue，避免流式内容被无限期推迟（与 chat.tsx 修复对齐）
+  // 注意：非流式期间保留 useDeferredValue 优化长列表渲染性能
+  const deferredVisibleMessages = trpgIsGenerating ? visibleMessages : React.useDeferredValue(visibleMessages);
 
   // ===== 初始化 =====
   React.useEffect(() => {
@@ -355,7 +357,7 @@ export default function TrpgPage() {
                 />
               )
             ) : (
-              <div className="cv-auto mx-auto max-w-3xl space-y-4">
+              <div className={`${trpgIsGenerating ? "" : "cv-auto"} mx-auto max-w-3xl space-y-4`}>
                 {isLoadingMore && (
                   <motion.div
                     initial={{ opacity: 0 }}
@@ -373,7 +375,7 @@ export default function TrpgPage() {
                   </motion.div>
                 )}
                 <AnimatePresence mode="sync">
-                  {deferredVisibleMessages.map((msg) => ( // v0.8.7-urgent: D11 使用 deferredVisibleMessages
+                  {deferredVisibleMessages.map((msg, i) => ( // v0.8.7-urgent: D11 使用 deferredVisibleMessages
                     <motion.div
                       key={msg.id}
                       initial={{ opacity: 0, y: 12 }}
@@ -387,6 +389,8 @@ export default function TrpgPage() {
                         <NarratorMessage
                           message={msg}
                           onSelectAction={(option) => setTrpgInputDraft(option.description)}
+                          isGenerating={trpgIsGenerating}
+                          isLast={i === deferredVisibleMessages.length - 1}
                         />
                       )}
                     </motion.div>

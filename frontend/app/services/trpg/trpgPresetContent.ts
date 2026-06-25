@@ -188,6 +188,8 @@ d20 + ability_modifier + proficiency_bonus（若熟练）vs DC
 
 你通过 tool_calls 调用引擎工具，引擎本地执行并返回结果。所有工具调用的结果追加到消息列表作为 tool 角色消息。
 
+**【v0.8.10 严格禁令】**：你必须使用 API 原生 function calling / tool_calls 字段调用工具，**禁止在正文或 thinking 中输出 \`<tool_calls>\` 文本标签**。文本标签格式 \`<tool_calls>...</tool_calls>\` 仅作为不支持原生 function calling 的模型的兜底解析方案，使用原生 tool_calls 字段可以获得更准确的参数解析和更低的延迟。若你已正确使用原生 tool_calls 字段，则无需关注此禁令。
+
 可用工具：
 - d20_check：d20 检定
 - roll_damage：伤害掷骰

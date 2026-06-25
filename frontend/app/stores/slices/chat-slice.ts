@@ -1380,22 +1380,34 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
           const dedupedResults = Array.from(dedupedMap.values());
           const dedupRemoved = results.length - dedupedResults.length;
 
-          // 排序：按策略优先级 constant > keyword > semantic，同策略内按 score 降序
-          const sorted = dedupedResults
+          // v0.8.10: constant 条目单独限额（全部保留），非 constant 按 worldLimit 截断
+          // 原实现：constant 与 keyword/semantic 共享 worldLimit，超过 8 条 constant 时被截断，导致世界规则丢失
+          // 修复后：constant 永远全部保留（语义上"总是激活"必须始终注入），非 constant 在剩余配额内按优先级截断
+          // 注意：此限额策略不可改回统一 worldLimit 截断，否则会破坏 constant 语义
+          const constantResults = dedupedResults.filter((r) => r.strategy === "constant");
+          const nonConstantResults = dedupedResults
+            .filter((r) => r.strategy !== "constant")
             .sort((a, b) => {
               const sa = strategyOrder[a.strategy] ?? 99;
               const sb = strategyOrder[b.strategy] ?? 99;
               if (sa !== sb) return sa - sb;
               return b.score - a.score;
-            })
-            .slice(0, worldLimit);
+            });
 
-          const cntConst = sorted.filter((s) => s.strategy === "constant").length;
-          const cntKw = sorted.filter((s) => s.strategy === "keyword").length;
-          const cntSem = sorted.filter((s) => s.strategy === "semantic").length;
+          // 非 constant 按 (worldLimit - constant 已用配额) 截断，配额耗尽则全部截断
+          const remainingQuota = Math.max(0, worldLimit - constantResults.length);
+          const truncatedNonConstant = nonConstantResults.slice(0, remainingQuota);
+          const truncatedCount = nonConstantResults.length - truncatedNonConstant.length;
+
+          // 最终结果：constant 全部 + 非 constant 截断后（保持 constant 在前的注入顺序）
+          const sorted = [...constantResults, ...truncatedNonConstant];
+
+          const cntConst = constantResults.length;
+          const cntKw = truncatedNonConstant.filter((s) => s.strategy === "keyword").length;
+          const cntSem = truncatedNonConstant.filter((s) => s.strategy === "semantic").length;
           logger.info(
             "world",
-            `世界书召回完成: 找到 ${sorted.length} 条（constant=${cntConst} keyword=${cntKw} semantic=${cntSem}，去重移除 ${dedupRemoved} 条）`,
+            `世界书召回完成: 找到 ${sorted.length} 条（constant=${cntConst} 全部保留 keyword=${cntKw} semantic=${cntSem}，非constant被截断 ${truncatedCount} 条，worldLimit=${worldLimit}，去重移除 ${dedupRemoved} 条）`,
           );
 
           // v0.8.3: embedding 持久化已移至策略3异步块内（fire-and-forget），此处不再同步等待

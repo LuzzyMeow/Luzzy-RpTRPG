@@ -70,7 +70,7 @@ export interface CustomRequestBodyValidation {
 export interface SettingsSlice {
   // ===== 主题 =====
   theme: ThemeMode;
-  /** 配色方案（default = 豆包蓝, pixel = TRAE 绿像素风） */
+  /** 配色方案（white = 瓷白主题, green = 翠绿复古游戏主题） */
   colorScheme: ColorScheme;
 
   // ===== API 基础配置 =====

@@ -47,16 +47,28 @@ interface NarratorMessageProps {
   message: TrpgMessage;
   /** 点击行动选项的回调 */
   onSelectAction?: (option: ActionOption) => void;
+  /** v0.8.10: 是否正在流式生成（由父组件传入，用于判断是否走流式渲染路径） */
+  isGenerating?: boolean;
+  /** v0.8.10: 是否为消息列表最后一条（用于判断是否正在流式输出） */
+  isLast?: boolean;
 }
 
 // ============================================================================
 // 主组件
 // ============================================================================
 
-export const NarratorMessage = React.memo(function NarratorMessage({ message, onSelectAction }: NarratorMessageProps) {
+export const NarratorMessage = React.memo(function NarratorMessage({
+  message,
+  onSelectAction,
+  isGenerating,
+  isLast,
+}: NarratorMessageProps) {
   const sections = message.narratorSections;
   // v0.8.7: 获取 TRPG 生成状态，用于思考卡片自动展开跟踪
   const trpgIsGenerating = useAppStore((s) => s.trpgIsGenerating);
+  // v0.8.10: 只有正在生成的最后一条消息才走流式渲染路径（isAnimating=true）
+  // 避免历史消息也走流式渲染，影响长列表性能
+  const isAnimating = !!(isGenerating && isLast && trpgIsGenerating);
 
   return (
     <motion.div
@@ -82,7 +94,8 @@ export const NarratorMessage = React.memo(function NarratorMessage({ message, on
 
       {/* Narrator 7 段 或 纯文本回退 */}
       {sections ? (
-        <NarratorSectionsView sections={sections} onSelectAction={onSelectAction} />
+        // v0.8.10-fix: 传 isAnimating 让 NarratorSectionsView 内的 Markdown 跳过 useDeferredValue
+        <NarratorSectionsView sections={sections} onSelectAction={onSelectAction} isAnimating={isAnimating} />
       ) : (
         (() => {
           // v0.8.5: 解析 <choices> 标签并渲染为可点击选项卡片
@@ -91,7 +104,8 @@ export const NarratorMessage = React.memo(function NarratorMessage({ message, on
           return (
             <div className="flex flex-col gap-2">
               <div className="rounded-lg border border-border/30 bg-muted/20 px-3 py-2">
-                <Markdown content={cleanContent} />
+                {/* v0.8.10-fix: 流式期间 isAnimating=true 让 markdown.tsx 跳过 useDeferredValue；directRender 跳过 cv-auto */}
+                <Markdown content={cleanContent} isAnimating={isAnimating} directRender />
               </div>
               {choices.length > 0 && (
                 <ActionOptionsGrid options={choices} onSelectAction={onSelectAction} />
@@ -111,9 +125,12 @@ export const NarratorMessage = React.memo(function NarratorMessage({ message, on
 function NarratorSectionsView({
   sections,
   onSelectAction,
+  isAnimating,
 }: {
   sections: NarratorSections;
   onSelectAction?: (option: ActionOption) => void;
+  /** v0.8.10: 是否正在流式生成，传给 Markdown 控制是否跳过 useDeferredValue */
+  isAnimating?: boolean;
 }) {
   return (
     <motion.div
@@ -170,7 +187,8 @@ function NarratorSectionsView({
             <span>剧情正文</span>
           </div>
           <div className="text-sm leading-relaxed">
-            <Markdown content={sections.narrative} />
+            {/* v0.8.10-fix: 流式期间 isAnimating=true 让 markdown.tsx 跳过 useDeferredValue；directRender 跳过 cv-auto */}
+            <Markdown content={sections.narrative} isAnimating={isAnimating} directRender />
           </div>
         </motion.div>
       )}

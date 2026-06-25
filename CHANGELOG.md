@@ -1,5 +1,92 @@
 # Changelog
 
+## v0.8.10
+
+### 🔧 工具调用套壳格式解析补全
+
+> v0.8.9 已剥离 `<tool_calls>` 外层标签，但内部仍要求 `<label:query>` 带尖括号格式。GLM-5.2 实际输出 `<tool_calls>label:query</tool_calls>`（无内部尖括号），正则匹配失败导致工具未执行。
+
+- **toolService.ts**：`findPendingActiveToolCallInText` 与 `findPendingBuiltinToolCallInText` 两处正则让起始 `<` 可选（`<?\s*`），支持三种格式：
+  - 无内部尖括号：`<tool_calls>label:query</tool_calls>`（GLM-5.2 实际输出）
+  - 有内部尖括号：`<tool_calls><label:query></tool_calls>`（传统格式兼容）
+  - 无套壳传统：`<label:query>`（向后兼容）
+- **多工具支持**：套壳内按 `|` 分隔多工具调用，递归匹配第一个能识别的工具
+- **尾部 `>` 剥离**：query 提取后追加 `.replace(/>+$/, "")`，剥离有内部尖括号格式残留的闭合符
+- **新增 13 项单元测试**：覆盖三种格式 × active/builtin 两函数 + 多工具分隔场景
+
+### 🎬 TRPG 模式流式输出修复
+
+> v0.8.9 只修了 chat 模式的 `useDeferredValue` 和 `cv-auto`，TRPG 模式完全未动，流式内容被无限期推迟。
+
+- **trpg.tsx**：流式期间不使用 `useDeferredValue`，移除列表容器的 `cv-auto`（改用条件 className）
+- **narrator-message.tsx**：4 处修改贯通流式渲染链路：
+  - `NarratorSectionsView` 接收 `isAnimating` prop
+  - `cleanContent` Markdown 调用传 `isAnimating` / `directRender`
+  - `sections.narrative` Markdown 调用传 `isAnimating` / `directRender`
+  - `<NarratorMessage>` 调用处传入 `isGenerating` 和 `isLast`
+- **isAnimating 计算公式**：`!!(isGenerating && isLast && trpgIsGenerating)`，只有正在生成的最后一条消息走流式路径
+
+### 🛡️ TRPG Agentic 文本标签兜底解析
+
+> GLM-5.2 在 TRPG 模式下若输出 `<tool_calls>d20_check:...</tool_calls>` 文本标签（而非 API 原生 `delta.tool_calls`），会直接进入 narrative 正文，工具不执行，骰子/伤害/状态变更全部丢失。
+
+- **agenticLoop.ts**：新增 `parseToolCallsFromText` 函数，阶段 1 `streamAndAccumulate` 完成后，若 `firstResult.toolCalls.length === 0` 但 `content` 含 `<tool_calls>` 文本标签，解析为 `ToolCallSpec[]`
+- **参数格式适配**：支持 TRPG 工具名（`d20_check`、`roll_damage` 等），参数支持 JSON 字符串或 `key=value&key=value` 格式
+- **兜底逻辑仅在不支持原生 function calling 的模型上触发**，不影响已正确返回 `delta.tool_calls` 的模型
+
+### 📜 TRPG 工具调用协议提示词增强
+
+- **trpgPresetContent.ts**：工具调用协议追加 v0.8.10 严格禁令："你必须使用 API 原生 function calling / tool_calls 字段调用工具，禁止在正文或 thinking 中输出 `<tool_calls>` 文本标签"
+- 明确说明文本标签格式仅作为不支持原生 function calling 的模型的兜底解析方案
+
+### 🎯 slideOutLeft 翠绿主题方向映射修复
+
+> `use-motion-presets.ts` 将 `slideOutLeft` 映射到 `pixelSlideInRight`，方向完全相反。`slideInRight` 的 exit 是 x→-20（向左滑出），`slideOutLeft` 应该是镜像（initial x=-20 从左侧滑入，exit x=20 向右滑出）。原映射导致 initial x=20（从右侧出现），与名称和语义矛盾。
+
+- **motion-presets.ts**：新增 `pixelSlideOutLeft` 预设，方向与 `pixelSlideInRight` 完全镜像
+  - `initial: { opacity: 0, x: -20 }`（从左侧滑入）
+  - `exit: { opacity: 0, x: 20 }`（向右滑出）
+- **use-motion-presets.ts**：`slideOutLeft` 映射从 `pixelSlideInRight` 改为 `pixelSlideOutLeft`
+
+### 🎨 翠绿主题文案统一
+
+> 配色方案已从 `default`/`pixel` 重命名为 `white`/`green`，但 CSS 注释仍写"像素风格主题"等旧名称。
+
+- **app.css**：8 处「像素」→「翠绿」文案统一（像素风格主题 / 暗色模式像素主题 / 亮色模式像素主题 / 像素主题全局动画覆盖 / 像素主题侧边栏动画排除 / 像素主题 Streamdown 动画排除 / 像素主题装饰性效果 等）
+- **motion-presets.ts**：所有「Pixel Theme」→「Green Theme」、「像素」→「翠绿」
+- **use-motion-presets.ts**：L4 注释更新为「green 主题返回翠绿风格预设，white 主题返回标准预设」
+- **types.ts**：`ColorScheme` 注释更新为「配色方案（white = 瓷白主题, green = 翠绿复古游戏主题）」
+
+### 📚 世界书 constant 条目单独限额
+
+> `constant`（总是激活）条目与 `keyword`/`semantic` 共享 `worldLimit`（默认 8），超过 8 条时被截断。
+
+- **chat-slice.ts**：constant 条目全部保留，非 constant 按 `worldLimit - constant.length` 配额截断
+- 日志明确标记被截断的数量和各策略命中数（constant / keyword / semantic）
+
+### 📝 关于页 deferredLogs 空白守卫
+
+> `about.tsx` 仍用 `useDeferredValue`，首次进入可能空白一闪。
+
+- **about.tsx**：新增 `displayLogs` 派生变量，`allLogs.length === 0` 时直接返回空数组，避免 deferred 导致首次渲染空白
+- 保持 `useDeferredValue` 始终调用以遵守 React hooks 规则（hooks 顺序必须稳定）
+
+### 🔍 流式诊断日志增强
+
+- **apiClient.ts**：`sendStreamRequestViaFetch` 新增三段式诊断日志：
+  - 请求发起：url / model / stream / thinking 字段值
+  - 响应接收：content-type / isStream / elapsed 时间
+  - 首块到达：elapsed 时间戳
+- 便于后续排查"API 是否真流"问题
+
+### 📦 工程变更
+
+- Android `versionCode` 52→53，`versionName` 0.8.9→0.8.10
+- 前端版本号同步 v0.8.9→v0.8.10（about.tsx / package.json）
+- `android-patches/build.gradle` 同步所有修复
+- README.md 版本徽章同步更新至 v0.8.10
+- 测试用例 38→51 项（新增 13 项工具调用套壳格式测试）
+
 ## v0.8.9
 
 ### 🚀 流式输出原生效果修复

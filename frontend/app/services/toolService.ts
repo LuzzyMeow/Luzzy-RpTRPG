@@ -376,10 +376,23 @@ export const findPendingActiveToolCallInText = (
 
   // v0.8.9-fix: 支持 <tool_calls>label:query</tool_calls> 套壳格式
   // GLM-5.2 等不支持原生 function calling 的模型会输出此格式
+  // v0.8.10: 支持 | 分隔多工具：<tool_calls>label1:q1|label2:q2</tool_calls>
+  // 注意：以下套壳解析逻辑属于项目核心工具调用管线，禁止修改或简化
   let workContent = originalContent;
   const toolCallsMatch = workContent.match(/<tool_calls>\s*([\s\S]*?)<\/tool_calls>/i);
   if (toolCallsMatch) {
-    workContent = toolCallsMatch[1].trim();
+    const inner = toolCallsMatch[1].trim();
+    // v0.8.10: 按 | 分隔多工具调用（仅当 | 出现在套壳内才作为分隔符）
+    const segments = inner.split("|").map((s) => s.trim()).filter(Boolean);
+    if (segments.length > 1) {
+      // 多工具：逐段匹配第一个能识别的工具（递归调用，seg 已无套壳走原逻辑）
+      for (const seg of segments) {
+        const candidate = findPendingActiveToolCallInText(seg, tools);
+        if (candidate) return candidate;
+      }
+      return null;
+    }
+    workContent = segments[0] ?? "";
   }
 
   const mainContent = stripCodeBlocksForToolDetection(workContent);
@@ -407,7 +420,12 @@ export const findPendingActiveToolCallInText = (
 
     for (const form of labelForms) {
       const escapedName = escapeRegexText(form.label);
-      const regex = new RegExp(`<\\s*${escapedName}\\s*:\\s*([\\s\\S]*)$`, "i");
+      // v0.8.10-fix: 让尖括号可选，支持 <tool_calls>label:query</tool_calls>（无内部尖括号）
+      // 兼容两种格式：
+      //   1. <tool_calls><label:query></tool_calls>（有内部尖括号）
+      //   2. <tool_calls>label:query</tool_calls>（无内部尖括号，GLM-5.2 实际输出）
+      // 注意：此正则是工具调用解析核心，禁止移除尖括号容错
+      const regex = new RegExp(`<?\\s*${escapedName}\\s*:\\s*([\\s\\S]*)$`, "i");
       const match = mainContent.match(regex);
       if (!match) continue;
 
@@ -426,7 +444,10 @@ export const findPendingActiveToolCallInText = (
         tool,
         mode: form.mode,
         callLabel: form.label,
-        query: String(match[1] || "").trim(),
+        // v0.8.10-fix: 剥离 query 末尾残留的 '>'（有内部尖括号格式 <label:query> 的闭合符）
+        // 无尖括号格式 query 本身不含 '>'，不受影响
+        // 注意：此剥离逻辑属于工具调用解析核心，禁止移除
+        query: String(match[1] || "").trim().replace(/>+$/, ""),
         raw,
         reason: reason || undefined,
         mcpSubToolName: form.mcpSubToolName || undefined,
@@ -476,10 +497,22 @@ export const findPendingBuiltinToolCallInText = (
   if (!content) return null;
 
   // v0.8.9-fix: 支持 <tool_calls>label:query</tool_calls> 套壳格式
+  // v0.8.10: 支持 | 分隔多工具，与 findPendingActiveToolCallInText 对齐
   let workContent = content;
   const toolCallsMatch = workContent.match(/<tool_calls>\s*([\s\S]*?)<\/tool_calls>/i);
   if (toolCallsMatch) {
-    workContent = toolCallsMatch[1].trim();
+    const inner = toolCallsMatch[1].trim();
+    // v0.8.10: 按 | 分隔多工具调用
+    const segments = inner.split("|").map((s) => s.trim()).filter(Boolean);
+    if (segments.length > 1) {
+      // 多工具：逐段匹配第一个能识别的内置工具
+      for (const seg of segments) {
+        const candidate = findPendingBuiltinToolCallInText(seg, configs);
+        if (candidate) return candidate;
+      }
+      return null;
+    }
+    workContent = segments[0] ?? "";
   }
 
   const enabledConfigs = (Array.isArray(configs) ? configs : []).filter((c) => c.enabled);
@@ -490,10 +523,13 @@ export const findPendingBuiltinToolCallInText = (
     const escapedLabel = escapeRegexText(callLabel);
     // 匹配 <callLabel:query> 格式（无 _add/_cover 后缀）
     // query 内容到下一个 < 或行尾结束
-    const regex = new RegExp(`<\\s*${escapedLabel}\\s*:\\s*([\\s\\S]*?)(?:<|$)`, "i");
+    // v0.8.10-fix: 让尖括号可选，与 findPendingActiveToolCallInText 对齐
+    const regex = new RegExp(`<?\\s*${escapedLabel}\\s*:\\s*([\\s\\S]*?)(?:<|$)`, "i");
     const match = workContent.match(regex);
     if (match && match[1]) {
-      const query = match[1].trim();
+      // v0.8.10-fix: 剥离 query 末尾残留的 '>'（有内部尖括号格式 <label:query> 的闭合符）
+      // 注意：此剥离逻辑属于内置工具调用解析核心，禁止移除
+      const query = match[1].trim().replace(/>+$/, "");
       if (query) {
         return {
           toolType: config.type,

@@ -135,6 +135,88 @@ async function executeToolCalls(
   return results;
 }
 
+/**
+ * v0.8.10: 从文本内容解析 <tool_calls> 文本标签为 ToolCallSpec[]
+ *
+ * 用于 TRPG Agentic 兜底：当 GLM-5.2 等模型在 TRPG 模式下
+ * 输出 <tool_calls>d20_check:...</tool_calls> 文本标签而非 API 原生 delta.tool_calls 时，
+ * 从正文内容中解析工具调用，避免骰子/伤害/状态变更丢失。
+ *
+ * 支持格式：
+ *   1. <tool_calls>tool_name:json_args</tool_calls>
+ *   2. <tool_calls>tool_name:arg1=val1&arg2=val2</tool_calls>
+ *   3. <tool_calls>a:q1|b:q2</tool_calls>（多工具 | 分隔）
+ *
+ * 注意：TRPG 工具名/参数格式与内置工具不同（d20_check、roll_damage 等），
+ * 参数支持 JSON 字符串或 key=value&key=value 格式。
+ * 此兜底逻辑仅在 API 原生 toolCalls 为空时触发，不影响原生 function calling。
+ */
+function parseToolCallsFromText(content: string): ToolCallSpec[] {
+  if (!content) return [];
+
+  // 匹配所有 <tool_calls>...</tool_calls> 块
+  const toolCallsRegex = /<tool_calls>\s*([\s\S]*?)<\/tool_calls>/gi;
+  const results: ToolCallSpec[] = [];
+  let match: RegExpExecArray | null;
+  let idCounter = 0;
+
+  while ((match = toolCallsRegex.exec(content)) !== null) {
+    const inner = match[1].trim();
+    if (!inner) continue;
+
+    // 按 | 分隔多工具
+    const segments = inner.split("|").map((s) => s.trim()).filter(Boolean);
+
+    for (const seg of segments) {
+      // 解析 tool_name:args 格式
+      const colonIdx = seg.indexOf(":");
+      if (colonIdx === -1) continue;
+
+      // v0.8.10: 去除可能残留的尖括号（兼容 <tool_calls><label:query></tool_calls> 格式）
+      const name = seg.substring(0, colonIdx).trim().replace(/^<+|>+$/g, "");
+      const argsStr = seg.substring(colonIdx + 1).trim().replace(/^<+|>+$/g, "");
+
+      if (!name) continue;
+
+      // 尝试解析为 JSON，失败则包装为 { query: argsStr } 或 key=value&key=value 格式
+      let argumentsJson: string;
+      try {
+        // 验证是否为合法 JSON
+        JSON.parse(argsStr);
+        argumentsJson = argsStr;
+      } catch {
+        // 非 JSON，尝试解析 key=value&key=value 格式
+        const parsed: Record<string, string> = {};
+        const pairs = argsStr.split("&");
+        let hasKv = false;
+        for (const pair of pairs) {
+          const eqIdx = pair.indexOf("=");
+          if (eqIdx > 0) {
+            parsed[pair.substring(0, eqIdx).trim()] = pair.substring(eqIdx + 1).trim();
+            hasKv = true;
+          }
+        }
+        if (hasKv) {
+          argumentsJson = JSON.stringify(parsed);
+        } else {
+          // 既非 JSON 也非 key=value，包装为 { query: argsStr }
+          argumentsJson = JSON.stringify({ query: argsStr });
+        }
+      }
+
+      results.push({
+        id: `text-tc-${Date.now()}-${idCounter++}`,
+        function: {
+          name,
+          arguments: argumentsJson,
+        },
+      });
+    }
+  }
+
+  return results;
+}
+
 export async function runAgenticToolLoop(params: {
   url: string;
   apiKey: string;
@@ -185,7 +267,22 @@ export async function runAgenticToolLoop(params: {
     `第一阶段完成: reasoning=${firstResult.reasoningContent.length}chars content=${firstResult.content.length}chars toolCalls=${firstResult.toolCalls.length}`,
   );
 
-  if (firstResult.toolCalls.length === 0) {
+  // v0.8.10: 文本标签兜底 — 若 API 原生 toolCalls 为空但 content 含 <tool_calls> 标签，从文本解析
+  // 注意：此兜底逻辑仅在不支持原生 function calling 的模型（如 GLM-5.2）上触发，
+  // 不影响已正确返回 delta.tool_calls 的模型。禁止移除此兜底，否则 TRPG 工具调用将失效。
+  let effectiveToolCalls = firstResult.toolCalls;
+  if (effectiveToolCalls.length === 0 && firstResult.content) {
+    const parsedFromText = parseToolCallsFromText(firstResult.content);
+    if (parsedFromText.length > 0) {
+      logger.info(
+        "trpg",
+        `v0.8.10 兜底: 从文本解析到 ${parsedFromText.length} 个工具调用（API 原生 toolCalls 为空）`,
+      );
+      effectiveToolCalls = parsedFromText;
+    }
+  }
+
+  if (effectiveToolCalls.length === 0) {
     return {
       firstReasoningContent: firstResult.reasoningContent,
       firstContent: firstResult.content,
@@ -195,7 +292,8 @@ export async function runAgenticToolLoop(params: {
     };
   }
 
-  const toolResults = await executeToolCalls(firstResult.toolCalls, params.toolExecutor);
+  // v0.8.10: 使用 effectiveToolCalls 替代 firstResult.toolCalls（含兜底解析结果）
+  const toolResults = await executeToolCalls(effectiveToolCalls, params.toolExecutor);
 
   logger.info("trpg", `工具执行完成: ${toolResults.length} 个结果`);
 
@@ -204,7 +302,7 @@ export async function runAgenticToolLoop(params: {
   const assistantToolCallMessage: ApiMessage = {
     role: "assistant",
     content: firstResult.content,
-    tool_calls: firstResult.toolCalls.map((tc) => ({
+    tool_calls: effectiveToolCalls.map((tc) => ({
       id: tc.id,
       function: tc.function,
     })),

@@ -181,10 +181,10 @@
 }
 
 /* ============================================================================
-   像素风格主题 — TRAE 深色配色 + 复古游戏动画
+   翠绿主题 — TRAE 深色配色 + 复古游戏动画
    ============================================================================ */
 
-/* 暗色模式像素主题 */
+/* 暗色模式翠绿主题 */
 .dark[data-theme="green"] {
   --background: #1a1b1d;
   --foreground: #d1d3db;
@@ -212,7 +212,7 @@
   --sidebar-border: #3c3f47;
   --sidebar-ring: #32f08c;
   --radius: 0.375rem;
-  /* 硬阴影（无模糊，模拟像素立体感） */
+  /* 硬阴影（无模糊，模拟翠绿复古游戏立体感） */
   --shadow-2xs: 0 1px 0px 0px hsl(0 0% 0% / 0.10);
   --shadow-xs: 0 1px 0px 0px hsl(0 0% 0% / 0.10);
   --shadow-sm: 0 1px 0px 0px hsl(0 0% 0% / 0.12);
@@ -223,7 +223,7 @@
   --shadow-2xl: 0 8px 0px 0px hsl(0 0% 0% / 0.20);
 }
 
-/* 亮色模式像素主题 */
+/* 亮色模式翠绿主题 */
 [data-theme="green"]:not(.dark) {
   --background: #f5f5f5;
   --foreground: #1a1b1d;
@@ -261,26 +261,26 @@
   --shadow-2xl: 0 8px 0px 0px hsl(0 0% 0% / 0.12);
 }
 
-/* 像素主题全局动画覆盖（CSS 兜底） */
+/* 翠绿主题全局动画覆盖（CSS 兜底） */
 [data-theme="green"] * {
   transition-timing-function: steps(4, end) !important;
   transition-duration: 120ms !important;
 }
 
-/* v0.8.8-fix: 像素主题侧边栏动画排除 — 避免 steps(4,end) 让 Framer Motion 的 transform/opacity 动画变成阶梯跳跃 */
+/* v0.8.8-fix: 翠绿主题侧边栏动画排除 — 避免 steps(4,end) 让 Framer Motion 的 transform/opacity 动画变成阶梯跳跃 */
 [data-theme="green"] .luzzy-sidebar-motion {
   transition-property: none !important;
   transition-duration: 0s !important;
 }
 
-/* v0.8.9-fix: 像素主题 Streamdown 动画排除 — 避免 steps(4,end) 让 word fade 动画阶梯化不可见 */
+/* v0.8.9-fix: 翠绿主题 Streamdown 动画排除 — 避免 steps(4,end) 让 word fade 动画阶梯化不可见 */
 [data-theme="green"] .streamdown [data-streamdown-animated] {
   transition-property: none !important;
   transition-duration: 0s !important;
   animation-timing-function: ease !important;
 }
 
-/* 像素主题装饰性效果 */
+/* 翠绿主题装饰性效果 */
 [data-theme="green"] [data-slot="dialog-content"] {
   border-radius: 8px;
   border: 2px solid var(--border);
