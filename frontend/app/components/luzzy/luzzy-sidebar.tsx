@@ -145,7 +145,7 @@ function MobileSidebar() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-40 bg-black/60"
+            className="luzzy-sidebar-motion fixed inset-0 z-40 bg-black/60"
             onClick={() => setSideMenuOpen(false)}
           />
           {/* 侧边栏 */}
@@ -154,7 +154,7 @@ function MobileSidebar() {
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
             transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-            className="fixed inset-y-0 left-0 z-50 w-72 bg-sidebar shadow-lg"
+            className="luzzy-sidebar-motion fixed inset-y-0 left-0 z-50 w-72 bg-sidebar shadow-lg"
           >
             <div className="flex items-center justify-between border-b px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
               <span className="text-lg font-bold">LUZZY</span>

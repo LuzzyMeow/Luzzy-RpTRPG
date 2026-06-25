@@ -267,6 +267,12 @@
   transition-duration: 120ms !important;
 }
 
+/* v0.8.8-fix: 像素主题侧边栏动画排除 — 避免 steps(4,end) 让 Framer Motion 的 transform/opacity 动画变成阶梯跳跃 */
+[data-theme="pixel"] .luzzy-sidebar-motion {
+  transition-property: none !important;
+  transition-duration: 0s !important;
+}
+
 /* 像素主题装饰性效果 */
 [data-theme="pixel"] [data-slot="dialog-content"] {
   border-radius: 8px;
