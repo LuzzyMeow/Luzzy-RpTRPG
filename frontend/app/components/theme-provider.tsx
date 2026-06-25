@@ -74,6 +74,11 @@ export function ThemeProvider({
   useEffect(() => {
     const root = window.document.documentElement;
     root.setAttribute("data-theme", colorScheme);
+    root.classList.add("theme-transitioning");
+    const timer = window.setTimeout(() => {
+      root.classList.remove("theme-transitioning");
+    }, 260);
+    return () => window.clearTimeout(timer);
   }, [colorScheme]);
 
   const value = {

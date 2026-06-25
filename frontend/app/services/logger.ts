@@ -12,6 +12,8 @@
  * - tool: 工具调用详情（v0.4.1 新增）
  * - stream: 流式输出诊断（v0.4.6 新增）
  * - trpg: TRPG 模式事件（v0.8.0 新增）
+ * - preset: 预设内容变更
+ * - tool_version: 内置工具/SKILL/MCP 版本变更（v0.8.11 新增）
  *
  * 存储路径：/Documents/LUZZY/logs/YYYYMMDD.log
  * 每次启动创建/追加当日 log 文件，启动时清理 3 天前的 log 文件
@@ -20,6 +22,14 @@
  */
 
 type LogLevel = "debug" | "info" | "warn" | "error";
+// v0.8.11: 新增 "tool_version" 分类
+// 该分类专门用于记录内置工具 / SKILL / MCP 工具的版本变更、加载状态、协议升级等事件。
+// 关联约束（项目硬性要求，禁止删除）：
+//   1. 一旦涉及内置工具（包括但不限于 SKILL 工具、MCP 工具、内置工具等内容）的更新，
+//      必须同步升级关于页 - 日志的日志功能以记录新版本工具的 log；
+//   2. 关于页 CATEGORY_TABS 中必须保留 "tool_version" 分类 Tab 供用户筛选；
+//   3. 此分类与 "tool"（工具调用详情）语义不同：tool 记录运行期调用，
+//      tool_version 记录工具集合本身的版本与协议演化。禁止合并或移除。
 type LogCategory =
   | "app"
   | "agent"
@@ -31,7 +41,8 @@ type LogCategory =
   | "tool"
   | "stream"
   | "trpg"
-  | "preset";
+  | "preset"
+  | "tool_version";
 export type { LogLevel, LogCategory };
 
 interface LogEntry {
@@ -164,6 +175,17 @@ export async function initLogger(): Promise<void> {
   }
   // 记录启动日志
   log("info", "app", "应用启动");
+
+  // v0.8.11: 工具系统版本启动日志
+  // 关联硬性约束：涉及内置工具更新时必须同步升级关于页-日志功能以记录新版本工具 log。
+  // 此日志用于在关于页"工具版本"分类下确认工具协议版本与初始化时点，便于排查工具调用丢失/解析失败问题。
+  // 禁止删除：这是项目硬性要求中"内置工具更新必须同步升级日志"的落地实现之一。
+  // 注意：当内置工具/SKILL/MCP 协议升级时，必须同步修改下面的版本号与协议说明，保持日志与实际代码一致。
+  log(
+    "info",
+    "tool_version",
+    "LUZZY v0.8.11 工具系统初始化完成 | 协议: 原生 tool_calls + <tool_calls> 文本标签兜底 | parseToolCallsFromText 统一于 toolService.ts",
+  );
 }
 
 /**

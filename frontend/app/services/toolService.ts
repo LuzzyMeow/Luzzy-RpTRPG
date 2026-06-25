@@ -366,6 +366,10 @@ const cleanActiveToolCallReason = (reason: string | undefined): string => {
  * @param text - 待扫描的文本
  * @param tools - 已启用的工具列表（应已按角色卡过滤）
  * @returns 第一个匹配的工具调用，无匹配则返回 null
+ *
+ * v0.8.11-strict: 本函数仅负责工具标签解析，不涉及任何内容审查或过滤。
+ * NSFW 注入提示词位于 presetContent.ts / 角色卡系统，禁止在此处对 query 做审查。
+ * <tool_calls> 套壳解析、尖括号容错、尾部 '>' 剥离属于核心工具调用管线，禁止移除或简化。
  */
 export const findPendingActiveToolCallInText = (
   text: string,
@@ -377,12 +381,14 @@ export const findPendingActiveToolCallInText = (
   // v0.8.9-fix: 支持 <tool_calls>label:query</tool_calls> 套壳格式
   // GLM-5.2 等不支持原生 function calling 的模型会输出此格式
   // v0.8.10: 支持 | 分隔多工具：<tool_calls>label1:q1|label2:q2</tool_calls>
-  // 注意：以下套壳解析逻辑属于项目核心工具调用管线，禁止修改或简化
+  // v0.8.11-strict: 以下套壳解析逻辑属于项目核心工具调用管线，禁止修改或简化
   let workContent = originalContent;
   const toolCallsMatch = workContent.match(/<tool_calls>\s*([\s\S]*?)<\/tool_calls>/i);
   if (toolCallsMatch) {
     const inner = toolCallsMatch[1].trim();
     // v0.8.10: 按 | 分隔多工具调用（仅当 | 出现在套壳内才作为分隔符）
+    // v0.8.11-strict: 多段场景下逐段匹配第一个能识别的工具；若全部无法识别必须返回 null，
+    // 防止把不可识别内容误判为 query。
     const segments = inner.split("|").map((s) => s.trim()).filter(Boolean);
     if (segments.length > 1) {
       // 多工具：逐段匹配第一个能识别的工具（递归调用，seg 已无套壳走原逻辑）
@@ -424,8 +430,10 @@ export const findPendingActiveToolCallInText = (
       // 兼容两种格式：
       //   1. <tool_calls><label:query></tool_calls>（有内部尖括号）
       //   2. <tool_calls>label:query</tool_calls>（无内部尖括号，GLM-5.2 实际输出）
-      // 注意：此正则是工具调用解析核心，禁止移除尖括号容错
-      const regex = new RegExp(`<?\\s*${escapedName}\\s*:\\s*([\\s\\S]*)$`, "i");
+      // v0.8.11-fix: 正则从 ([\s\S]*)$ 改为 ([\s\S]*?)(?:<|$)，与 builtin 逻辑对齐，
+      // 防止 query 过度捕获后续文本标签或 HTML 片段。
+      // 注意：此正则是工具调用解析核心，禁止移除尖括号容错或改回贪婪匹配。
+      const regex = new RegExp(`<?\\s*${escapedName}\\s*:\\s*([\\s\\S]*?)(?:<|$)`, "i");
       const match = mainContent.match(regex);
       if (!match) continue;
 
@@ -446,7 +454,7 @@ export const findPendingActiveToolCallInText = (
         callLabel: form.label,
         // v0.8.10-fix: 剥离 query 末尾残留的 '>'（有内部尖括号格式 <label:query> 的闭合符）
         // 无尖括号格式 query 本身不含 '>'，不受影响
-        // 注意：此剥离逻辑属于工具调用解析核心，禁止移除
+        // v0.8.11-strict: 此剥离逻辑属于工具调用解析核心，禁止移除
         query: String(match[1] || "").trim().replace(/>+$/, ""),
         raw,
         reason: reason || undefined,
@@ -488,6 +496,10 @@ export interface BuiltinToolCall {
  * @param text - 待扫描的文本
  * @param configs - 内置工具配置列表
  * @returns 第一个匹配的内置工具调用，无匹配则返回 null
+ *
+ * v0.8.11-strict: 本函数仅负责工具标签解析，不涉及任何内容审查或过滤。
+ * NSFW 注入提示词位于 presetContent.ts / 角色卡系统，禁止在此处对 query 做审查。
+ * <tool_calls> 套壳解析、尖括号容错、尾部 '>' 剥离属于核心工具调用管线，禁止移除或简化。
  */
 export const findPendingBuiltinToolCallInText = (
   text: string,
@@ -542,6 +554,110 @@ export const findPendingBuiltinToolCallInText = (
   }
   return null;
 };
+
+// ============================================================================
+// v0.8.11: 通用 <tool_calls> 文本标签解析（供 chat / TRPG Agentic 兜底复用）
+// ============================================================================
+
+/**
+ * v0.8.11: 工具调用文本标签规格
+ *
+ * 与 API 原生 tool_calls 字段格式对齐，arguments 为 JSON 字符串。
+ */
+export interface ToolCallSpec {
+  id: string;
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/**
+ * v0.8.11: 从文本内容解析 <tool_calls> 文本标签为 ToolCallSpec[]
+ *
+ * 用于不支持原生 function calling 的模型（如 GLM-5.2）的兜底解析：
+ * 当模型在正文输出 <tool_calls>d20_check:...</tool_calls> 或
+ * <tool_calls>tool_memory_add:...</tool_calls> 等文本标签而非 API 原生
+ * delta.tool_calls 时，从正文内容中解析工具调用，避免工具调用丢失。
+ *
+ * 支持格式：
+ *   1. <tool_calls>tool_name:json_args</tool_calls>
+ *   2. <tool_calls>tool_name:arg1=val1&arg2=val2</tool_calls>
+ *   3. <tool_calls>a:q1|b:q2</tool_calls>（多工具 | 分隔）
+ *
+ * 参数解析策略：
+ *   - 合法 JSON 字符串 → 原样作为 arguments
+ *   - key=value&key=value 格式 → 转为 JSON 对象
+ *   - 其他 → 包装为 { query: argsStr }
+ *
+ * 注意：此兜底逻辑仅在 API 原生 toolCalls 为空时触发，不影响原生 function calling。
+ * 禁止删除或简化此函数，否则 GLM-5.2 等模型的工具调用将失效。
+ */
+export function parseToolCallsFromText(content: string): ToolCallSpec[] {
+  if (!content) return [];
+
+  // 匹配所有 <tool_calls>...</tool_calls> 块
+  const toolCallsRegex = /<tool_calls>\s*([\s\S]*?)<\/tool_calls>/gi;
+  const results: ToolCallSpec[] = [];
+  let match: RegExpExecArray | null;
+  let idCounter = 0;
+
+  while ((match = toolCallsRegex.exec(content)) !== null) {
+    const inner = match[1].trim();
+    if (!inner) continue;
+
+    // 按 | 分隔多工具
+    const segments = inner.split("|").map((s) => s.trim()).filter(Boolean);
+
+    for (const seg of segments) {
+      // 解析 tool_name:args 格式
+      const colonIdx = seg.indexOf(":");
+      if (colonIdx === -1) continue;
+
+      // 去除可能残留的尖括号（兼容 <tool_calls><label:query></tool_calls> 格式）
+      const name = seg.substring(0, colonIdx).trim().replace(/^<+|>+$/g, "");
+      const argsStr = seg.substring(colonIdx + 1).trim().replace(/^<+|>+$/g, "");
+
+      if (!name) continue;
+
+      // 尝试解析为 JSON，失败则包装为 { query: argsStr } 或 key=value&key=value 格式
+      let argumentsJson: string;
+      try {
+        // 验证是否为合法 JSON
+        JSON.parse(argsStr);
+        argumentsJson = argsStr;
+      } catch {
+        // 非 JSON，尝试解析 key=value&key=value 格式
+        const parsed: Record<string, string> = {};
+        const pairs = argsStr.split("&");
+        let hasKv = false;
+        for (const pair of pairs) {
+          const eqIdx = pair.indexOf("=");
+          if (eqIdx > 0) {
+            parsed[pair.substring(0, eqIdx).trim()] = pair.substring(eqIdx + 1).trim();
+            hasKv = true;
+          }
+        }
+        if (hasKv) {
+          argumentsJson = JSON.stringify(parsed);
+        } else {
+          // 既非 JSON 也非 key=value，包装为 { query: argsStr }
+          argumentsJson = JSON.stringify({ query: argsStr });
+        }
+      }
+
+      results.push({
+        id: `text-tc-${Date.now()}-${idCounter++}`,
+        function: {
+          name,
+          arguments: argumentsJson,
+        },
+      });
+    }
+  }
+
+  return results;
+}
 
 // ============================================================================
 // 角色卡过滤

@@ -18,11 +18,12 @@ import {
   IconLink,
   IconCopyEdit,
   IconArrowDown,
-  IconSearch,
   IconShare,
+  // v0.8.11: 新增 IconToolKit 用于日志查看器标题图标（game-icon-pack 封装）
+  IconToolKit,
 } from "~/components/luzzy/luzzy-icons";
 
-import { LuzzyAuroraBackground } from "~/components/luzzy/luzzy-aurora-background";
+// v0.8.11: 移除 LuzzyAuroraBackground 动画背景，改为与主题色同步的静态背景
 import { LuzzyLayout } from "~/components/luzzy/luzzy-layout";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
@@ -44,7 +45,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 /** 应用版本号 */
-const APP_VERSION = "v0.8.10";
+const APP_VERSION = "v0.8.11";
 
 /** v0.5.8: 关于页动态文案轮播 */
 const ABOUT_PHRASES = [
@@ -66,6 +67,8 @@ const CATEGORY_TABS: { key: LogCategory | "all"; label: string }[] = [
   { key: "chat", label: "聊天" },
   { key: "agent", label: "Agent" },
   { key: "trpg", label: "TRPG" },
+  // v0.8.11: 新增工具版本分类，用于记录内置工具/SKILL/MCP 的版本变更
+  { key: "tool_version", label: "工具版本" },
 ];
 
 /** 日志级别选项 */
@@ -358,8 +361,11 @@ export default function AboutPage() {
   return (
     <LuzzyLayout title="关于">
       <div className="relative h-full w-full overflow-hidden bg-background">
-        {/* 背景层：absolute inset-0 铺满父容器，置于内容之下 */}
-        <LuzzyAuroraBackground />
+        {/* v0.8.11: 移除 LuzzyAuroraBackground 动画背景，改为与主题色同步的静态背景。
+            原因：动画背景在主题切换时与 CSS transition 冲突，导致关于页持续闪屏。
+            现在背景色由 bg-background CSS 变量驱动，自动跟随主题切换。
+            禁止在此处恢复动画背景组件。 */}
+        <div className="absolute inset-0 bg-background" aria-hidden="true" />
         {/* 内容层：relative z-10 可滚动，置于背景之上 */}
         <div className="relative z-10 h-full w-full overflow-y-auto overflow-x-hidden">
           <div className="mx-auto w-full min-w-0 max-w-2xl space-y-6 overflow-x-hidden p-4">
@@ -482,7 +488,8 @@ export default function AboutPage() {
                 {/* 标题栏 */}
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
-                    <IconSearch className="size-4 shrink-0 text-primary" />
+                    {/* v0.8.11: 日志查看器标题图标改用 IconToolKit（game-icon-pack 封装） */}
+                    <IconToolKit className="size-4 shrink-0 text-primary" />
                     <h2 className="text-sm font-semibold">
                       日志查看器（{filteredLogs.length}/{allLogs.length} 条）
                     </h2>
@@ -518,39 +525,45 @@ export default function AboutPage() {
                   </div>
                 </div>
 
-                {/* 分类 Tab */}
+                {/* 分类 Tab — v0.8.11: motion.button 三态动画（进入/交互/退出） */}
                 <div className="mb-2 flex flex-wrap gap-1">
                   {CATEGORY_TABS.map((tab) => (
-                    <button
+                    <motion.button
                       key={tab.key}
                       type="button"
                       onClick={() => setCategoryFilter(tab.key)}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ type: "spring", stiffness: 400, damping: 25 }}
                       className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
                         categoryFilter === tab.key
                           ? "bg-primary/15 text-primary"
-                          : "text-muted-foreground hover:bg-muted"
+                          : "text-muted-foreground hover:bg-muted/60"
                       }`}
                     >
                       {tab.label}
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
 
-                {/* 级别过滤 */}
+                {/* 级别过滤 — v0.8.11: motion.button 三态动画（进入/交互/退出） */}
                 <div className="mb-3 flex flex-wrap gap-1">
                   {LEVEL_OPTIONS.map((opt) => (
-                    <button
+                    <motion.button
                       key={opt.key}
                       type="button"
                       onClick={() => setLevelFilter(opt.key)}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ type: "spring", stiffness: 400, damping: 25 }}
                       className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
                         levelFilter === opt.key
                           ? "bg-primary/15 text-primary"
-                          : "text-muted-foreground hover:bg-muted"
+                          : "text-muted-foreground hover:bg-muted/60"
                       }`}
                     >
                       {opt.label}
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
 
@@ -601,12 +614,20 @@ export default function AboutPage() {
                                   {entry.message}
                                 </span>
                               </button>
-                              {isExpanded && (
-                                <div
-                                  className="grid transition-[grid-template-rows,opacity] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)]"
-                                  style={{ gridTemplateRows: "1fr", opacity: 1 }}
-                                >
-                                  <div className="overflow-hidden">
+                              {/* v0.8.11: 日志条目展开/折叠 AnimatePresence + motion.div 高度动画 */}
+                              <AnimatePresence initial={false}>
+                                {isExpanded && (
+                                  <motion.div
+                                    key="expand-content"
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: "auto", opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{
+                                      height: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+                                      opacity: { duration: 0.15 },
+                                    }}
+                                    className="overflow-hidden"
+                                  >
                                     <div className="border-t border-border/20 bg-muted/20 px-6 py-2">
                                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-muted-foreground">
                                         <span>时间: {entry.timestamp}</span>
@@ -617,9 +638,9 @@ export default function AboutPage() {
                                         {entry.message}
                                       </pre>
                                     </div>
-                                  </div>
-                                </div>
-                              )}
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
                             </div>
                           );
                         })}

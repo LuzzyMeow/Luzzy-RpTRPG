@@ -60,6 +60,9 @@ import {
   findPendingBuiltinToolCallInText,
   executeActiveToolCall,
   filterToolsForCharacter,
+  // v0.8.11: 导入统一文本标签解析，用于原生 tool_calls 为空时的兜底检测
+  // 禁止移除此导入或在文件内重新实现，所有 <tool_calls> 解析必须复用 toolService 版本
+  parseToolCallsFromText,
 } from "~/services/toolService";
 import {
   loadVectorMemoryShards,
@@ -1545,6 +1548,37 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
           ? nativeToolCallsFromMain
           : null;
 
+      // v0.8.11: 文本标签联合检测 — 当 API 原生 tool_calls 为空但正文含 <tool_calls> 标签时，
+      // 调用 toolService.ts 的 parseToolCallsFromText 作为第二道兜底，避免 GLM-5.2 等不支持
+      // 原生 function calling 的模型工具调用丢失。
+      //
+      // 【KV 缓存保护】
+      // - system prompt 保持稳定，不随工具调用步数变化
+      // - 工具结果以 role: "user" 消息追加，不改变历史前缀
+      // - 续写请求仍注入 tools，但 messages 数组前缀不变，缓存命中不受影响
+      // 【NSFW 保护】
+      // - parseToolCallsFromText 仅解析工具调用标签，不对 query 内容做审查或过滤
+      // - NSFW 注入提示词位于 presetContent.ts / 角色卡系统，禁止在此处做任何内容过滤
+      // 【禁止修改】
+      // - 此兜底逻辑属于核心工具调用管线，禁止删除或简化
+      // - 所有 <tool_calls> 文本标签解析必须复用 toolService.parseToolCallsFromText
+      let effectiveToolCalls = nativeToolCalls;
+      if (
+        !effectiveToolCalls &&
+        toolGlobalSettings.mode !== "force" &&
+        accumulatedContent &&
+        accumulatedContent.includes("<tool_calls>")
+      ) {
+        const parsedFromText = parseToolCallsFromText(accumulatedContent);
+        if (parsedFromText.length > 0) {
+          logger.info(
+            "tool",
+            `v0.8.11 兜底: 从正文文本标签解析到 ${parsedFromText.length} 个工具调用（API 原生 toolCalls 为空）`,
+          );
+          effectiveToolCalls = parsedFromText;
+        }
+      }
+
       // v0.4.6: 将工具执行相关函数提升到 if 块之前，供原生 tool_calls 路径和文本标签路径共用
       const characterUuid = currentCharacter?.uuid ?? null;
       const filteredTools = filterToolsForCharacter(activeTools, characterUuid);
@@ -1713,12 +1747,13 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
         );
       };
 
-      if (nativeToolCalls && nativeToolCalls.length > 0) {
+      if (effectiveToolCalls && effectiveToolCalls.length > 0) {
         // === v0.8.1: Agentic 多步循环 ===
         // 替代旧的单次续写逻辑，支持最多 maxAgentSteps 轮工具调用
+        // v0.8.11: effectiveToolCalls 合并了原生 tool_calls 和文本标签兜底解析结果
         logger.info(
           "api",
-          `检测到原生 tool_calls（数量=${nativeToolCalls.length}），进入 Agentic 循环（最大 ${maxAgentSteps} 步）`,
+          `检测到 tool_calls（数量=${effectiveToolCalls.length}），进入 Agentic 循环（最大 ${maxAgentSteps} 步）`,
         );
 
         // 获取当前消息的 agentSteps 作为初始值
@@ -1731,7 +1766,8 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
 
         // v0.4.6: 持久化 assistant 消息的 tool_calls（用于续写时 buildContext 识别）
         // 将原生 tool_calls 转换为 ToolCall 格式并持久化到 store
-        const persistedToolCalls: ToolCall[] = nativeToolCalls.map((tc) => {
+        // v0.8.11: 使用 effectiveToolCalls 替代 nativeToolCalls（含文本标签兜底结果）
+        const persistedToolCalls: ToolCall[] = effectiveToolCalls.map((tc) => {
           let queryStr = "";
           try {
             const args = JSON.parse(tc.function.arguments || "{}");
@@ -1755,7 +1791,7 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
         // v0.8.1: 循环检测 — 记录已执行的 (tool, query) 对，重复即终止
         const executedCalls = new Set<string>();
 
-        let currentToolCalls = nativeToolCalls;
+        let currentToolCalls = effectiveToolCalls;
         let stepCount = 0;
 
         while (stepCount < maxAgentSteps) {
@@ -2632,22 +2668,31 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
     /**
      * 重试消息（生成新版本存入 retryBranches）
      *
-     * - 若为用户消息：基于该消息重新生成回复，新 assistant 回复存入分支
-     * - 若为 assistant 消息：重试上一轮用户请求，新回复存入分支
-     * 新版本通过 session-slice.addRetryBranch 持久化到 Session.retryBranches
+     * - 若为用户消息：基于该消息重新生成回复，截断该 assistant 回复之后的对话
+     * - 若为 assistant 消息：重试上一轮用户请求
+     * 采用与 regenerate 一致的简洁模式：截断消息列表 + 创建新 assistant 消息 + generateResponse，
+     * 不做消息替换/恢复，生成完成后新消息直接保留在列表中。
+     * 旧版本通过 addRetryBranch 持久化到 Session.retryBranches。
+     *
+     * v0.8.11-strict: 稳定性约束 — 禁止恢复旧消息、必须使用截断-重建模式。
+     * 旧版本在 finally 块中恢复 oldAssistant 消息并调用 prevController.abort()，
+     * 导致新生成内容被覆盖，出现"生成已中止"错误。
+     * 禁止在 finally 块中做消息恢复或 abort 操作，生成完成后新消息直接保留在列表中。
      */
     retryMessage: async (messageId) => {
-      const { messages, currentSessionId } = get();
+      if (!get().currentCharacter) return;
       if (get().isGenerating) return;
+
+      const { currentSessionId } = get();
+      let messages = get().messages;
       const message = messages.find((m) => m.id === messageId);
       if (!message) return;
 
-      // 确定重试的上下文：找到待重试的 assistant 消息位置
+      // 确定重试截断点：找到待重试的 assistant 消息位置
       let assistantIndex = -1;
       if (message.role === "assistant") {
         assistantIndex = messages.findIndex((m) => m.id === messageId);
       } else {
-        // user 消息：找其后的第一条 assistant 消息
         const userIndex = messages.findIndex((m) => m.id === messageId);
         for (let i = userIndex + 1; i < messages.length; i++) {
           if (messages[i].role === "assistant") {
@@ -2658,14 +2703,12 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
       }
       if (assistantIndex === -1) return;
 
-      const oldAssistant = messages[assistantIndex];
-      const contextMessages = messages.slice(0, assistantIndex);
+      const messagesBefore = messages.slice(0, assistantIndex);
 
-      // v0.5.5-fix: 重试前清理 oldAssistant 对应 turn 的向量记忆分片
-      // 避免记忆召回预执行搜索到重试前的旧内容（重大bug修复）
+      // 重试前清理 oldAssistant 对应 turn 的向量记忆分片
       const currentCharacter = get().characters?.find((c) => c.uuid === get().currentCharacterUuid);
       if (currentCharacter?.uuid) {
-        const turnNumber = contextMessages.filter((m) => m.role === "user").length;
+        const turnNumber = messagesBefore.filter((m) => m.role === "user").length;
         if (turnNumber > 0) {
           await removeVectorMemoryShardsByTurn(
             currentCharacter.uuid,
@@ -2675,57 +2718,46 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
         }
       }
 
-      // 创建新的 assistant 消息
-      const newAssistantMessage: ChatMessage = {
+      // await 之后重新获取最新状态，避免闭包引用过时数据
+      messages = get().messages;
+      const latestMessage = messages.find((m) => m.id === messageId);
+      if (!latestMessage) return;
+
+      let latestAssistantIndex = -1;
+      if (latestMessage.role === "assistant") {
+        latestAssistantIndex = messages.findIndex((m) => m.id === messageId);
+      } else {
+        const userIndex = messages.findIndex((m) => m.id === messageId);
+        for (let i = userIndex + 1; i < messages.length; i++) {
+          if (messages[i].role === "assistant") {
+            latestAssistantIndex = i;
+            break;
+          }
+        }
+      }
+      if (latestAssistantIndex === -1) return;
+
+      const latestMessagesBefore = messages.slice(0, latestAssistantIndex);
+
+      // 创建新的 assistant 消息（与 regenerate/sendMessage 一致的模式）
+      const assistantMessage: ChatMessage = {
         id: uuidv4(),
         role: "assistant",
         content: "",
         createdAt: Date.now(),
         loading: true,
-        branchId: oldAssistant.id,
       };
 
-      // 临时替换当前消息列表用于生成
       set({
-        messages: [...contextMessages, newAssistantMessage],
+        messages: [...latestMessagesBefore, assistantMessage],
         isGenerating: true,
+        isThinking: false,
+        isReceiving: false,
+        isMainPhase: false,
         abortController: new AbortController(),
       });
 
-      // v0.8.10-urgent-fix: 重试崩溃修复
-      // 根因：原实现无 try/catch，generateResponse 内部未捕获的异常会变成 unhandled rejection 导致页面崩溃；
-      // 且生成失败时不会恢复 oldAssistant 显示，store 与持久化不一致；
-      // 且 addRetryBranch 抛错时 L2703 回滚不执行，消息列表卡在 newAssistantMessage。
-      // 修复：try/catch/finally 包裹，finally 中确保恢复 oldAssistant 显示并复位 isGenerating。
-      // 注意：generateResponse 内部已有自己的 try/catch/finally 处理 abort/error 并更新 message 状态，
-      // 这里的 try/catch 仅作兜底防止 unhandled rejection，finally 确保状态一致性。
-      try {
-        await generateResponse(newAssistantMessage.id);
-
-        // 生成完成后，将新版本存入 session.retryBranches
-        if (currentSessionId) {
-          const finalMessage = get().messages.find((m) => m.id === newAssistantMessage.id);
-          if (finalMessage) {
-            try {
-              get().addRetryBranch(currentSessionId, oldAssistant.id, finalMessage);
-            } catch (e) {
-              // addRetryBranch 异常不应阻断恢复 oldAssistant
-              console.error("[chat] retryMessage addRetryBranch 失败:", e);
-            }
-          }
-        }
-      } catch (error) {
-        // generateResponse 内部应已处理 abort/error，这里仅兜底防止 unhandled rejection
-        console.error("[chat] retryMessage generateResponse 异常:", error);
-      } finally {
-        // 无论成功或失败，恢复 oldAssistant 显示（新版本通过 switchRetryVersion 切换查看）
-        // 注意：必须在 finally 中执行，确保任何异常路径下 store 都恢复一致状态
-        const currentMessages = get().messages;
-        const stillHasNew = currentMessages.some((m) => m.id === newAssistantMessage.id);
-        if (stillHasNew) {
-          set({ messages: [...contextMessages, oldAssistant] });
-        }
-      }
+      await generateResponse(assistantMessage.id);
     },
 
     /**

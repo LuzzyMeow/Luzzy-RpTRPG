@@ -7,14 +7,12 @@
 
 import { sendStreamRequest, buildApiRequestBody, parseSSEChunk } from "~/services/apiClient";
 import { logger } from "~/services/logger";
+// v0.8.11: 统一从 toolService.ts 导入 parseToolCallsFromText，避免两套解析规则漂移。
+// 禁止在本文件内重新实现 parseToolCallsFromText，所有文本标签解析必须复用 toolService 版本。
+import { parseToolCallsFromText, type ToolCallSpec } from "~/services/toolService";
 
-export interface ToolCallSpec {
-  id: string;
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
+// 重新导出 ToolCallSpec 以保持现有 import { ToolCallSpec } from "./agenticLoop" 不变
+export type { ToolCallSpec };
 
 export interface ToolCallResult {
   id: string;
@@ -60,6 +58,8 @@ async function streamAndAccumulate(params: {
   url: string;
   apiKey: string;
   body: Record<string, unknown>;
+  // v0.8.11: 透传 AbortSignal，支持用户中止 TRPG agentic 循环
+  signal?: AbortSignal;
   onReasoningDelta?: (delta: string) => void;
   onContentDelta?: (delta: string) => void;
 }): Promise<StreamAccumulateResult> {
@@ -71,7 +71,8 @@ async function streamAndAccumulate(params: {
     url: params.url,
     apiKey: params.apiKey,
     body: params.body,
-    signal: undefined,
+    // v0.8.11: 透传 signal 给 sendStreamRequest，支持中止操作
+    signal: params.signal,
     onChunk: (_dataStr, parsed) => {
       const chunk = parseSSEChunk(parsed);
 
@@ -135,87 +136,10 @@ async function executeToolCalls(
   return results;
 }
 
-/**
- * v0.8.10: 从文本内容解析 <tool_calls> 文本标签为 ToolCallSpec[]
- *
- * 用于 TRPG Agentic 兜底：当 GLM-5.2 等模型在 TRPG 模式下
- * 输出 <tool_calls>d20_check:...</tool_calls> 文本标签而非 API 原生 delta.tool_calls 时，
- * 从正文内容中解析工具调用，避免骰子/伤害/状态变更丢失。
- *
- * 支持格式：
- *   1. <tool_calls>tool_name:json_args</tool_calls>
- *   2. <tool_calls>tool_name:arg1=val1&arg2=val2</tool_calls>
- *   3. <tool_calls>a:q1|b:q2</tool_calls>（多工具 | 分隔）
- *
- * 注意：TRPG 工具名/参数格式与内置工具不同（d20_check、roll_damage 等），
- * 参数支持 JSON 字符串或 key=value&key=value 格式。
- * 此兜底逻辑仅在 API 原生 toolCalls 为空时触发，不影响原生 function calling。
- */
-function parseToolCallsFromText(content: string): ToolCallSpec[] {
-  if (!content) return [];
-
-  // 匹配所有 <tool_calls>...</tool_calls> 块
-  const toolCallsRegex = /<tool_calls>\s*([\s\S]*?)<\/tool_calls>/gi;
-  const results: ToolCallSpec[] = [];
-  let match: RegExpExecArray | null;
-  let idCounter = 0;
-
-  while ((match = toolCallsRegex.exec(content)) !== null) {
-    const inner = match[1].trim();
-    if (!inner) continue;
-
-    // 按 | 分隔多工具
-    const segments = inner.split("|").map((s) => s.trim()).filter(Boolean);
-
-    for (const seg of segments) {
-      // 解析 tool_name:args 格式
-      const colonIdx = seg.indexOf(":");
-      if (colonIdx === -1) continue;
-
-      // v0.8.10: 去除可能残留的尖括号（兼容 <tool_calls><label:query></tool_calls> 格式）
-      const name = seg.substring(0, colonIdx).trim().replace(/^<+|>+$/g, "");
-      const argsStr = seg.substring(colonIdx + 1).trim().replace(/^<+|>+$/g, "");
-
-      if (!name) continue;
-
-      // 尝试解析为 JSON，失败则包装为 { query: argsStr } 或 key=value&key=value 格式
-      let argumentsJson: string;
-      try {
-        // 验证是否为合法 JSON
-        JSON.parse(argsStr);
-        argumentsJson = argsStr;
-      } catch {
-        // 非 JSON，尝试解析 key=value&key=value 格式
-        const parsed: Record<string, string> = {};
-        const pairs = argsStr.split("&");
-        let hasKv = false;
-        for (const pair of pairs) {
-          const eqIdx = pair.indexOf("=");
-          if (eqIdx > 0) {
-            parsed[pair.substring(0, eqIdx).trim()] = pair.substring(eqIdx + 1).trim();
-            hasKv = true;
-          }
-        }
-        if (hasKv) {
-          argumentsJson = JSON.stringify(parsed);
-        } else {
-          // 既非 JSON 也非 key=value，包装为 { query: argsStr }
-          argumentsJson = JSON.stringify({ query: argsStr });
-        }
-      }
-
-      results.push({
-        id: `text-tc-${Date.now()}-${idCounter++}`,
-        function: {
-          name,
-          arguments: argumentsJson,
-        },
-      });
-    }
-  }
-
-  return results;
-}
+// v0.8.11: parseToolCallsFromText 已迁移到 toolService.ts 统一维护，本文件不再持有副本。
+// 文本标签兜底解析规则必须与 toolService.ts 保持一致，禁止在本文件重新实现。
+// 该兜底逻辑仅在 API 原生 toolCalls 为空时触发，用于 GLM-5.2 等不支持原生 function calling 的模型，
+// 不影响已正确返回 delta.tool_calls 的模型。禁止删除此兜底，否则 TRPG 工具调用将失效。
 
 export async function runAgenticToolLoop(params: {
   url: string;
@@ -229,6 +153,8 @@ export async function runAgenticToolLoop(params: {
   finalSystemAppend?: string;
   callbacks?: AgenticLoopCallbacks;
   maxLoops?: number;
+  // v0.8.11: 透传 AbortSignal，支持用户中止 TRPG agentic 循环
+  signal?: AbortSignal;
 }): Promise<AgenticLoopResult> {
   const maxLoops = Math.max(1, params.maxLoops ?? 2);
 
@@ -258,6 +184,8 @@ export async function runAgenticToolLoop(params: {
     url: params.url,
     apiKey: params.apiKey,
     body: firstBody,
+    // v0.8.11: 透传 signal 给第一阶段流式请求
+    signal: params.signal,
     onReasoningDelta: params.callbacks?.onFirstReasoningDelta,
     onContentDelta: params.callbacks?.onFirstContentDelta,
   });
@@ -267,7 +195,8 @@ export async function runAgenticToolLoop(params: {
     `第一阶段完成: reasoning=${firstResult.reasoningContent.length}chars content=${firstResult.content.length}chars toolCalls=${firstResult.toolCalls.length}`,
   );
 
-  // v0.8.10: 文本标签兜底 — 若 API 原生 toolCalls 为空但 content 含 <tool_calls> 标签，从文本解析
+  // v0.8.11: 文本标签兜底 — 若 API 原生 toolCalls 为空但 content 含 <tool_calls> 标签，从文本解析
+  // 此处调用的是 toolService.ts 中的统一 parseToolCallsFromText，禁止在本文件重新实现。
   // 注意：此兜底逻辑仅在不支持原生 function calling 的模型（如 GLM-5.2）上触发，
   // 不影响已正确返回 delta.tool_calls 的模型。禁止移除此兜底，否则 TRPG 工具调用将失效。
   let effectiveToolCalls = firstResult.toolCalls;
@@ -276,7 +205,7 @@ export async function runAgenticToolLoop(params: {
     if (parsedFromText.length > 0) {
       logger.info(
         "trpg",
-        `v0.8.10 兜底: 从文本解析到 ${parsedFromText.length} 个工具调用（API 原生 toolCalls 为空）`,
+        `v0.8.11 兜底: 从文本解析到 ${parsedFromText.length} 个工具调用（API 原生 toolCalls 为空）`,
       );
       effectiveToolCalls = parsedFromText;
     }
@@ -314,6 +243,19 @@ export async function runAgenticToolLoop(params: {
     tool_call_id: tr.id,
   }));
 
+  // v0.8.11: KV 缓存保护（TRPG agentic 第二阶段）
+  // 【缓存命中要求】
+  // - params.messages 作为历史前缀必须保持稳定（不修改、不重排序、不截断）
+  // - 工具调用与工具结果只能以"追加"方式扩展 messages 数组，禁止插入历史前缀中间
+  // - finalMessagesBase 由 [...params.messages, assistantToolCallMessage, ...toolResultMessages] 组成，
+  //   历史前缀完全保留，工具调用消息与工具结果消息追加在末尾，符合 OpenAI function calling 协议
+  // 【与 Chat 模式的差异】
+  // - TRPG 使用 OpenAI 协议的 role:"tool" + tool_call_id 回填结果（OpenAI 原生规范）
+  // - Chat 模式（chat-slice.ts）使用 role:"user" 包装工具结果（GLM-5.2 等套壳模型方案）
+  // - 两种方案均保持历史前缀稳定，不破坏 KV 缓存命中
+  // 【禁止修改】
+  // - 禁止在 params.messages 中间插入工具调用消息
+  // - 禁止将 toolResultMessages 合并到 params.messages 历史前缀中
   const finalMessagesBase = [...params.messages, assistantToolCallMessage, ...toolResultMessages];
 
   const finalMessages = params.finalSystemAppend
@@ -338,6 +280,8 @@ export async function runAgenticToolLoop(params: {
     url: params.url,
     apiKey: params.apiKey,
     body: finalBody,
+    // v0.8.11: 透传 signal 给第二阶段流式请求
+    signal: params.signal,
     onReasoningDelta: params.callbacks?.onFinalReasoningDelta,
     onContentDelta: params.callbacks?.onFinalContentDelta,
   });
@@ -366,6 +310,8 @@ export async function runAgenticToolLoop(params: {
       maxLoops: maxLoops - 1,
       firstSystemAppend: undefined,
       finalSystemAppend: undefined,
+      // v0.8.11: 递归调用时透传 signal
+      signal: params.signal,
       callbacks: {
         onFirstReasoningDelta: params.callbacks?.onFinalReasoningDelta,
         onFirstContentDelta: params.callbacks?.onFinalContentDelta,

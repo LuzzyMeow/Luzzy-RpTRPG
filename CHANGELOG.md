@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.8.11
+
+### 🛠️ Agentic 工具调用彻底加固
+
+> v0.8.10 之前 chat 模式仅依赖 API 原生 `tool_calls`，GLM-5.2 等套壳模型在 chat 模式下输出 `<tool_calls>` 文本标签时无法被识别，导致工具调用丢失。TRPG 模式有兜底但解析规则与 chat 模式分离，存在两套实现漂移风险。
+
+- **toolService.ts**：`parseToolCallsFromText` 提升为统一导出函数（原 agenticLoop.ts 本地实现已删除），添加 `v0.8.11-strict` 保护注释，明确标注 NSFW 提示词不可审查、套壳解析不可移除
+- **agenticLoop.ts**：从 `toolService.ts` 导入 `parseToolCallsFromText` 与 `ToolCallSpec` 类型，删除本地 65 行重复实现；重新导出 `ToolCallSpec` 保持向后兼容
+- **chat-slice.ts**：新增 `effectiveToolCalls` 变量，当 API 原生 `tool_calls` 为空但正文含 `<tool_calls>` 标签时，调用 `parseToolCallsFromText` 作为第二道兜底；将 3 处 `nativeToolCalls` 引用替换为 `effectiveToolCalls`
+- **presetContent.ts**：Step 8 末尾追加【v0.8.11 工具调用格式规范 — 强制要求】，明确要求模型使用 API 原生 `tool_calls` 字段，禁止主动输出 `<tool_calls>` 文本标签
+
+### 🛑 TRPG Agentic 循环中止能力补全
+
+> v0.8.10 TRPG agentic 循环无法被用户中止，用户点击停止按钮后流式请求仍在后台继续。
+
+- **agenticLoop.ts**：`streamAndAccumulate` 与 `runAgenticToolLoop` 新增 `signal?: AbortSignal` 参数
+- 三处流式调用点透传 `signal`：第一阶段 `streamAndAccumulate` / 第二阶段 `streamAndAccumulate` / 递归调用 `runAgenticToolLoop`
+- `signal` 最终透传至 `sendStreamRequest`，与 chat 模式中止机制对齐
+
+### 🛡️ KV 缓存保护审查
+
+- **chat-slice.ts**：`effectiveToolCalls` 兜底逻辑处添加 KV 缓存保护注释（system prompt 稳定 / 工具结果以 `role:"user"` 追加 / 历史前缀不变）
+- **agenticLoop.ts**：第二阶段 `finalMessagesBase` 构建处添加 KV 缓存保护注释（`params.messages` 历史前缀稳定 / 工具结果以 `role:"tool"` 追加 / 禁止插入历史前缀中间）
+
+### 🎨 关于页移除动画背景
+
+> `LuzzyAuroraBackground` 动画背景在主题切换时与 CSS transition 冲突，导致关于页持续闪屏。
+
+- **about.tsx**：移除 `<LuzzyAuroraBackground />` 组件引用，替换为 `<div className="absolute inset-0 bg-background" />` 静态背景
+- **luzzy-aurora-background.tsx**：组件文件彻底删除
+- 背景色由 `bg-background` CSS 变量驱动，自动跟随所有主题切换（瓷白 / 翠绿 / 暗色 等）
+
+### 📜 日志系统升级
+
+- **logger.ts**：`LogCategory` 联合类型新增 `"tool_version"` 分类，用于记录内置工具 / SKILL / MCP 工具的版本变更与协议升级
+- `initLogger()` 末尾追加 `tool_version` 启动日志：`LUZZY v0.8.11 工具系统初始化完成 | 协议: 原生 tool_calls + <tool_calls> 文本标签兜底 | parseToolCallsFromText 统一于 toolService.ts`
+- 添加禁止移除注释：tool_version 与 tool 语义不同，禁止合并或移除
+- **about.tsx**：`CATEGORY_TABS` 新增 `{ key: "tool_version", label: "工具版本" }` 分类 Tab
+
+### 🎬 关于页日志查看器三态动画
+
+- **about.tsx**：分类 Tab 与级别过滤按钮改为 `motion.button` 三态动画（`whileHover: { scale: 1.02 }` / `whileTap: { scale: 0.98 }` / spring transition）
+- 日志条目展开/折叠改为 `AnimatePresence` + `motion.div` 高度动画（initial / animate / exit 三态完备）
+- 日志查看器标题图标从 `IconSearch` 改为 `IconToolKit`（game-icon-pack `tool-kit.svg`）
+
+### 🔍 retryMessage 稳定性约束
+
+- **chat-slice.ts**：`retryMessage` 函数添加 `v0.8.11-strict` 稳定性约束注释，明确禁止在 `finally` 块中恢复旧消息或调用 `abort()`，避免新生成内容被覆盖导致"生成已中止"错误
+
+### 📦 工程变更
+
+- Android `versionCode` 53→54，`versionName` 0.8.10→0.8.11
+- 前端版本号同步 v0.8.10→v0.8.11（`package.json` / `about.tsx` / `logger.ts` 启动日志）
+- `android-patches/build.gradle` 同步所有修复
+- README.md 版本徽章同步更新至 v0.8.11
+
 ## v0.8.10
 
 ### 🔧 工具调用套壳格式解析补全
