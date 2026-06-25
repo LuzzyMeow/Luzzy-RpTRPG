@@ -797,8 +797,11 @@ const sendStreamRequestViaXHR = (params: StreamRequestParams): Promise<StreamReq
       return true;
     };
 
-    // v0.8.7: 移除人工帧节流，实现真正的实时流式输出
-    // ReadableStream/XHR onprogress 本身已有自然背压，无需 nextFrame 节流
+    // v0.8.12: 恢复每行 nextFrame 帧节流，实现严格逐字流式
+    // v0.8.7 曾移除人工节流依赖 onprogress 自然背压，但 Android WebView 的 XHR onprogress
+    // 会批量触发（一次 onprogress 送达多行 SSE），导致所有 onChunk 在同一微任务同步执行，
+    // React 18 自动批处理为一次重渲染，UI 表现为"一瞬间蹦出全部内容"。
+    // 每行 await nextFrame 让每个 token 独立成帧，React 不会自动批处理，实现 60fps 逐字流式。
     const processIncrementalAsync = async (): Promise<void> => {
       if (isProcessing) return;
       isProcessing = true;
@@ -819,6 +822,10 @@ const sendStreamRequestViaXHR = (params: StreamRequestParams): Promise<StreamReq
             isProcessing = false;
             return;
           }
+          // v0.8.12: 每行 await nextFrame，确保 Android XHR onprogress 批量触发的多行数据
+          // 分散到多帧，避免 React 18 自动批处理导致"一瞬间蹦出全部内容"
+          // nextFrame = requestAnimationFrame Promise，~16ms 一帧，60fps 逐字流式
+          await nextFrame();
         }
       }
       isProcessing = false;
@@ -863,6 +870,11 @@ const sendStreamRequestViaXHR = (params: StreamRequestParams): Promise<StreamReq
         const newChunk = fullText.substring(receivedLength);
         receivedLength = fullText.length;
         if (newChunk.length > 0) {
+          // v0.8.12: 诊断 Android XHR onprogress 批量触发
+          // 若 newChunk.length > 100，说明一次 onprogress 送达大量数据（批量触发）
+          if (newChunk.length > 100) {
+            logger.debug("stream", `XHR onprogress 批量: ${newChunk.length} 字符`);
+          }
           // v0.5.4: 入队待处理数据，触发异步处理
           pendingChunks.push(newChunk);
           void processIncrementalAsync();
@@ -1101,6 +1113,9 @@ const sendStreamRequestViaFetch = async (
           const apiError = extractApiErrorMessage(parsed, response.status);
           if (apiError) throw new ApiError(apiError);
           onChunk(dataStr, parsed);
+          // v0.8.12: 每行 await nextFrame，确保 fetch 一次 read 返回多行时也逐帧处理
+          // 避免 React 18 自动批处理导致"一瞬间蹦出全部内容"，实现 60fps 严格逐字流式
+          await nextFrame();
         } catch (e) {
           if (e instanceof ApiError) throw e;
           // v0.5.4: 修复 E-1，改用结构化错误检测替代 /error/i 正则误报

@@ -104,8 +104,8 @@ export const NarratorMessage = React.memo(function NarratorMessage({
           return (
             <div className="flex flex-col gap-2">
               <div className="rounded-lg border border-border/30 bg-muted/20 px-3 py-2">
-                {/* v0.8.10-fix: 流式期间 isAnimating=true 让 markdown.tsx 跳过 useDeferredValue；directRender 跳过 cv-auto */}
-                <Markdown content={cleanContent} isAnimating={isAnimating} directRender />
+                {/* v0.8.12: 移除 directRender，启用 Streamdown 词级 fadeIn 动画，实现 TRPG 严格逐字流式 */}
+                <Markdown content={cleanContent} isAnimating={isAnimating} />
               </div>
               {choices.length > 0 && (
                 <ActionOptionsGrid options={choices} onSelectAction={onSelectAction} />
@@ -187,8 +187,8 @@ function NarratorSectionsView({
             <span>剧情正文</span>
           </div>
           <div className="text-sm leading-relaxed">
-            {/* v0.8.10-fix: 流式期间 isAnimating=true 让 markdown.tsx 跳过 useDeferredValue；directRender 跳过 cv-auto */}
-            <Markdown content={sections.narrative} isAnimating={isAnimating} directRender />
+            {/* v0.8.12: 移除 directRender，启用 Streamdown 词级 fadeIn 动画，实现 TRPG 严格逐字流式 */}
+            <Markdown content={sections.narrative} isAnimating={isAnimating} />
           </div>
         </motion.div>
       )}

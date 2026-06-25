@@ -113,10 +113,14 @@ export default function TrpgPage() {
     const source = trpgMode === "design" ? (trpgDesignSession?.messages ?? []) : trpgMessages;
     return source.slice(-displayCount);
   }, [trpgMode, trpgDesignSession?.messages, trpgMessages, displayCount]);
-  // v0.8.7-urgent: D11 useDeferredValue 让 React 在空闲时处理消息列表更新，避免阻塞流式渲染
-  // v0.8.10-fix: 流式期间不使用 useDeferredValue，避免流式内容被无限期推迟（与 chat.tsx 修复对齐）
-  // 注意：非流式期间保留 useDeferredValue 优化长列表渲染性能
-  const deferredVisibleMessages = trpgIsGenerating ? visibleMessages : React.useDeferredValue(visibleMessages);
+  // v0.8.12: 修复条件 Hook 调用违反 Rules of Hooks
+  // 原 `trpgIsGenerating ? visibleMessages : React.useDeferredValue(visibleMessages)` 在 trpgIsGenerating
+  // 翻转时 Hook 数量变化，触发 "Rendered more/fewer hooks than expected" 崩溃或组件重置
+  // 修复模式（参考 chat.tsx 第 213-214 行已验证模式）：
+  //   - 始终调用 useDeferredValue（遵守 Rules of Hooks）
+  //   - 流式期用 visibleMessages 直接渲染（逐字），非流式期用 deferredVisibleMessages（长列表优化）
+  const deferredVisibleMessages = React.useDeferredValue(visibleMessages);
+  const renderMessages = trpgIsGenerating ? visibleMessages : deferredVisibleMessages;
 
   // ===== 初始化 =====
   React.useEffect(() => {
@@ -375,7 +379,7 @@ export default function TrpgPage() {
                   </motion.div>
                 )}
                 <AnimatePresence mode="sync">
-                  {deferredVisibleMessages.map((msg, i) => ( // v0.8.7-urgent: D11 使用 deferredVisibleMessages
+                  {renderMessages.map((msg, i) => ( // v0.8.12: 使用 renderMessages（流式期=visibleMessages 逐字，非流式期=deferredVisibleMessages 优化）
                     <motion.div
                       key={msg.id}
                       initial={{ opacity: 0, y: 12 }}
@@ -390,7 +394,7 @@ export default function TrpgPage() {
                           message={msg}
                           onSelectAction={(option) => setTrpgInputDraft(option.description)}
                           isGenerating={trpgIsGenerating}
-                          isLast={i === deferredVisibleMessages.length - 1}
+                          isLast={i === renderMessages.length - 1}
                         />
                       )}
                     </motion.div>

@@ -74,116 +74,12 @@ import { toast } from "sonner";
 // 辅助函数：从 state 提取 API 设置（参考 chat-slice.ts）
 // ============================================================================
 
-// v0.8.7-urgent: TRPG 流式更新缓冲区 — rAF 批量 flush，避免每 chunk 触发 set
-// 修复致命 bug：原实现每个 delta 使用 get().trpgMessages.map() 重建整个数组，
-// 导致所有消息引用变化，React.memo 完全失效，整个消息列表重渲染
-const trpgStreamBuffer = { reasoning: "", content: "" };
-let trpgFlushScheduled = false;
-// v0.8.7-urgent: 保存 rAF handle 以便取消（E8）
-let trpgFlushRafId: number | null = null;
-
-/**
- * 调度 TRPG 流式 flush — 使用 rAF 批量更新，避免每 chunk 触发 set
- * 仅更新目标消息（findIndex + 替换目标索引），其他消息保持原引用（React.memo 生效）
- */
-function trpgScheduleFlush(
-  msgId: string,
-  set: (partial: Partial<AppStoreState>) => void,
-  get: () => AppStoreState,
-): void {
-  if (trpgFlushScheduled) return;
-  trpgFlushScheduled = true;
-  trpgFlushRafId = requestAnimationFrame(() => {
-    trpgFlushRafId = null;
-    trpgFlushScheduled = false;
-    const { reasoning, content } = trpgStreamBuffer;
-    trpgStreamBuffer.reasoning = "";
-    trpgStreamBuffer.content = "";
-    if (!reasoning && !content) return;
-
-    const messages = get().trpgMessages;
-    const index = messages.findIndex((m) => m.id === msgId);
-    if (index === -1) return;
-
-    // 仅替换目标索引元素，其他保持原引用
-    const newMessages = messages.slice();
-    newMessages[index] = {
-      ...messages[index],
-      ...(reasoning
-        ? { reasoningContent: (messages[index].reasoningContent || "") + reasoning }
-        : {}),
-      ...(content ? { content: (messages[index].content || "") + content } : {}),
-    };
-    set({ trpgMessages: newMessages });
-  });
-}
-
-/** v0.8.7-urgent: 清理游戏模式缓冲区并取消 pending rAF（C4/C6/C7/E8 共用） */
-function trpgClearBuffer(): void {
-  if (trpgFlushRafId !== null) {
-    cancelAnimationFrame(trpgFlushRafId);
-    trpgFlushRafId = null;
-  }
-  trpgFlushScheduled = false;
-  trpgStreamBuffer.reasoning = "";
-  trpgStreamBuffer.content = "";
-}
-
-// v0.8.7-urgent: TRPG 设计模式流式更新缓冲区 — rAF 批量 flush
-// 修复致命 bug：设计模式每个 delta 使用 set() + .map() 重建整个数组
-const trpgDesignStreamBuffer = { reasoning: "", content: "" };
-let trpgDesignFlushScheduled = false;
-// v0.8.7-urgent: 保存 rAF handle 以便取消（E8）
-let trpgDesignFlushRafId: number | null = null;
-
-/**
- * 调度 TRPG 设计模式流式 flush — 使用 rAF 批量更新，避免每 delta 触发 set
- * 仅替换目标索引元素，其他保持原引用（React.memo 生效）
- */
-function trpgDesignScheduleFlush(
-  assistantMessageId: string,
-  set: (partial: Partial<AppStoreState>) => void,
-  get: () => AppStoreState,
-): void {
-  if (trpgDesignFlushScheduled) return;
-  trpgDesignFlushScheduled = true;
-  trpgDesignFlushRafId = requestAnimationFrame(() => {
-    trpgDesignFlushRafId = null;
-    trpgDesignFlushScheduled = false;
-    const { reasoning, content } = trpgDesignStreamBuffer;
-    trpgDesignStreamBuffer.reasoning = "";
-    trpgDesignStreamBuffer.content = "";
-    if (!reasoning && !content) return;
-
-    const currentSession = get().trpgDesignSession;
-    if (!currentSession) return;
-    const messages = currentSession.messages;
-    const idx = messages.findIndex((m) => m.id === assistantMessageId);
-    if (idx === -1) return;
-
-    // 仅替换目标索引元素，其他保持原引用（React.memo 生效）
-    const next = messages.slice();
-    next[idx] = {
-      ...messages[idx],
-      ...(reasoning
-        ? { reasoningContent: (messages[idx].reasoningContent || "") + reasoning }
-        : {}),
-      ...(content ? { content: (messages[idx].content || "") + content } : {}),
-    };
-    set({ trpgDesignSession: { ...currentSession, messages: next } });
-  });
-}
-
-/** v0.8.7-urgent: 清理设计模式缓冲区并取消 pending rAF（C6/C7/C9/E8 共用） */
-function trpgDesignClearBuffer(): void {
-  if (trpgDesignFlushRafId !== null) {
-    cancelAnimationFrame(trpgDesignFlushRafId);
-    trpgDesignFlushRafId = null;
-  }
-  trpgDesignFlushScheduled = false;
-  trpgDesignStreamBuffer.reasoning = "";
-  trpgDesignStreamBuffer.content = "";
-}
+// v0.8.12: 移除 trpgStreamBuffer / trpgScheduleFlush / trpgClearBuffer
+//        + trpgDesignStreamBuffer / trpgDesignScheduleFlush / trpgDesignClearBuffer
+// 原因：rAF 批量合并将一帧内所有 chunk 合并为一次 set，破坏严格逐字流式
+// 现在：每个 onChunk 直接 set({ trpgMessages: ... }) 或 set({ trpgDesignSession: ... })
+// 配合网络层 nextFrame 分片实现 60fps 逐字
+// 仅替换目标索引元素，其他保持原引用（React.memo 生效）
 
 const extractApiSettings = (state: AppStoreState): ApiSettings => {
   const allProviders = state.getAllProviders();
@@ -522,8 +418,7 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
 
     if (state.trpgIsGenerating) return;
 
-    // v0.8.7-urgent: 请求开始时重置设计模式缓冲区，避免上次请求的脏数据污染（C6）
-    trpgDesignClearBuffer();
+    // v0.8.12: trpgDesignClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需重置）
     set({ trpgIsGenerating: true, trpgInputDraft: "" });
 
     try {
@@ -577,14 +472,36 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
         },
         {
           onFirstReasoningDelta: (delta) => {
-            // v0.8.7-urgent: 移除冗余的局部对象修改，缓冲区已负责 UI 更新（D3）
-            trpgDesignStreamBuffer.reasoning += delta;
-            trpgDesignScheduleFlush(assistantMessage.id, set, get);
+            // v0.8.12: 移除 rAF 批量合并，每 chunk 直接 set，实现严格逐字流式
+            const currentSession = get().trpgDesignSession;
+            if (currentSession) {
+              const messages = currentSession.messages;
+              const idx = messages.findIndex((m) => m.id === assistantMessage.id);
+              if (idx !== -1) {
+                const next = messages.slice();
+                next[idx] = {
+                  ...messages[idx],
+                  reasoningContent: (messages[idx].reasoningContent || "") + delta,
+                };
+                set({ trpgDesignSession: { ...currentSession, messages: next } });
+              }
+            }
           },
           onFinalContentDelta: (delta) => {
-            // v0.8.7-urgent: 移除冗余的局部对象修改，缓冲区已负责 UI 更新（D3）
-            trpgDesignStreamBuffer.content += delta;
-            trpgDesignScheduleFlush(assistantMessage.id, set, get);
+            // v0.8.12: 移除 rAF 批量合并，每 chunk 直接 set，实现严格逐字流式
+            const currentSession = get().trpgDesignSession;
+            if (currentSession) {
+              const messages = currentSession.messages;
+              const idx = messages.findIndex((m) => m.id === assistantMessage.id);
+              if (idx !== -1) {
+                const next = messages.slice();
+                next[idx] = {
+                  ...messages[idx],
+                  content: (messages[idx].content || "") + delta,
+                };
+                set({ trpgDesignSession: { ...currentSession, messages: next } });
+              }
+            }
           },
           onToolCall: (tc) => {
             assistantMessage.toolCalls = [...(assistantMessage.toolCalls ?? []), tc];
@@ -592,36 +509,8 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
         },
       );
 
-      // v0.8.7-urgent: 流式结束后立即同步 flush 缓冲区，避免 rAF 回调用旧内容覆盖最终更新（C9）
-      // 修复：原实现仅清空缓冲区未真正 flush，导致最后一批流式内容丢失
-      if (trpgDesignFlushScheduled) {
-        trpgDesignFlushScheduled = false;
-        if (trpgDesignFlushRafId !== null) {
-          cancelAnimationFrame(trpgDesignFlushRafId);
-          trpgDesignFlushRafId = null;
-        }
-        if (trpgDesignStreamBuffer.reasoning || trpgDesignStreamBuffer.content) {
-          const { reasoning, content } = trpgDesignStreamBuffer;
-          trpgDesignStreamBuffer.reasoning = "";
-          trpgDesignStreamBuffer.content = "";
-          const currentSession = get().trpgDesignSession;
-          if (currentSession) {
-            const messages = currentSession.messages;
-            const idx = messages.findIndex((m) => m.id === assistantMessage.id);
-            if (idx !== -1) {
-              const next = messages.slice();
-              next[idx] = {
-                ...messages[idx],
-                ...(reasoning
-                  ? { reasoningContent: (messages[idx].reasoningContent || "") + reasoning }
-                  : {}),
-                ...(content ? { content: (messages[idx].content || "") + content } : {}),
-              };
-              set({ trpgDesignSession: { ...currentSession, messages: next } });
-            }
-          }
-        }
-      }
+      // v0.8.12: 流式结束同步 flush 块已删除（rAF 批量合并移除后无需同步 flush）
+      // 每 chunk 已直接 set，流结束时最后一个 chunk 的内容已在 store 中
 
       // 4. 应用最终结果
       assistantMessage.content = result.content;
@@ -681,8 +570,7 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
 
       logger.info("trpg", `设计模式 Stage ${finalSession.currentStage} 完成`);
     } catch (e) {
-      // v0.8.7-urgent: 错误时清理设计模式缓冲区，避免 rAF 用旧内容覆盖错误状态（C7）
-      trpgDesignClearBuffer();
+      // v0.8.12: trpgDesignClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需清理）
       logger.error("trpg", "设计模式消息发送失败: " + String(e));
       const errorMsg =
         e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e);
@@ -778,8 +666,7 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
 
     if (state.trpgIsGenerating) return;
 
-    // v0.8.7-urgent: 请求开始时重置游戏模式缓冲区，避免上次请求的脏数据污染（C6）
-    trpgClearBuffer();
+    // v0.8.12: trpgClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需重置）
     set({ trpgIsGenerating: true, trpgInputDraft: "" });
 
     try {
@@ -935,22 +822,37 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
           "上面的 tool 消息是本地引擎执行工具后的真实结果（骰子点数、伤害、状态变更等）。\n" +
           "你必须基于这些真实结果生成最终 Narrator 七段式输出，不得改写或忽略已发生的数值。",
         callbacks: {
-          // v0.8.7-urgent: 优化流式更新性能 — 使用 findIndex 仅更新目标消息，避免全数组 map 导致 React.memo 失效
-          // 并使用 rAF 批量 flush，避免每 chunk 触发 set 导致高频重渲染
+          // v0.8.12: 移除 rAF 批量合并，每 chunk 直接 set，实现严格逐字流式
+          // 使用 findIndex 仅更新目标消息，避免全数组 map 导致 React.memo 失效
           onFirstReasoningDelta: (delta) => {
-            trpgStreamBuffer.reasoning += delta;
-            trpgScheduleFlush(assistantMessage.id, set, get);
+            const messages = get().trpgMessages;
+            const idx = messages.findIndex((m) => m.id === assistantMessage.id);
+            if (idx !== -1) {
+              const next = messages.slice();
+              next[idx] = {
+                ...messages[idx],
+                reasoningContent: (messages[idx].reasoningContent || "") + delta,
+              };
+              set({ trpgMessages: next });
+            }
           },
           onFinalContentDelta: (delta) => {
-            trpgStreamBuffer.content += delta;
-            trpgScheduleFlush(assistantMessage.id, set, get);
+            const messages = get().trpgMessages;
+            const idx = messages.findIndex((m) => m.id === assistantMessage.id);
+            if (idx !== -1) {
+              const next = messages.slice();
+              next[idx] = {
+                ...messages[idx],
+                content: (messages[idx].content || "") + delta,
+              };
+              set({ trpgMessages: next });
+            }
           },
         },
         maxLoops: 3,
       });
 
-      // v0.8.7-urgent: 流式结束后立即清理缓冲区，避免 rAF 回调用陈旧 delta 损坏最终内容（C4）
-      trpgClearBuffer();
+      // v0.8.12: trpgClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需清理）
 
       const fullContent = loopResult.finalContent;
       const fullReasoning =
@@ -1179,8 +1081,7 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
 
       logger.info("trpg", "Stage 3 完成: 后处理结束");
     } catch (e) {
-      // v0.8.7-urgent: 错误时清理游戏模式缓冲区，避免 rAF 用旧内容覆盖错误状态（C7）
-      trpgClearBuffer();
+      // v0.8.12: trpgClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需清理）
       logger.error("trpg", "消息发送失败: " + String(e));
       const errorMsg =
         e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e);
@@ -1191,10 +1092,8 @@ export const createTrpgSlice: StateCreator<AppStoreState, [], [], TrpgSlice> = (
   },
 
   stopTrpgGenerating: () => {
-    // v0.8.7-urgent: 真正停止请求 — 清理缓冲区 + 取消 rAF（C5）
-    // 注意：AbortController 需修改 agenticLoop.ts 支持 signal 参数，此处先实现缓冲区清理
-    trpgClearBuffer();
-    trpgDesignClearBuffer();
+    // v0.8.12: trpgClearBuffer / trpgDesignClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需清理）
+    // 注意：AbortController 需修改 agenticLoop.ts 支持 signal 参数
     set({ trpgIsGenerating: false });
   },
 });

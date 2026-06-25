@@ -649,10 +649,10 @@ function ThinkingNode({
               className="mt-2 max-h-[280px] overflow-y-auto overscroll-contain rounded-md border border-border/40 bg-muted/30 p-2.5 text-xs text-muted-foreground"
             >
               {step.content ? (
+                /* v0.8.12: 移除 directRender={isRunning}，启用 Streamdown 词级 fadeIn 动画，实现思考节点严格逐字流式 */
                 <Markdown
                   content={step.content}
                   isAnimating={isRunning}
-                  directRender={isRunning}
                 />
               ) : (
                 <span className="opacity-60">等待内容...</span>
@@ -1039,23 +1039,30 @@ export const LuzzyThinkingTimeline = React.memo(function LuzzyThinkingTimeline({
     () => mergeSteps(thinkingSteps, agentSteps),
     [thinkingSteps, agentSteps],
   );
-  // v0.8.7-urgent: useDeferredValue 让 React 在空闲时处理 allSteps 变化，避免阻塞流式渲染
+  // v0.8.12: 修复思考卡片"一瞬间蹦出全部"的真正根因
+  // useDeferredValue 会把 allSteps 更新标记为低优先级，流式期间主线程繁忙时被无限期推迟，
+  // 直到流式结束 React 才一次性应用所有延迟更新，造成"全部一起蹦出来"的视觉效果。
+  // 修复模式（参考 chat.tsx 第 213-214 行已验证模式）：
+  //   - 始终调用 useDeferredValue（遵守 Rules of Hooks，避免 Hook 数量变化崩溃）
+  //   - 流式期用 allSteps 直接渲染（逐字），非流式期用 deferredSteps（长列表优化）
   const deferredSteps = React.useDeferredValue(allSteps);
+  const renderSteps = isGenerating ? allSteps : deferredSteps;
   const [expandedStep, setExpandedStep] = React.useState<number | null>(0);
   const prevStepsLengthRef = React.useRef(0);
 
   React.useEffect(() => {
     if (isGenerating && allSteps.length > 0) {
       if (allSteps.length > prevStepsLengthRef.current) {
-        // v0.8.7-urgent: 使用 deferredSteps.length - 1 而非 allSteps.length - 1（C11）
-        // 避免 deferred 期间 expandedStep 与 deferredSteps 索引脱节导致最新步骤不展开
-        setExpandedStep(deferredSteps.length > 0 ? deferredSteps.length - 1 : 0);
+        // v0.8.12: 用 renderSteps.length 与渲染源保持一致，避免索引错位
+        setExpandedStep(renderSteps.length > 0 ? renderSteps.length - 1 : 0);
       }
     }
     prevStepsLengthRef.current = allSteps.length;
-  }, [isGenerating, allSteps.length, deferredSteps.length]);
+    // v0.8.12: 依赖 renderSteps.length 而非 deferredSteps.length，与渲染源保持一致
+  }, [isGenerating, allSteps.length, renderSteps.length]);
 
-  if (deferredSteps.length === 0) {
+  // v0.8.12: 用 renderSteps.length 判断，与渲染源保持一致
+  if (renderSteps.length === 0) {
     return (
       <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground/70">
         <IconClock className="size-3.5" />
@@ -1067,7 +1074,8 @@ export const LuzzyThinkingTimeline = React.memo(function LuzzyThinkingTimeline({
   return (
     <div className="relative w-full py-1">
       <div className="w-full space-y-3">
-        {deferredSteps.map((step, idx) => {
+        {/* v0.8.12: 渲染源改为 renderSteps（流式期=allSteps 逐字，非流式期=deferredSteps 优化） */}
+        {renderSteps.map((step, idx) => {
           const isExpanded = expandedStep === idx;
           const onToggle = () => setExpandedStep(isExpanded ? null : idx);
           if (isToolStep(step)) {
@@ -1077,7 +1085,7 @@ export const LuzzyThinkingTimeline = React.memo(function LuzzyThinkingTimeline({
                 step={step}
                 isExpanded={isExpanded}
                 onToggle={onToggle}
-                isLast={idx === deferredSteps.length - 1} // v0.8.7-urgent: C10 修复 — 与 deferredSteps 一致
+                isLast={idx === renderSteps.length - 1} // v0.8.7-urgent: C10 修复 — v0.8.12 与 renderSteps 一致
               />
             );
           }

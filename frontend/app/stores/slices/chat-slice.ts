@@ -166,58 +166,10 @@ const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
 // v0.8.5: 嵌入模型失败一次性提示标志（防止 fire-and-forget 重复 toast）
 let embeddingFailureNotified = false;
 
-// v0.8.7-urgent: chat 流式更新缓冲区 — rAF 批量 flush，避免每 chunk 触发 set
-// 修复致命 bug：原实现每个 chunk 直接 get().updateMessage()，触发 store 更新 + React 重渲染
-// 参考实现：trpg-slice.ts 的 trpgScheduleFlush
-const chatStreamBuffer = {
-  msgId: "" as string,
-  content: "" as string,
-  reasoningContent: "" as string,
-  agentSteps: null as AgentStep[] | null,
-  hasUpdate: false,
-};
-let chatFlushScheduled = false;
-// v0.8.7-urgent: 保存 rAF handle 以便取消（E7）
-let chatFlushRafId: number | null = null;
-
-/**
- * 调度 chat 流式 flush — 使用 rAF 批量更新，避免每 chunk 触发 set
- * agentSteps 仅在数组长度变化时才传递新引用（避免每 chunk 重建数组）
- */
-function chatScheduleFlush(get: () => AppStoreState): void {
-  if (chatFlushScheduled) return;
-  chatFlushScheduled = true;
-  chatFlushRafId = requestAnimationFrame(() => {
-    chatFlushRafId = null;
-    chatFlushScheduled = false;
-    if (!chatStreamBuffer.hasUpdate) return;
-    const updateMessage = get().updateMessage;
-    const update: Partial<ChatMessage> = { loading: false };
-    if (chatStreamBuffer.content) update.content = chatStreamBuffer.content;
-    if (chatStreamBuffer.reasoningContent) update.reasoningContent = chatStreamBuffer.reasoningContent;
-    // 仅在 agentSteps 实际变化时才更新引用（避免每 chunk 重建数组）
-    if (chatStreamBuffer.agentSteps) update.agentSteps = chatStreamBuffer.agentSteps;
-    updateMessage(chatStreamBuffer.msgId, update);
-    chatStreamBuffer.hasUpdate = false;
-    chatStreamBuffer.content = "";
-    chatStreamBuffer.reasoningContent = "";
-    chatStreamBuffer.agentSteps = null;
-  });
-}
-
-/** v0.8.7-urgent: 清理 chat 缓冲区并取消 pending rAF（C2/C3/E7 共用） */
-function chatClearBuffer(): void {
-  if (chatFlushRafId !== null) {
-    cancelAnimationFrame(chatFlushRafId);
-    chatFlushRafId = null;
-  }
-  chatFlushScheduled = false;
-  chatStreamBuffer.hasUpdate = false;
-  chatStreamBuffer.content = "";
-  chatStreamBuffer.reasoningContent = "";
-  chatStreamBuffer.agentSteps = null;
-  chatStreamBuffer.msgId = "";
-}
+// v0.8.12: 移除 chatStreamBuffer / chatScheduleFlush / chatClearBuffer
+// 原因：rAF 批量合并将一帧内所有 chunk 合并为一次 updateMessage，破坏严格逐字流式
+// 现在：每个 onChunk 直接调用 get().updateMessage，配合网络层 nextFrame 分片实现 60fps 逐字
+// agentSteps 引用稳定化逻辑迁移到 generateResponse 函数内的 lastAgentStepsSnapshot 局部变量
 
 // v0.7.1: 单阶段架构 — parseToolDecisions 已删除
 // 模型通过原生 tool_calls (function calling) 自行决定调用工具
@@ -272,10 +224,12 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
    * @param assistantMessageId - 待填充的 assistant 消息 ID
    */
   const generateResponse = async (assistantMessageId: string): Promise<void> => {
-    // v0.8.7-urgent: 请求开始时重置缓冲区，避免上次请求的脏数据污染（C3）
+    // v0.8.12: 移除 chatClearBuffer（rAF 批量合并已删除，无需重置缓冲区）
     // v0.8.7-urgent: 重置 embeddingFailureNotified 标志（F1）
-    chatClearBuffer();
     embeddingFailureNotified = false;
+    // v0.8.12: agentSteps 引用稳定化快照（替代已删除的 chatStreamBuffer.agentSteps）
+    // 避免每 chunk 重建整个 agentSteps 数组导致 React.memo 失效
+    let lastAgentStepsSnapshot: AgentStep[] | null = null;
     const state = get();
     const { messages, currentCharacter, abortController, currentSessionId } = state;
 
@@ -526,8 +480,7 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
         cot: string;
         toolCalls: Array<{ id: string; function: { name: string; arguments: string } }>;
       }> => {
-        // v0.8.7-urgent: 请求开始时重置缓冲区，避免上次请求/重试的脏数据污染（C3）
-        chatClearBuffer();
+        // v0.8.12: chatClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需重置）
         const skipToolsInjection = options.skipToolsInjection ?? false;
         const forceTool = options.forceToolCall ?? false;
         // 构建 API 上下文
@@ -820,51 +773,37 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
               // v0.7.1: 单阶段架构 — 始终写入正文气泡和 agentSteps
               // reasoning_content → brainstorm 节点（上方已创建）
               // content → 正文气泡（parseCot 分离 <cot> 标签后的 main 内容）
-              // v0.8.7-urgent: 恢复 rAF 批量缓冲，避免每 chunk 触发 store 更新
-              // agentSteps 仅在数组长度变化时才传递新引用（避免每 chunk 重建数组）
-              const lastStepCount = chatStreamBuffer.agentSteps?.length ?? -1;
+              // v0.8.12: 移除 rAF 批量合并，每 chunk 直接 updateMessage，实现严格逐字流式
+              // 配合网络层每行 await nextFrame 分片，每个 token 独立成帧，React 不会自动批处理
+              // agentSteps 引用稳定化（保留，避免每 chunk 重建数组导致 React.memo 失效）：
+              // - 长度变化（步骤新增/完成）：创建全新数组+全新元素引用
+              // - 长度未变但内容变化：仅更新最后一个步骤的引用
+              const update: Partial<ChatMessage> = { loading: false };
+              update.content = cotResult.main || accumulatedContent;
+              update.reasoningContent = accumulatedReasoning;
               const currentStepCount = agentSteps.length;
-              chatStreamBuffer.msgId = msgId;
-              chatStreamBuffer.content = cotResult.main || accumulatedContent;
-              chatStreamBuffer.reasoningContent = accumulatedReasoning;
-              // v0.8.7-urgent: 修复 agentSteps 引用稳定化逻辑失效 bug（C1）
-              // 原因：agentSteps 元素是共享引用，line 696 直接 mutation 导致 content 比较永远为 false
-              // 修复：长度变化时用 map 深拷贝元素引用；长度未变时用快照比较
+              const lastStepCount = lastAgentStepsSnapshot?.length ?? -1;
               if (currentStepCount !== lastStepCount) {
-                // 长度变化（步骤新增/完成）：创建全新数组+全新元素引用
-                chatStreamBuffer.agentSteps = agentSteps.map((s) => ({ ...s }));
-              } else if (chatStreamBuffer.agentSteps && currentStepCount > 0) {
+                // 长度变化：创建全新数组+全新元素引用
+                update.agentSteps = agentSteps.map((s) => ({ ...s }));
+                lastAgentStepsSnapshot = update.agentSteps;
+              } else if (lastAgentStepsSnapshot && currentStepCount > 0) {
                 // 长度未变但内容可能变化（如 brainstorm 节点 content 累积）
                 // 仅更新最后一个步骤的 content 引用，避免全数组重建
                 const lastStep = agentSteps[currentStepCount - 1];
-                const bufferedSteps = chatStreamBuffer.agentSteps;
-                // 用快照比较而非共享引用比较
+                const bufferedSteps = lastAgentStepsSnapshot;
                 const lastBufferedContent = bufferedSteps[currentStepCount - 1].content;
                 if (lastBufferedContent !== lastStep.content) {
                   bufferedSteps[currentStepCount - 1] = { ...lastStep };
+                  update.agentSteps = bufferedSteps;
                 }
               }
-              chatStreamBuffer.hasUpdate = true;
-              chatScheduleFlush(get);
+              get().updateMessage(msgId, update);
             },
           });
 
-          // v0.8.7-urgent: 流式结束后立即同步 flush 缓冲区，避免 rAF 回调用旧内容覆盖最终更新
-          if (chatFlushScheduled) {
-            chatFlushScheduled = false;
-            if (chatStreamBuffer.hasUpdate) {
-              const updateMessage = get().updateMessage;
-              const update: Partial<ChatMessage> = { loading: false };
-              if (chatStreamBuffer.content) update.content = chatStreamBuffer.content;
-              if (chatStreamBuffer.reasoningContent) update.reasoningContent = chatStreamBuffer.reasoningContent;
-              if (chatStreamBuffer.agentSteps) update.agentSteps = chatStreamBuffer.agentSteps;
-              updateMessage(chatStreamBuffer.msgId, update);
-              chatStreamBuffer.hasUpdate = false;
-              chatStreamBuffer.content = "";
-              chatStreamBuffer.reasoningContent = "";
-              chatStreamBuffer.agentSteps = null;
-            }
-          }
+          // v0.8.12: 流式结束同步 flush 块已删除（rAF 批量合并移除后无需同步 flush）
+          // 每 chunk 已直接 updateMessage，流结束时最后一个 chunk 的内容已在 store 中
         } else {
           // === 非流式请求 ===
           const response = await sendRequest({
@@ -2302,8 +2241,7 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
         }
       }
     } catch (error) {
-      // v0.8.7-urgent: 错误时清理缓冲区，避免 rAF 用旧 buffer 覆盖错误状态（C2）
-      chatClearBuffer();
+      // v0.8.12: chatClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需清理）
       if (error instanceof DOMException && error.name === "AbortError") {
         // 用户取消生成
         const currentMsg = get().messages.find((m) => m.id === assistantMessageId);
@@ -2339,8 +2277,7 @@ export const createChatSlice: StateCreator<AppStoreState, [], [], ChatSlice> = (
         });
       }
     } finally {
-      // v0.8.7-urgent: finally 中清理缓冲区，确保下次请求从干净状态开始（C2）
-      chatClearBuffer();
+      // v0.8.12: chatClearBuffer 已移除（rAF 批量合并已删除，无缓冲区需清理）
       const currentController = get().abortController;
       set({
         isGenerating: false,

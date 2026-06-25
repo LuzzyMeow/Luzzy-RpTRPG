@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.8.12
+
+### 🎬 严格逐字流式输出真根因修复
+
+> v0.8.11 之前流式输出存在"一瞬间蹦出全部内容"问题：模型出一个字，思考卡片和正文气泡未能逐字呈现，流式结束才一次性显示。前序尝试通过 rAF 分片与移除 Store 层批量合并治标，但治本根因（React 调度层与 Hook 规则）未触及。
+
+#### 思考卡片 useDeferredValue 流式期跳过（最高优先级根因）
+
+> `luzzy-thinking-timeline.tsx` 第 1043 行 `React.useDeferredValue(allSteps)` 无条件调用，渲染源用 `deferredSteps`。useDeferredValue 将流式 chunk 更新标记为低优先级，主线程繁忙时被无限期推迟，直到流式结束才一次性应用 → 思考卡片"全部一起蹦出来"。
+
+- **luzzy-thinking-timeline.tsx**：始终调用 useDeferredValue（遵守 Rules of Hooks）+ 新增 `renderSteps = isGenerating ? allSteps : deferredSteps` 条件选择，流式期用 allSteps 直接渲染（逐字）
+- 流式期 useEffect 依赖、setExpandedStep、空判断、`.map` 渲染源、isLast 比较全部从 `deferredSteps` 同步改为 `renderSteps`，避免索引错位
+
+#### React Rules of Hooks 违规修复（高优先级根因）
+
+> `markdown.tsx` 与 `trpg.tsx` 此前用 `isAnimating ? content : React.useDeferredValue(content)` 条件调用 Hook，isAnimating / trpgIsGenerating 翻转时 Hook 数量变化，触发 "Rendered more/fewer hooks than expected" 崩溃或组件重置。
+
+- **markdown.tsx**：第 199 行改为始终调用 useDeferredValue + `renderContent = isAnimating ? content : deferredContent` 条件选择（参考 chat.tsx 第 213-214 行已验证模式）
+- **trpg.tsx**：第 119 行同样改为始终调用 useDeferredValue + `renderMessages` 条件选择；下游 `.map` 渲染源与 isLast 比较同步从 `deferredVisibleMessages` 改为 `renderMessages`
+
+#### 正文气泡 / 思考节点 Streamdown 词级动画启用（中优先级根因）
+
+> `directRender` 始终为 true（或流式期为 true）会禁用 markdown.tsx 内 Streamdown 的 `animated` 属性，造成"内容在更新但无逐字视觉动画"的观感。
+
+- **luzzy-chat-message.tsx**：第 684 行移除 `directRender`，正文气泡启用 Streamdown fadeIn 词级动画
+- **luzzy-thinking-timeline.tsx**：第 655 行移除 `directRender={isRunning}`，思考节点同样启用词级动画
+- 与 v0.8.12 早期已落地的 `narrator-message.tsx` 移除 directRender（TRPG 正文气泡）形成完整对齐
+
+#### 网络层 rAF 分片与 Store 层移除批量合并（v0.8.12 早期已落地）
+
+- **apiClient.ts**：XHR `processIncrementalAsync` 与 fetch `reader.read()` 循环内每行 `await nextFrame()`，将 Android WebView XHR onprogress 批量触发的多行 SSE 分散到多帧，避免 React 18 自动批处理
+- **chat-slice.ts**：移除 `chatStreamBuffer` / `chatScheduleFlush` / `chatClearBuffer` / `chatFlushScheduled`，每 chunk 直接 `updateMessage`；保留 agentSteps 引用稳定化（长度变化时全数组重建，未变时仅替换最后元素引用）
+- **trpg-slice.ts**：移除 `trpgStreamBuffer` / `trpgScheduleFlush` / `trpgClearBuffer` 与设计模式对应版本，游戏模式 + 设计模式每 chunk 直接 `set({ trpgMessages })` / `set({ trpgDesignSession })`
+
+### 📦 工程变更
+
+- Android `versionCode` 54→55，`versionName` 0.8.11→0.8.12
+- 前端版本号同步 v0.8.11→v0.8.12（`package.json` / `about.tsx`）
+- README.md 版本徽章同步更新至 v0.8.12
+
 ## v0.8.11
 
 ### 🛠️ Agentic 工具调用彻底加固

@@ -193,11 +193,15 @@ export default React.memo(function Markdown({
   const workbench = useOptionalWorkbench();
   // LUZZY 的 SettingsSlice 扁平结构无 displaySetting，使用默认值（showLineNumbers/codeBlockAutoWrap 均为 false）
   const displaySetting: { showLineNumbers?: boolean; codeBlockAutoWrap?: boolean } = {};
-  // v0.8.9-fix: 流式期间不使用 useDeferredValue，避免高频更新被无限期推迟导致"全部一起出来"
-  // useDeferredValue 会把流式 chunk 更新标记为低优先级，主线程繁忙时延迟到流结束才应用
-  // 非流式时保留 useDeferredValue 优化长文本解析性能
-  const deferredContent = isAnimating ? content : React.useDeferredValue(content);
-  const processedContent = React.useMemo(() => preProcess(deferredContent), [deferredContent]);
+  // v0.8.12: 修复条件 Hook 调用违反 Rules of Hooks
+  // 原 `isAnimating ? content : React.useDeferredValue(content)` 在 isAnimating 翻转时 Hook 数量变化
+  // 触发 "Rendered more/fewer hooks than expected" 或组件重置
+  // 修复模式（参考 chat.tsx 第 213-214 行已验证模式）：
+  //   - 始终调用 useDeferredValue（遵守 Rules of Hooks）
+  //   - 流式期用 content 直接渲染（逐字），非流式期用 deferredContent（长文本优化）
+  const deferredContent = React.useDeferredValue(content);
+  const renderContent = isAnimating ? content : deferredContent;
+  const processedContent = React.useMemo(() => preProcess(renderContent), [renderContent]);
   const handlePreviewCode = React.useCallback(
     (language: string, code: string) => {
       if (!allowCodePreview || !workbench) return;
